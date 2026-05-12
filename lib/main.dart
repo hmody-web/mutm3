@@ -444,6 +444,9 @@ class Mustami3App extends StatelessWidget {
   }
 }
 
+// Global nav index notifier
+final ValueNotifier<int> _navIndexNotifier = ValueNotifier(0);
+
 // ─────────────────────────────────────────────
 //  MAIN SHELL — Bottom Nav + Mini Player
 // ─────────────────────────────────────────────
@@ -455,28 +458,37 @@ class MainShell extends StatefulWidget {
 }
 
 class _MainShellState extends State<MainShell> {
-  int _currentIndex = 0;
-  late final List<Widget> _pages;
+  final List<Widget> _pages = const [ListenPage(), BrowsePage(), SettingsPage()];
 
   @override
   void initState() {
     super.initState();
     audioService.init();
-    _pages = const [ListenPage(), BrowsePage(), SettingsPage()];
+    _navIndexNotifier.addListener(_onNavChange);
   }
 
   @override
+  void dispose() {
+    _navIndexNotifier.removeListener(_onNavChange);
+    super.dispose();
+  }
+
+  void _onNavChange() => setState(() {});
+
+  @override
   Widget build(BuildContext context) {
+    final navIndex = _navIndexNotifier.value;
     return Scaffold(
       body: Stack(
         children: [
-          IndexedStack(index: _currentIndex, children: _pages),
-          // Mini Player overlay — positioned above bottom nav
-          const Positioned(
+          // ★ IndexedStack يحافظ على state كل صفحة
+          IndexedStack(index: navIndex, children: _pages),
+          // ★ Mini Player + Bottom Nav فوق كل شيء
+          Positioned(
             left: 0,
             right: 0,
             bottom: 0,
-            child: _MiniPlayerAndNav(),
+            child: _BottomArea(),
           ),
         ],
       ),
@@ -485,46 +497,18 @@ class _MainShellState extends State<MainShell> {
 }
 
 // ─────────────────────────────────────────────
-//  MINI PLAYER + NAV COMBINED WIDGET
+//  BOTTOM AREA: Mini Player + Nav Bar
 // ─────────────────────────────────────────────
-class _MiniPlayerAndNav extends StatefulWidget {
-  const _MiniPlayerAndNav();
-
-  @override
-  State<_MiniPlayerAndNav> createState() => _MiniPlayerAndNavState();
-}
-
-class _MiniPlayerAndNavState extends State<_MiniPlayerAndNav> {
-  int _currentIndex = 0;
-
-  late final List<Widget> _pages;
-
-  @override
-  void initState() {
-    super.initState();
-    _pages = [
-      const ListenPage(),
-      const BrowsePage(),
-      const SettingsPage(),
-    ];
-  }
-
-  void _setIndex(int i) {
-    // We need to communicate back to MainShell — use a global notifier
-    _navIndexNotifier.value = i;
-    setState(() => _currentIndex = i);
-  }
-
+class _BottomArea extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    final bottomPad = MediaQuery.of(context).padding.bottom;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         // Mini Player
         ValueListenableBuilder<bool>(
           valueListenable: audioService.isVisible,
-          builder: (context, visible, _) {
+          builder: (_, visible, __) {
             if (!visible) return const SizedBox.shrink();
             return _MiniPlayer();
           },
@@ -539,12 +523,12 @@ class _MiniPlayerAndNavState extends State<_MiniPlayerAndNav> {
             top: false,
             child: ValueListenableBuilder<int>(
               valueListenable: _navIndexNotifier,
-              builder: (ctx, idx, _) {
+              builder: (_, idx, __) {
                 return Row(
                   children: [
-                    _navItem(0, CupertinoIcons.music_note_2, 'استمع', idx),
-                    _navItem(1, CupertinoIcons.search, 'تصفح', idx),
-                    _navItem(2, CupertinoIcons.settings, 'الإعدادات', idx),
+                    _NavItem(index: 0, icon: CupertinoIcons.music_note_2, label: 'استمع', current: idx),
+                    _NavItem(index: 1, icon: CupertinoIcons.search, label: 'تصفح', current: idx),
+                    _NavItem(index: 2, icon: CupertinoIcons.settings, label: 'الإعدادات', current: idx),
                   ],
                 );
               },
@@ -554,14 +538,29 @@ class _MiniPlayerAndNavState extends State<_MiniPlayerAndNav> {
       ],
     );
   }
+}
 
-  Widget _navItem(int index, IconData icon, String label, int current) {
+class _NavItem extends StatelessWidget {
+  final int index;
+  final IconData icon;
+  final String label;
+  final int current;
+
+  const _NavItem({
+    required this.index,
+    required this.icon,
+    required this.label,
+    required this.current,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     final isSelected = index == current;
     return Expanded(
       child: GestureDetector(
         onTap: () => _navIndexNotifier.value = index,
         behavior: HitTestBehavior.opaque,
-        child: Container(
+        child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 10),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -585,9 +584,6 @@ class _MiniPlayerAndNavState extends State<_MiniPlayerAndNav> {
     );
   }
 }
-
-// Global nav index notifier
-final ValueNotifier<int> _navIndexNotifier = ValueNotifier(0);
 
 // ─────────────────────────────────────────────
 //  MINI PLAYER WIDGET
@@ -1303,23 +1299,16 @@ class _ListenPageState extends State<ListenPage> {
 
   @override
   Widget build(BuildContext context) {
-    final bottomInset = MediaQuery.of(context).padding.bottom;
-    return ValueListenableBuilder<int>(
-      valueListenable: _navIndexNotifier,
-      builder: (_, navIdx, __) {
-        if (navIdx != 0) return const SizedBox.shrink();
-        return Scaffold(
-          backgroundColor: AppColors.background,
-          body: CustomScrollView(
-            slivers: [
-              _buildHeader(),
-              _buildFileList(),
-              // bottom padding for mini player
-              const SliverToBoxAdapter(child: SizedBox(height: 140)),
-            ],
-          ),
-        );
-      },
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      body: CustomScrollView(
+        slivers: [
+          _buildHeader(),
+          _buildFileList(),
+          // bottom padding for mini player + nav bar
+          const SliverToBoxAdapter(child: SizedBox(height: 140)),
+        ],
+      ),
     );
   }
 
@@ -1657,72 +1646,66 @@ class BrowsePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<int>(
-      valueListenable: _navIndexNotifier,
-      builder: (_, navIdx, __) {
-        if (navIdx != 1) return const SizedBox.shrink();
-        return Scaffold(
-          backgroundColor: AppColors.background,
-          body: CustomScrollView(
-            slivers: [
-              SliverToBoxAdapter(
-                child: Container(
-                  padding: EdgeInsets.only(
-                    top: MediaQuery.of(context).padding.top + 16,
-                    left: 20,
-                    right: 20,
-                    bottom: 20,
-                  ),
-                  child: const Text(
-                    'تصفح',
-                    style: TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.textPrimary,
-                      letterSpacing: -0.5,
-                    ),
-                  ),
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      body: CustomScrollView(
+        slivers: [
+          SliverToBoxAdapter(
+            child: Container(
+              padding: EdgeInsets.only(
+                top: MediaQuery.of(context).padding.top + 16,
+                left: 20,
+                right: 20,
+                bottom: 20,
+              ),
+              child: const Text(
+                'تصفح',
+                style: TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textPrimary,
+                  letterSpacing: -0.5,
                 ),
               ),
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: GestureDetector(
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        CupertinoPageRoute(builder: (_) => const SearchPage()),
-                      );
-                    },
-                    child: Container(
-                      height: 50,
-                      decoration: BoxDecoration(
-                        color: AppColors.surface,
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: AppColors.divider, width: 0.5),
-                      ),
-                      child: const Row(
-                        children: [
-                          SizedBox(width: 16),
-                          Icon(CupertinoIcons.search,
-                              color: AppColors.textSecondary, size: 18),
-                          SizedBox(width: 10),
-                          Text(
-                            'ابحث عن فيديو يوتيوب...',
-                            style: TextStyle(
-                                color: AppColors.textSecondary, fontSize: 15),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              const SliverToBoxAdapter(child: SizedBox(height: 140)),
-            ],
+            ),
           ),
-        );
-      },
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: GestureDetector(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    CupertinoPageRoute(builder: (_) => const SearchPage()),
+                  );
+                },
+                child: Container(
+                  height: 50,
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: AppColors.divider, width: 0.5),
+                  ),
+                  child: const Row(
+                    children: [
+                      SizedBox(width: 16),
+                      Icon(CupertinoIcons.search,
+                          color: AppColors.textSecondary, size: 18),
+                      SizedBox(width: 10),
+                      Text(
+                        'ابحث عن فيديو يوتيوب...',
+                        style: TextStyle(
+                            color: AppColors.textSecondary, fontSize: 15),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SliverToBoxAdapter(child: SizedBox(height: 140)),
+        ],
+      ),
     );
   }
 }
@@ -2984,25 +2967,21 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<int>(
-      valueListenable: _navIndexNotifier,
-      builder: (_, navIdx, __) {
-        if (navIdx != 2) return const SizedBox.shrink();
-        return Scaffold(
-          backgroundColor: AppColors.background,
-          body: CustomScrollView(
-            slivers: [
-              SliverToBoxAdapter(
-                child: Container(
-                  padding: EdgeInsets.only(
-                    top: MediaQuery.of(context).padding.top + 16,
-                    left: 20,
-                    right: 20,
-                    bottom: 24,
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      body: CustomScrollView(
+        slivers: [
+          SliverToBoxAdapter(
+            child: Container(
+              padding: EdgeInsets.only(
+                top: MediaQuery.of(context).padding.top + 16,
+                left: 20,
+                right: 20,
+                bottom: 24,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                       const Text(
                         'الإعدادات',
                         style: TextStyle(
@@ -3052,13 +3031,13 @@ class _SettingsPageState extends State<SettingsPage> {
                           ],
                         ),
                       ),
-                    ],
-                  ),
-                ),
+                ],
               ),
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Column(
                     children: [
                       _settingsSection('التشغيل', [
@@ -3109,8 +3088,6 @@ class _SettingsPageState extends State<SettingsPage> {
             ],
           ),
         );
-      },
-    );
   }
 
   Widget _settingsSection(String title, List<Widget> children) {

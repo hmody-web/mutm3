@@ -101,6 +101,9 @@ class AudioPlayerService {
 
 final audioService = AudioPlayerService();
 
+// Fix 6: Global notifier to refresh ListenPage when download completes
+final ValueNotifier<String?> _downloadCompleteNotifier = ValueNotifier(null);
+
 // ─────────────────────────────────────────────
 //  APP ROOT
 // ─────────────────────────────────────────────
@@ -259,6 +262,21 @@ class _ListenPageState extends State<ListenPage> {
   void initState() {
     super.initState();
     _loadFiles();
+    // Fix 6: Listen for download completion and refresh automatically
+    _downloadCompleteNotifier.addListener(_onDownloadComplete);
+  }
+
+  void _onDownloadComplete() {
+    if (_downloadCompleteNotifier.value != null) {
+      _loadFiles();
+      _downloadCompleteNotifier.value = null;
+    }
+  }
+
+  @override
+  void dispose() {
+    _downloadCompleteNotifier.removeListener(_onDownloadComplete);
+    super.dispose();
   }
 
   Future<void> _loadFiles() async {
@@ -1103,6 +1121,84 @@ class _VideoResultCard extends StatelessWidget {
 
   const _VideoResultCard({required this.video, required this.onTap});
 
+  void _quickDownload(BuildContext context, bool audioOnly) {
+    final videoId = video.id.value;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => _DownloadSheet(
+        videoId: videoId,
+        videoTitle: video.title,
+        onDownload: (id, quality, audioOnly) async {
+          try {
+            final yt = YoutubeExplode();
+            final dir = await getApplicationDocumentsDirectory();
+            final musicDir = Directory('${dir.path}/Mustami3');
+            if (!await musicDir.exists()) await musicDir.create(recursive: true);
+
+            final manifest = await yt.videos.streamsClient.getManifest(id);
+            final safeTitle = video.title
+                .replaceAll(RegExp(r'[^\w\s\u0600-\u06FF-]'), '')
+                .trim();
+
+            Stream<List<int>> stream;
+            String fileName;
+
+            if (audioOnly) {
+              final audio = manifest.audioOnly.withHighestBitrate();
+              stream = yt.videos.streamsClient.get(audio);
+              fileName = '$safeTitle.m4a';
+            } else {
+              final muxed = manifest.muxed;
+              final chosen = quality == 'high'
+                  ? muxed.withHighestBitrate()
+                  : muxed.firstWhere(
+                      (s) => s.videoQuality.name.contains('360'),
+                      orElse: () => muxed.last,
+                    );
+              stream = yt.videos.streamsClient.get(chosen);
+              fileName = '$safeTitle.mp4';
+            }
+
+            final file = File('${musicDir.path}/$fileName');
+            final sink = file.openWrite();
+            await for (final chunk in stream) {
+              sink.add(chunk);
+            }
+            await sink.flush();
+            await sink.close();
+            yt.close();
+            _downloadCompleteNotifier.value = musicDir.path;
+
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('✅ تم التحميل: $fileName',
+                      textDirection: TextDirection.rtl),
+                  backgroundColor: Colors.green.shade700,
+                  behavior: SnackBarBehavior.floating,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                ),
+              );
+            }
+          } catch (e) {
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('❌ فشل التحميل: $e',
+                      textDirection: TextDirection.rtl),
+                  backgroundColor: Colors.red,
+                ),
+              );
+            }
+          }
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final thumb = video.thumbnails.mediumResUrl;
@@ -1119,99 +1215,133 @@ class _VideoResultCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: AppColors.divider, width: 0.5),
         ),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Thumbnail
-            ClipRRect(
-              borderRadius: const BorderRadius.only(
-                topRight: Radius.circular(16),
-                bottomRight: Radius.circular(16),
-              ),
-              child: Stack(
-                children: [
-                  Image.network(
-                    thumb,
-                    width: 120,
-                    height: 80,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(
-                      width: 120,
-                      height: 80,
-                      color: AppColors.surfaceAlt,
-                      child: const Icon(CupertinoIcons.play_rectangle_fill,
-                          color: AppColors.textSecondary),
+            Row(
+              children: [
+                // Thumbnail
+                ClipRRect(
+                  borderRadius: const BorderRadius.only(
+                    topRight: Radius.circular(16),
+                    bottomRight: Radius.circular(16),
+                  ),
+                  child: Stack(
+                    children: [
+                      Image.network(
+                        thumb,
+                        width: 120,
+                        height: 80,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Container(
+                          width: 120,
+                          height: 80,
+                          color: AppColors.surfaceAlt,
+                          child: const Icon(CupertinoIcons.play_rectangle_fill,
+                              color: AppColors.textSecondary),
+                        ),
+                      ),
+                      if (durationStr.isNotEmpty)
+                        Positioned(
+                          bottom: 4,
+                          left: 4,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 5, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withOpacity(0.75),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              durationStr,
+                              style: const TextStyle(
+                                  color: Colors.white, fontSize: 11),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                // Info
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          video.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          textDirection: TextDirection.rtl,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          video.author,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textDirection: TextDirection.rtl,
+                          style: const TextStyle(
+                              fontSize: 11, color: AppColors.textSecondary),
+                        ),
+                        const SizedBox(height: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: AppColors.redLight,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(CupertinoIcons.play_fill,
+                                  size: 10, color: AppColors.primary),
+                              SizedBox(width: 4),
+                              Text('تشغيل',
+                                  style: TextStyle(
+                                      fontSize: 10,
+                                      color: AppColors.primary,
+                                      fontWeight: FontWeight.w600)),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  if (durationStr.isNotEmpty)
-                    Positioned(
-                      bottom: 4,
-                      left: 4,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 5, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withOpacity(0.75),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          durationStr,
-                          style: const TextStyle(
-                              color: Colors.white, fontSize: 11),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
+                ),
+              ],
             ),
-            // Info
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(10),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+            // Fix 4: Download button directly on search result card
+            GestureDetector(
+              onTap: () => _quickDownload(context, false),
+              child: Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                decoration: BoxDecoration(
+                  color: AppColors.redLight,
+                  borderRadius: const BorderRadius.only(
+                    bottomLeft: Radius.circular(16),
+                    bottomRight: Radius.circular(16),
+                  ),
+                ),
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Text(
-                      video.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      textDirection: TextDirection.rtl,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      video.author,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textDirection: TextDirection.rtl,
-                      style: const TextStyle(
-                          fontSize: 11, color: AppColors.textSecondary),
-                    ),
-                    const SizedBox(height: 6),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: AppColors.redLight,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(CupertinoIcons.play_fill,
-                              size: 10, color: AppColors.primary),
-                          SizedBox(width: 4),
-                          Text('تشغيل',
-                              style: TextStyle(
-                                  fontSize: 10,
-                                  color: AppColors.primary,
-                                  fontWeight: FontWeight.w600)),
-                        ],
-                      ),
-                    ),
+                    Icon(CupertinoIcons.cloud_download_fill,
+                        size: 14, color: AppColors.primary),
+                    SizedBox(width: 6),
+                    Text('تحميل',
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: AppColors.primary,
+                            fontWeight: FontWeight.w600)),
                   ],
                 ),
               ),
@@ -1240,6 +1370,7 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
   bool _isDownloading = false;
   double _downloadProgress = 0;
   String _downloadStatus = '';
+  List<Video> _relatedVideos = [];
 
   @override
   void initState() {
@@ -1254,6 +1385,24 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
         forceHD: false,
       ),
     );
+    _loadRelated();
+  }
+
+  Future<void> _loadRelated() async {
+    try {
+      final yt = YoutubeExplode();
+      final results = await yt.search.search(widget.video.author);
+      yt.close();
+      if (mounted) {
+        setState(() {
+          _relatedVideos = results
+              .whereType<Video>()
+              .where((v) => v.id.value != widget.video.id.value)
+              .take(10)
+              .toList();
+        });
+      }
+    } catch (_) {}
   }
 
   @override
@@ -1281,7 +1430,7 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
     setState(() {
       _isDownloading = true;
       _downloadProgress = 0;
-      _downloadStatus = 'جاري التحضير...';
+      _downloadStatus = 'جاري التحميل...';
     });
 
     try {
@@ -1290,13 +1439,12 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
       final musicDir = Directory('${dir.path}/Mustami3');
       if (!await musicDir.exists()) await musicDir.create(recursive: true);
 
+      // Fetch manifest and use the already-known video title simultaneously
       final manifest =
           await yt.videos.streamsClient.getManifest(videoId);
-      final video = await yt.videos.get(videoId);
+      // Use the title from the widget directly (no extra network call needed)
       final safeTitle =
-          video.title.replaceAll(RegExp(r'[^\w\s\u0600-\u06FF-]'), '').trim();
-
-      setState(() => _downloadStatus = 'جاري التحميل...');
+          widget.video.title.replaceAll(RegExp(r'[^\w\s\u0600-\u06FF-]'), '').trim();
 
       Stream<List<int>> stream;
       String fileName;
@@ -1356,6 +1504,8 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
                 borderRadius: BorderRadius.circular(12)),
           ),
         );
+        // Fix 6: Refresh ListenPage immediately after download
+        _notifyDownloadComplete(musicDir.path);
       }
     } catch (e) {
       setState(() {
@@ -1375,6 +1525,11 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
         );
       }
     }
+  }
+
+  void _notifyDownloadComplete(String dirPath) {
+    // Signal global notifier so ListenPage refreshes automatically
+    _downloadCompleteNotifier.value = dirPath;
   }
 
   @override
@@ -1572,6 +1727,31 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
                           textDirection: TextDirection.rtl,
                         ),
                       ],
+                      // Fix 3: Related videos section
+                      if (_relatedVideos.isNotEmpty) ...[
+                        const SizedBox(height: 16),
+                        const Divider(color: AppColors.divider),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'فيديوهات ذات صلة',
+                          style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.textPrimary),
+                        ),
+                        const SizedBox(height: 10),
+                        ...(_relatedVideos.map((v) => _RelatedVideoCard(
+                              video: v,
+                              onTap: () {
+                                Navigator.pushReplacement(
+                                  context,
+                                  CupertinoPageRoute(
+                                      builder: (_) =>
+                                          YouTubePlayerPage(video: v)),
+                                );
+                              },
+                            ))),
+                      ],
                       const SizedBox(height: 80),
                     ],
                   ),
@@ -1581,6 +1761,110 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
           ),
         );
       },
+    );
+  }
+}
+
+// ─────────────────────────────────────────────
+//  Related Video Card (Fix 3)
+// ─────────────────────────────────────────────
+class _RelatedVideoCard extends StatelessWidget {
+  final Video video;
+  final VoidCallback onTap;
+
+  const _RelatedVideoCard({required this.video, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final thumb = video.thumbnails.mediumResUrl;
+    final duration = video.duration;
+    final durationStr = duration != null
+        ? '${duration.inMinutes}:${(duration.inSeconds % 60).toString().padLeft(2, '0')}'
+        : '';
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppColors.divider, width: 0.5),
+        ),
+        child: Row(
+          children: [
+            ClipRRect(
+              borderRadius: const BorderRadius.only(
+                topRight: Radius.circular(14),
+                bottomRight: Radius.circular(14),
+              ),
+              child: Stack(
+                children: [
+                  Image.network(
+                    thumb,
+                    width: 110,
+                    height: 72,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(
+                      width: 110,
+                      height: 72,
+                      color: AppColors.surfaceAlt,
+                      child: const Icon(
+                          CupertinoIcons.play_rectangle_fill,
+                          color: AppColors.textSecondary),
+                    ),
+                  ),
+                  if (durationStr.isNotEmpty)
+                    Positioned(
+                      bottom: 4,
+                      left: 4,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 4, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.75),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(durationStr,
+                            style: const TextStyle(
+                                color: Colors.white, fontSize: 10)),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      video.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      textDirection: TextDirection.rtl,
+                      style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textPrimary),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      video.author,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 11, color: AppColors.textSecondary),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -1604,36 +1888,11 @@ class _DownloadSheet extends StatefulWidget {
 }
 
 class _DownloadSheetState extends State<_DownloadSheet> {
-  StreamManifest? _manifest;
-  bool _loading = true;
-  String? _error;
+  // Removed manifest pre-fetching — options appear instantly
 
   @override
   void initState() {
     super.initState();
-    _fetchManifest();
-  }
-
-  Future<void> _fetchManifest() async {
-    try {
-      final yt = YoutubeExplode();
-      final manifest =
-          await yt.videos.streamsClient.getManifest(widget.videoId);
-      yt.close();
-      if (mounted) {
-        setState(() {
-          _manifest = manifest;
-          _loading = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _error = e.toString();
-          _loading = false;
-        });
-      }
-    }
   }
 
   @override
@@ -1693,58 +1952,35 @@ class _DownloadSheetState extends State<_DownloadSheet> {
           ),
           const SizedBox(height: 20),
 
-          if (_loading)
-            const Padding(
-              padding: EdgeInsets.all(24),
-              child: CircularProgressIndicator(
-                valueColor: AlwaysStoppedAnimation(AppColors.primary),
-              ),
-            )
-          else if (_error != null)
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.red.withOpacity(0.08),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                'حدث خطأ أثناء جلب معلومات الفيديو.\nتأكد من الاتصال بالإنترنت وحاول مرة أخرى.',
-                textAlign: TextAlign.center,
-                textDirection: TextDirection.rtl,
-                style: const TextStyle(color: Colors.red, fontSize: 13),
-              ),
-            )
-          else ...[
-            _downloadBtn(
-              icon: '🎵',
-              label: 'صوت فقط (جودة عالية)',
-              subtitle: 'تنزيل الصوت بصيغة m4a',
-              onTap: () {
-                Navigator.pop(context);
-                widget.onDownload(widget.videoId, 'high', true);
-              },
-            ),
-            const SizedBox(height: 10),
-            _downloadBtn(
-              icon: '📹',
-              label: 'فيديو جودة عالية',
-              subtitle: 'أعلى جودة متاحة',
-              onTap: () {
-                Navigator.pop(context);
-                widget.onDownload(widget.videoId, 'high', false);
-              },
-            ),
-            const SizedBox(height: 10),
-            _downloadBtn(
-              icon: '📱',
-              label: 'فيديو 360p',
-              subtitle: 'جودة متوسطة - حجم أصغر',
-              onTap: () {
-                Navigator.pop(context);
-                widget.onDownload(widget.videoId, 'medium', false);
-              },
-            ),
-          ],
+          _downloadBtn(
+            icon: '🎵',
+            label: 'صوت فقط (جودة عالية)',
+            subtitle: 'تنزيل الصوت بصيغة m4a',
+            onTap: () {
+              Navigator.pop(context);
+              widget.onDownload(widget.videoId, 'high', true);
+            },
+          ),
+          const SizedBox(height: 10),
+          _downloadBtn(
+            icon: '📹',
+            label: 'فيديو جودة عالية',
+            subtitle: 'أعلى جودة متاحة',
+            onTap: () {
+              Navigator.pop(context);
+              widget.onDownload(widget.videoId, 'high', false);
+            },
+          ),
+          const SizedBox(height: 10),
+          _downloadBtn(
+            icon: '📱',
+            label: 'فيديو 360p',
+            subtitle: 'جودة متوسطة - حجم أصغر',
+            onTap: () {
+              Navigator.pop(context);
+              widget.onDownload(widget.videoId, 'medium', false);
+            },
+          ),
         ],
       ),
     );
@@ -1810,16 +2046,24 @@ class LocalFilesPage extends StatefulWidget {
 }
 
 class _LocalFilesPageState extends State<LocalFilesPage> {
-  Future<void> _pickAndPlay() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.media,
-      allowMultiple: false,
-    );
-    if (result != null && result.files.single.path != null) {
-      final path = result.files.single.path!;
-      final name = result.files.single.name;
-      await audioService.playFile(path, title: name);
-      if (mounted) Navigator.pop(context);
+  Future<void> _openFilesApp() async {
+    // Open system Files app using platform channel / intent
+    try {
+      const platform = MethodChannel('com.mustami3.audio/files');
+      await platform.invokeMethod('openFilesApp');
+    } catch (_) {
+      // Fallback: use file_picker with audio/video types only (not images)
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['mp3', 'm4a', 'aac', 'opus', 'mp4', 'webm', 'mkv'],
+        allowMultiple: false,
+      );
+      if (result != null && result.files.single.path != null) {
+        final path = result.files.single.path!;
+        final name = result.files.single.name;
+        await audioService.playFile(path, title: name);
+        if (mounted) Navigator.pop(context);
+      }
     }
   }
 
@@ -1877,7 +2121,7 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
               ),
               const SizedBox(height: 32),
               GestureDetector(
-                onTap: _pickAndPlay,
+                onTap: _openFilesApp,
                 child: Container(
                   padding: const EdgeInsets.symmetric(
                       horizontal: 32, vertical: 16),

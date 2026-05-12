@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:isolate';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
@@ -101,8 +102,108 @@ class AudioPlayerService {
 
 final audioService = AudioPlayerService();
 
-// Fix 6: Global notifier to refresh ListenPage when download completes
+// Global notifier to refresh ListenPage when download completes
 final ValueNotifier<String?> _downloadCompleteNotifier = ValueNotifier(null);
+
+// ─────────────────────────────────────────────
+//  MANIFEST CACHE  (يحفظ الـ manifest لكل فيديو لتجنب إعادة جلبه)
+// ─────────────────────────────────────────────
+class _ManifestCache {
+  static final Map<String, StreamManifest> _cache = {};
+  static final Map<String, Future<StreamManifest>> _pending = {};
+
+  static Future<StreamManifest> get(YoutubeExplode yt, String videoId) {
+    // إذا موجود في الكاش → أرجعه فوراً
+    if (_cache.containsKey(videoId)) {
+      return Future.value(_cache[videoId]!);
+    }
+    // إذا يوجد طلب جاري لنفس الـ ID → انتظره بدل طلب ثانٍ
+    if (_pending.containsKey(videoId)) {
+      return _pending[videoId]!;
+    }
+    final future = yt.videos.streamsClient.getManifest(videoId).then((m) {
+      _cache[videoId] = m;
+      _pending.remove(videoId);
+      return m;
+    }).catchError((e) {
+      _pending.remove(videoId);
+      throw e;
+    });
+    _pending[videoId] = future;
+    return future;
+  }
+}
+
+// ─────────────────────────────────────────────
+//  DOWNLOAD ISOLATE  (تحميل في isolate منفصل لعدم تجميد الـ UI)
+// ─────────────────────────────────────────────
+class _DownloadArgs {
+  final String videoId;
+  final String safeTitle;
+  final String dirPath;
+  final bool audioOnly;
+  final String quality;
+  final SendPort sendPort;
+
+  const _DownloadArgs({
+    required this.videoId,
+    required this.safeTitle,
+    required this.dirPath,
+    required this.audioOnly,
+    required this.quality,
+    required this.sendPort,
+  });
+}
+
+// رسائل من الـ isolate: Map مع مفتاح 'progress' أو 'done' أو 'error'
+Future<void> _downloadIsolate(_DownloadArgs args) async {
+  final yt = YoutubeExplode();
+  try {
+    final manifest = await yt.videos.streamsClient.getManifest(args.videoId);
+
+    Stream<List<int>> stream;
+    String fileName;
+    int totalBytes;
+
+    if (args.audioOnly) {
+      final audio = manifest.audioOnly.withHighestBitrate();
+      totalBytes = audio.size.totalBytes;
+      stream = yt.videos.streamsClient.get(audio);
+      fileName = '${args.safeTitle}.m4a';
+    } else {
+      final muxed = manifest.muxed;
+      final chosen = args.quality == 'high'
+          ? muxed.withHighestBitrate()
+          : muxed.firstWhere(
+              (s) => s.videoQuality.name.contains('360'),
+              orElse: () => muxed.last,
+            );
+      totalBytes = chosen.size.totalBytes;
+      stream = yt.videos.streamsClient.get(chosen);
+      fileName = '${args.safeTitle}.mp4';
+    }
+
+    final file = File('${args.dirPath}/$fileName');
+    final sink = file.openWrite();
+    int downloaded = 0;
+
+    await for (final chunk in stream) {
+      sink.add(chunk);
+      downloaded += chunk.length;
+      if (totalBytes > 0) {
+        args.sendPort.send({'progress': downloaded / totalBytes});
+      }
+    }
+
+    await sink.flush();
+    await sink.close();
+    yt.close();
+    args.sendPort.send({'done': fileName});
+  } catch (e) {
+    yt.close();
+    args.sendPort.send({'error': e.toString()});
+  }
+}
 
 // ─────────────────────────────────────────────
 //  APP ROOT
@@ -1131,59 +1232,68 @@ class _VideoResultCard extends StatelessWidget {
         videoId: videoId,
         videoTitle: video.title,
         onDownload: (id, quality, audioOnly) async {
+          final yt = YoutubeExplode();
           try {
-            final yt = YoutubeExplode();
             final dir = await getApplicationDocumentsDirectory();
             final musicDir = Directory('${dir.path}/Mustami3');
             if (!await musicDir.exists()) await musicDir.create(recursive: true);
 
-            final manifest = await yt.videos.streamsClient.getManifest(id);
             final safeTitle = video.title
                 .replaceAll(RegExp(r'[^\w\s\u0600-\u06FF-]'), '')
                 .trim();
 
-            Stream<List<int>> stream;
-            String fileName;
+            // بدء التحميل في isolate منفصل
+            final receivePort = ReceivePort();
+            yt.close(); // سيُنشئ الـ isolate instance خاصة به
 
-            if (audioOnly) {
-              final audio = manifest.audioOnly.withHighestBitrate();
-              stream = yt.videos.streamsClient.get(audio);
-              fileName = '$safeTitle.m4a';
-            } else {
-              final muxed = manifest.muxed;
-              final chosen = quality == 'high'
-                  ? muxed.withHighestBitrate()
-                  : muxed.firstWhere(
-                      (s) => s.videoQuality.name.contains('360'),
-                      orElse: () => muxed.last,
+            await Isolate.spawn(
+              _downloadIsolate,
+              _DownloadArgs(
+                videoId: id,
+                safeTitle: safeTitle,
+                dirPath: musicDir.path,
+                audioOnly: audioOnly,
+                quality: quality,
+                sendPort: receivePort.sendPort,
+              ),
+            );
+
+            await for (final msg in receivePort) {
+              if (msg is Map) {
+                if (msg.containsKey('done')) {
+                  receivePort.close();
+                  final fileName = msg['done'] as String;
+                  _downloadCompleteNotifier.value = musicDir.path;
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('✅ تم التحميل: $fileName',
+                            textDirection: TextDirection.rtl),
+                        backgroundColor: Colors.green.shade700,
+                        behavior: SnackBarBehavior.floating,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                      ),
                     );
-              stream = yt.videos.streamsClient.get(chosen);
-              fileName = '$safeTitle.mp4';
-            }
-
-            final file = File('${musicDir.path}/$fileName');
-            final sink = file.openWrite();
-            await for (final chunk in stream) {
-              sink.add(chunk);
-            }
-            await sink.flush();
-            await sink.close();
-            yt.close();
-            _downloadCompleteNotifier.value = musicDir.path;
-
-            if (context.mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('✅ تم التحميل: $fileName',
-                      textDirection: TextDirection.rtl),
-                  backgroundColor: Colors.green.shade700,
-                  behavior: SnackBarBehavior.floating,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
-                ),
-              );
+                  }
+                  break;
+                } else if (msg.containsKey('error')) {
+                  receivePort.close();
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('❌ فشل التحميل: ${msg['error']}',
+                            textDirection: TextDirection.rtl),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                  break;
+                }
+              }
             }
           } catch (e) {
+            yt.close();
             if (context.mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
@@ -1386,6 +1496,15 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
       ),
     );
     _loadRelated();
+    // ── جلب الـ manifest مسبقاً في الخلفية ليكون جاهزاً عند الضغط على تحميل ──
+    _prefetchManifest(videoId);
+  }
+
+  void _prefetchManifest(String videoId) {
+    final yt = YoutubeExplode();
+    _ManifestCache.get(yt, videoId).then((_) => yt.close()).catchError((_) {
+      yt.close();
+    });
   }
 
   Future<void> _loadRelated() async {
@@ -1430,82 +1549,78 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
     setState(() {
       _isDownloading = true;
       _downloadProgress = 0;
-      _downloadStatus = 'جاري التحميل...';
+      _downloadStatus = 'جاري التحضير...';
     });
 
     try {
-      final yt = YoutubeExplode();
       final dir = await getApplicationDocumentsDirectory();
       final musicDir = Directory('${dir.path}/Mustami3');
       if (!await musicDir.exists()) await musicDir.create(recursive: true);
 
-      // Fetch manifest and use the already-known video title simultaneously
-      final manifest =
-          await yt.videos.streamsClient.getManifest(videoId);
-      // Use the title from the widget directly (no extra network call needed)
-      final safeTitle =
-          widget.video.title.replaceAll(RegExp(r'[^\w\s\u0600-\u06FF-]'), '').trim();
+      final safeTitle = widget.video.title
+          .replaceAll(RegExp(r'[^\w\s\u0600-\u06FF-]'), '')
+          .trim();
 
-      Stream<List<int>> stream;
-      String fileName;
-      int totalBytes = 0;
+      // ── جلب الـ manifest من الكاش (أو شبكة إذا لم يكن محفوظاً) ──
+      // نستخدم YoutubeExplode مؤقت فقط للـ manifest إذا لم يكن في الكاش
+      final yt = YoutubeExplode();
+      try {
+        await _ManifestCache.get(yt, videoId);
+      } finally {
+        yt.close();
+      }
 
-      if (audioOnly) {
-        final audio = manifest.audioOnly.withHighestBitrate();
-        totalBytes = audio.size.totalBytes;
-        stream = yt.videos.streamsClient.get(audio);
-        fileName = '$safeTitle.m4a';
-      } else {
-        final muxed = manifest.muxed;
-        final chosen = quality == 'high'
-            ? muxed.withHighestBitrate()
-            : muxed.firstWhere(
-                (s) => s.videoQuality.name.contains('360'),
-                orElse: () => muxed.last,
+      // ── تشغيل التحميل الفعلي في isolate منفصل ──
+      final receivePort = ReceivePort();
+      setState(() => _downloadStatus = 'جاري التحميل...');
+
+      await Isolate.spawn(
+        _downloadIsolate,
+        _DownloadArgs(
+          videoId: videoId,
+          safeTitle: safeTitle,
+          dirPath: musicDir.path,
+          audioOnly: audioOnly,
+          quality: quality,
+          sendPort: receivePort.sendPort,
+        ),
+      );
+
+      await for (final msg in receivePort) {
+        if (msg is Map) {
+          if (msg.containsKey('progress')) {
+            final p = (msg['progress'] as double).clamp(0.0, 1.0);
+            setState(() {
+              _downloadProgress = p;
+              _downloadStatus =
+                  'جاري التحميل... ${(p * 100).toStringAsFixed(0)}%';
+            });
+          } else if (msg.containsKey('done')) {
+            receivePort.close();
+            final fileName = msg['done'] as String;
+            setState(() {
+              _isDownloading = false;
+              _downloadStatus = '';
+            });
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('✅ تم التحميل: $fileName',
+                      textDirection: TextDirection.rtl),
+                  backgroundColor: Colors.green.shade700,
+                  behavior: SnackBarBehavior.floating,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                ),
               );
-        totalBytes = chosen.size.totalBytes;
-        stream = yt.videos.streamsClient.get(chosen);
-        fileName = '$safeTitle.mp4';
-      }
-
-      final file = File('${musicDir.path}/$fileName');
-      final sink = file.openWrite();
-      int downloaded = 0;
-
-      await for (final chunk in stream) {
-        sink.add(chunk);
-        downloaded += chunk.length;
-        if (totalBytes > 0) {
-          setState(() {
-            _downloadProgress = downloaded / totalBytes;
-            _downloadStatus =
-                'جاري التحميل... ${(_downloadProgress * 100).toStringAsFixed(0)}%';
-          });
+              _notifyDownloadComplete(musicDir.path);
+            }
+            break;
+          } else if (msg.containsKey('error')) {
+            receivePort.close();
+            throw Exception(msg['error']);
+          }
         }
-      }
-
-      await sink.flush();
-      await sink.close();
-      yt.close();
-
-      setState(() {
-        _isDownloading = false;
-        _downloadStatus = '';
-      });
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('✅ تم التحميل: $fileName',
-                textDirection: TextDirection.rtl),
-            backgroundColor: Colors.green.shade700,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12)),
-          ),
-        );
-        // Fix 6: Refresh ListenPage immediately after download
-        _notifyDownloadComplete(musicDir.path);
       }
     } catch (e) {
       setState(() {

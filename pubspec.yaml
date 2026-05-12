@@ -33,7 +33,7 @@ dependencies:
   path_provider: ^2.1.4
  
   # HTTP downloads
-  dio: ^5.7.0
+  dio: ^5.4.0
  
   # Preferences
   shared_preferences: ^2.3.3

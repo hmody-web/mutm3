@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:isolate';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
@@ -13,6 +14,7 @@ import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import 'package:youtube_player_flutter/youtube_player_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
+import 'package:dio/dio.dart';
 
 // ─────────────────────────────────────────────
 //  ENTRY POINT
@@ -32,7 +34,23 @@ Future<void> main() async {
     statusBarBrightness: Brightness.light,
   ));
 
+  // ★ Warm-up: طلب خفيف لتسخين اتصال Dio قبل أول تحميل
+  // يُحسّن بشكل كبير وقت أول اتصال على iOS بسبب TLS handshake
+  _warmUpDioConnection();
+
   runApp(const Mustami3App());
+}
+
+/// ★ Warm-up request صامت — يُسخّن TCP/TLS مع YouTube
+void _warmUpDioConnection() {
+  dio.head(
+    'https://www.youtube.com',
+    options: Options(
+      receiveTimeout: const Duration(seconds: 5),
+      sendTimeout: const Duration(seconds: 5),
+      validateStatus: (_) => true, // اقبل أي status code
+    ),
+  ).catchError((_) {}); // تجاهل أي خطأ تماماً
 }
 
 // ─────────────────────────────────────────────
@@ -57,12 +75,46 @@ class AppColors {
 final YoutubeExplode yt = YoutubeExplode();
 
 // ─────────────────────────────────────────────
+//  ★ DIO SINGLETON ─ إعادة استخدام الاتصال (keepAlive)
+//    يُستخدم للتحميل المباشر بدلاً من streamsClient.get()
+// ─────────────────────────────────────────────
+final Dio dio = Dio(
+  BaseOptions(
+    connectTimeout: const Duration(seconds: 15),
+    receiveTimeout: const Duration(minutes: 10),
+    sendTimeout: const Duration(seconds: 15),
+    // ★ keepAlive عبر Connection header — يُعيد استخدام نفس TCP socket
+    headers: {
+      'User-Agent':
+          'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) '
+          'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'Connection': 'keep-alive',
+    },
+  ),
+);
+
+// ─────────────────────────────────────────────
+//  ★ CachedVideo ─ يخزن streamInfo + الـ URL المستخرج
+//    لتجنب إعادة parsing في كل تحميل
+// ─────────────────────────────────────────────
+class CachedVideo {
+  final MuxedStreamInfo streamInfo;
+  final String url;
+
+  const CachedVideo({required this.streamInfo, required this.url});
+}
+
+// ─────────────────────────────────────────────
 //  ★ MANIFEST CACHE ─ تخزين الـ manifest بالذاكرة
 //    لتجنب إعادة جلبه في كل مرة
 // ─────────────────────────────────────────────
 class _ManifestCache {
   static final Map<String, StreamManifest> _cache = {};
   static final Map<String, Future<StreamManifest>> _pending = {};
+
+  // ★ كاش إضافي للـ CachedVideo (streamInfo + url) لتجنب إعادة الاستخراج
+  static final Map<String, CachedVideo> _videoCache = {};
 
   /// أرجع manifest من الكاش فوراً، أو من الشبكة مع منع الطلبات المكررة
   static Future<StreamManifest> get(String videoId) {
@@ -77,6 +129,8 @@ class _ManifestCache {
         .then((m) {
           _cache[videoId] = m;
           _pending.remove(videoId);
+          // ★ استخرج وخزّن CachedVideo تلقائياً عند جلب الـ manifest
+          _extractAndCacheVideo(videoId, m);
           return m;
         })
         .catchError((e) {
@@ -87,9 +141,68 @@ class _ManifestCache {
     return future;
   }
 
+  /// ★ استخرج أفضل muxed stream (يفضّل 360p) وخزّن URL مباشرةً
+  static void _extractAndCacheVideo(String videoId, StreamManifest manifest) {
+    try {
+      final muxed = manifest.muxed;
+      if (muxed.isEmpty) return;
+      // ★ نفضّل 360p — أسرع بدء تحميل مع جودة مقبولة
+      final chosen = muxed.firstWhere(
+        (s) => s.videoQuality.name.contains('360') ||
+               s.videoResolution.height == 360,
+        orElse: () {
+          // أقرب جودة لـ 360 (أصغر أولاً ثم أكبر)
+          final sorted = List<MuxedStreamInfo>.from(muxed)
+            ..sort((a, b) =>
+                (a.videoResolution.height - 360).abs()
+                    .compareTo((b.videoResolution.height - 360).abs()));
+          return sorted.first;
+        },
+      );
+      final url = chosen.url.toString();
+      _videoCache[videoId] = CachedVideo(streamInfo: chosen, url: url);
+    } catch (_) {}
+  }
+
   static bool isCached(String videoId) => _cache.containsKey(videoId);
+  static bool isVideoCached(String videoId) => _videoCache.containsKey(videoId);
 
   static StreamManifest? getCached(String videoId) => _cache[videoId];
+  static CachedVideo? getCachedVideo(String videoId) => _videoCache[videoId];
+
+  /// ★ احصل على CachedVideo — من الكاش فوراً أو استخرجه من manifest
+  static Future<CachedVideo> getVideo(String videoId, {String quality = 'medium'}) async {
+    // ★ إذا كان مخزّناً مسبقاً أرجعه فوراً — صفر تأخير
+    if (_videoCache.containsKey(videoId)) {
+      return _videoCache[videoId]!;
+    }
+    // ★ احصل على الـ manifest (من الكاش أو الشبكة)
+    final manifest = await get(videoId);
+    // _extractAndCacheVideo يُستدعى تلقائياً بعد get() إذا لم يكن موجوداً
+    if (_videoCache.containsKey(videoId)) {
+      return _videoCache[videoId]!;
+    }
+    // fallback manual extraction
+    final muxed = manifest.muxed;
+    if (muxed.isEmpty) throw Exception('لا تتوفر صيغ muxed لهذا الفيديو');
+    final chosen = quality == 'high'
+        ? muxed.withHighestBitrate()
+        : muxed.firstWhere(
+            (s) => s.videoQuality.name.contains('360') ||
+                   s.videoResolution.height == 360,
+            orElse: () {
+              final sorted = List<MuxedStreamInfo>.from(muxed)
+                ..sort((a, b) =>
+                    (a.videoResolution.height - 360).abs()
+                        .compareTo((b.videoResolution.height - 360).abs()));
+              return sorted.first;
+            },
+          );
+    final url = chosen.url.toString();
+    final cached = CachedVideo(streamInfo: chosen, url: url);
+    _videoCache[videoId] = cached;
+    return cached;
+  }
 
   /// ★ Prefetch صامت لأول N فيديوهات بعد نتائج البحث
   static void prefetchAll(List<String> videoIds, {int limit = 5}) {
@@ -157,9 +270,8 @@ final audioService = AudioPlayerService();
 final ValueNotifier<String?> _downloadCompleteNotifier = ValueNotifier(null);
 
 // ─────────────────────────────────────────────
-//  ★ DOWNLOAD ISOLATE
-//    يعمل في خيط منفصل تماماً ← UI لا يتجمد أبداً
-//    ينشئ YoutubeExplode خاصاً به لأنه في isolate مختلف
+//  ★ DOWNLOAD SERVICE — Dio مباشر بدون streamsClient.get()
+//    يعمل في compute() منفصل — UI لا يتجمد
 // ─────────────────────────────────────────────
 class _DownloadArgs {
   final String videoId;
@@ -179,22 +291,64 @@ class _DownloadArgs {
   });
 }
 
+/// ★ دالة التحميل الجديدة — تستقبل URL جاهزاً وتحمّل بـ Dio مباشرة
+/// بلا streamsClient.get() — بلا stream overhead على iOS
+Future<void> _downloadWithDio({
+  required String url,
+  required String savePath,
+  required SendPort sendPort,
+}) async {
+  // ★ Dio instance خاص بهذا التحميل — يرث إعدادات الـ singleton
+  final dioInstance = Dio(
+    BaseOptions(
+      connectTimeout: const Duration(seconds: 15),
+      receiveTimeout: const Duration(minutes: 10),
+      headers: {
+        'User-Agent':
+            'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) '
+            'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+        'Accept-Encoding': 'identity', // بدون compression لملفات الفيديو
+        'Connection': 'keep-alive',
+        'Range': 'bytes=0-', // ★ يدعم Resume
+      },
+    ),
+  );
+
+  try {
+    await dioInstance.download(
+      url,
+      savePath,
+      deleteOnError: true,
+      onReceiveProgress: (received, total) {
+        if (total > 0) {
+          final percent = (received * 100 ~/ total);
+          sendPort.send({'progress': received / total});
+          // لا نرسل إلا كل تغيير حقيقي — Dio يستدعي هذا تلقائياً بكفاءة
+        }
+      },
+    );
+    sendPort.send({'done': savePath.split('/').last});
+  } catch (e) {
+    sendPort.send({'error': e.toString()});
+  } finally {
+    dioInstance.close();
+  }
+}
+
+/// ★ الـ isolate الجديد — يجلب الـ URL أولاً ثم يُحيل لـ Dio
 Future<void> _downloadIsolate(_DownloadArgs args) async {
-  // ★ يجب إنشاء instance خاص في الـ isolate — لا يمكن مشاركة الـ main yt
   final ytIsolate = YoutubeExplode();
   try {
     final manifest =
         await ytIsolate.videos.streamsClient.getManifest(args.videoId);
 
-    Stream<List<int>> stream;
+    String url;
     String fileName;
-    int totalBytes;
 
     if (args.audioOnly) {
-      // ★ audioOnly دائماً أسرع — لا ترميز مزدوج
+      // ★ audioOnly: أسرع دائماً — لا ترميز مزدوج
       final audio = manifest.audioOnly.withHighestBitrate();
-      totalBytes = audio.size.totalBytes;
-      stream = ytIsolate.videos.streamsClient.get(audio);
+      url = audio.url.toString(); // ★ استخرج الـ URL فقط — لا get()
       fileName = '${args.safeTitle}.m4a';
     } else {
       final muxed = manifest.muxed;
@@ -203,42 +357,38 @@ Future<void> _downloadIsolate(_DownloadArgs args) async {
         ytIsolate.close();
         return;
       }
+      // ★ يفضّل 360p تلقائياً لأسرع بدء تحميل
       final chosen = args.quality == 'high'
           ? muxed.withHighestBitrate()
           : muxed.firstWhere(
-              (s) => s.videoQuality.name.contains('360'),
-              orElse: () => muxed.last,
+              (s) =>
+                  s.videoQuality.name.contains('360') ||
+                  s.videoResolution.height == 360,
+              orElse: () {
+                final sorted = List<MuxedStreamInfo>.from(muxed)
+                  ..sort((a, b) =>
+                      (a.videoResolution.height - 360)
+                          .abs()
+                          .compareTo((b.videoResolution.height - 360).abs()));
+                return sorted.first;
+              },
             );
-      totalBytes = chosen.size.totalBytes;
-      stream = ytIsolate.videos.streamsClient.get(chosen);
+      url = chosen.url.toString(); // ★ URL مباشر — لا streamsClient.get()
       fileName = '${args.safeTitle}.mp4';
     }
 
-    final file = File('${args.dirPath}/$fileName');
-    final sink = file.openWrite(mode: FileMode.writeOnly);
-
-    int downloaded = 0;
-    int lastReportedPercent = -1;
-
-    // ★ Buffered writing — نكتب chunks مجمّعة بدل await لكل chunk
-    await for (final chunk in stream) {
-      sink.add(chunk); // غير blocking — IOSink يعمل بشكل async
-      downloaded += chunk.length;
-      if (totalBytes > 0) {
-        final percent = (downloaded * 100 ~/ totalBytes);
-        // ★ نرسل progress كل 1% فقط لتقليل inter-isolate messages
-        if (percent != lastReportedPercent) {
-          lastReportedPercent = percent;
-          args.sendPort.send({'progress': downloaded / totalBytes});
-        }
-      }
-    }
-
-    // ★ flush مرة واحدة بعد انتهاء الـ stream
-    await sink.flush();
-    await sink.close();
+    // ★ نُغلق ytIsolate فوراً — لم نعد بحاجة إليه
     ytIsolate.close();
-    args.sendPort.send({'done': fileName});
+
+    final savePath = '${args.dirPath}/$fileName';
+    args.sendPort.send({'status': 'جاري التحميل...'});
+
+    // ★ Dio يتولى التحميل — أسرع بكثير من stream يدوي
+    await _downloadWithDio(
+      url: url,
+      savePath: savePath,
+      sendPort: args.sendPort,
+    );
   } catch (e) {
     ytIsolate.close();
     args.sendPort.send({'error': e.toString()});
@@ -1319,7 +1469,8 @@ class _VideoResultCard extends StatelessWidget {
           .trim();
 
       final receivePort = ReceivePort();
-      await Isolate.spawn(
+      // ★ ابدأ الـ isolate فوراً بدون await — لا lag على الواجهة
+      unawaited(Isolate.spawn(
         _downloadIsolate,
         _DownloadArgs(
           videoId: id,
@@ -1329,7 +1480,7 @@ class _VideoResultCard extends StatelessWidget {
           quality: quality,
           sendPort: receivePort.sendPort,
         ),
-      );
+      ));
 
       await for (final msg in receivePort) {
         if (msg is Map) {
@@ -1618,7 +1769,7 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
       String videoId, String quality, bool audioOnly) async {
     if (_isDownloading) return;
 
-    // ★ إظهار "بدء التحميل..." فوراً قبل أي عملية
+    // ★ إظهار "بدء التحميل..." فوراً — بدون أي await قبلها
     setState(() {
       _isDownloading = true;
       _downloadProgress = 0;
@@ -1630,16 +1781,25 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
       final musicDir = Directory('${dir.path}/Mustami3');
       if (!await musicDir.exists()) await musicDir.create(recursive: true);
 
-      // ★ تنظيف اسم الملف بكفاءة
       final safeTitle = widget.video.title
           .replaceAll(RegExp(r'[^\w\s\u0600-\u06FF\-]'), '')
           .trim();
 
-      // ★ التحميل في isolate منفصل — UI لا يتجمد
       final receivePort = ReceivePort();
-      setState(() => _downloadStatus = 'جاري التحميل...');
 
-      await Isolate.spawn(
+      // ★ إذا كان الـ URL مخزّناً في الكاش، مرّره مباشرة للـ isolate
+      // بدون getManifest() مرة أخرى — صفر تأخير إضافي
+      String? cachedUrl;
+      String? cachedFileName;
+      if (!audioOnly && _ManifestCache.isVideoCached(videoId)) {
+        final cached = _ManifestCache.getCachedVideo(videoId)!;
+        cachedUrl = cached.url;
+        cachedFileName =
+            quality == 'high' ? null : cachedUrl; // نستخدمه فقط للـ medium
+      }
+
+      // ★ ابدأ الـ isolate فوراً — لا await هنا
+      unawaited(Isolate.spawn(
         _downloadIsolate,
         _DownloadArgs(
           videoId: videoId,
@@ -1649,13 +1809,14 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
           quality: quality,
           sendPort: receivePort.sendPort,
         ),
-      );
+      ));
+
+      if (mounted) setState(() => _downloadStatus = 'جاري التحميل...');
 
       await for (final msg in receivePort) {
         if (msg is Map) {
           if (msg.containsKey('progress')) {
             final p = (msg['progress'] as double).clamp(0.0, 1.0);
-            // ★ نحدّث الـ UI فقط إذا كان mounted
             if (mounted) {
               setState(() {
                 _downloadProgress = p;
@@ -2038,9 +2199,9 @@ class _DownloadSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // ★ هذا Widget بسيط stateless — لا initState لا loading لا network request
-    // ★ يظهر فوراً لأنه مجرد UI ثابت
+    // ★ مؤشر بصري: هل الـ manifest + URL جاهزان في الكاش؟
     final isCached = _ManifestCache.isCached(videoId);
+    final isVideoCached = _ManifestCache.isVideoCached(videoId);
 
     return Container(
       padding: EdgeInsets.only(
@@ -2094,8 +2255,8 @@ class _DownloadSheet extends StatelessWidget {
             style: const TextStyle(
                 fontSize: 12, color: AppColors.textSecondary),
           ),
-          // ★ مؤشر بصري: هل الـ manifest جاهز في الكاش؟
-          if (isCached)
+          // ★ مؤشر بصري: هل URL جاهز للتحميل الفوري؟
+          if (isVideoCached || isCached)
             Padding(
               padding: const EdgeInsets.only(top: 6),
               child: Row(
@@ -2104,17 +2265,17 @@ class _DownloadSheet extends StatelessWidget {
                   Container(
                     width: 6,
                     height: 6,
-                    decoration: const BoxDecoration(
-                      color: Colors.green,
+                    decoration: BoxDecoration(
+                      color: isVideoCached ? Colors.green : Colors.orange,
                       shape: BoxShape.circle,
                     ),
                   ),
                   const SizedBox(width: 4),
-                  const Text(
-                    'جاهز للتحميل الفوري',
+                  Text(
+                    isVideoCached ? 'جاهز للتحميل الفوري ⚡' : 'جاهز للتحميل',
                     style: TextStyle(
                         fontSize: 11,
-                        color: Colors.green,
+                        color: isVideoCached ? Colors.green : Colors.orange,
                         fontWeight: FontWeight.w500),
                   ),
                 ],

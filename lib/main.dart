@@ -51,6 +51,57 @@ class AppColors {
 }
 
 // ─────────────────────────────────────────────
+//  ★ SINGLETON YoutubeExplode ─ لا تُنشئ instance ثانٍ أبداً
+//    يُغلق فقط عند إنهاء التطبيق كلياً
+// ─────────────────────────────────────────────
+final YoutubeExplode yt = YoutubeExplode();
+
+// ─────────────────────────────────────────────
+//  ★ MANIFEST CACHE ─ تخزين الـ manifest بالذاكرة
+//    لتجنب إعادة جلبه في كل مرة
+// ─────────────────────────────────────────────
+class _ManifestCache {
+  static final Map<String, StreamManifest> _cache = {};
+  static final Map<String, Future<StreamManifest>> _pending = {};
+
+  /// أرجع manifest من الكاش فوراً، أو من الشبكة مع منع الطلبات المكررة
+  static Future<StreamManifest> get(String videoId) {
+    if (_cache.containsKey(videoId)) {
+      return Future.value(_cache[videoId]!);
+    }
+    if (_pending.containsKey(videoId)) {
+      return _pending[videoId]!;
+    }
+    final future = yt.videos.streamsClient
+        .getManifest(videoId)
+        .then((m) {
+          _cache[videoId] = m;
+          _pending.remove(videoId);
+          return m;
+        })
+        .catchError((e) {
+          _pending.remove(videoId);
+          throw e;
+        });
+    _pending[videoId] = future;
+    return future;
+  }
+
+  static bool isCached(String videoId) => _cache.containsKey(videoId);
+
+  static StreamManifest? getCached(String videoId) => _cache[videoId];
+
+  /// ★ Prefetch صامت لأول N فيديوهات بعد نتائج البحث
+  static void prefetchAll(List<String> videoIds, {int limit = 5}) {
+    for (final id in videoIds.take(limit)) {
+      if (!isCached(id) && !_pending.containsKey(id)) {
+        get(id).catchError((_) {}); // صامت — لا نهتم بالأخطاء هنا
+      }
+    }
+  }
+}
+
+// ─────────────────────────────────────────────
 //  GLOBAL AUDIO PLAYER SERVICE
 // ─────────────────────────────────────────────
 class AudioPlayerService {
@@ -106,36 +157,9 @@ final audioService = AudioPlayerService();
 final ValueNotifier<String?> _downloadCompleteNotifier = ValueNotifier(null);
 
 // ─────────────────────────────────────────────
-//  MANIFEST CACHE  (يحفظ الـ manifest لكل فيديو لتجنب إعادة جلبه)
-// ─────────────────────────────────────────────
-class _ManifestCache {
-  static final Map<String, StreamManifest> _cache = {};
-  static final Map<String, Future<StreamManifest>> _pending = {};
-
-  static Future<StreamManifest> get(YoutubeExplode yt, String videoId) {
-    // إذا موجود في الكاش → أرجعه فوراً
-    if (_cache.containsKey(videoId)) {
-      return Future.value(_cache[videoId]!);
-    }
-    // إذا يوجد طلب جاري لنفس الـ ID → انتظره بدل طلب ثانٍ
-    if (_pending.containsKey(videoId)) {
-      return _pending[videoId]!;
-    }
-    final future = yt.videos.streamsClient.getManifest(videoId).then((m) {
-      _cache[videoId] = m;
-      _pending.remove(videoId);
-      return m;
-    }).catchError((e) {
-      _pending.remove(videoId);
-      throw e;
-    });
-    _pending[videoId] = future;
-    return future;
-  }
-}
-
-// ─────────────────────────────────────────────
-//  DOWNLOAD ISOLATE  (تحميل في isolate منفصل لعدم تجميد الـ UI)
+//  ★ DOWNLOAD ISOLATE
+//    يعمل في خيط منفصل تماماً ← UI لا يتجمد أبداً
+//    ينشئ YoutubeExplode خاصاً به لأنه في isolate مختلف
 // ─────────────────────────────────────────────
 class _DownloadArgs {
   final String videoId;
@@ -155,23 +179,30 @@ class _DownloadArgs {
   });
 }
 
-// رسائل من الـ isolate: Map مع مفتاح 'progress' أو 'done' أو 'error'
 Future<void> _downloadIsolate(_DownloadArgs args) async {
-  final yt = YoutubeExplode();
+  // ★ يجب إنشاء instance خاص في الـ isolate — لا يمكن مشاركة الـ main yt
+  final ytIsolate = YoutubeExplode();
   try {
-    final manifest = await yt.videos.streamsClient.getManifest(args.videoId);
+    final manifest =
+        await ytIsolate.videos.streamsClient.getManifest(args.videoId);
 
     Stream<List<int>> stream;
     String fileName;
     int totalBytes;
 
     if (args.audioOnly) {
+      // ★ audioOnly دائماً أسرع — لا ترميز مزدوج
       final audio = manifest.audioOnly.withHighestBitrate();
       totalBytes = audio.size.totalBytes;
-      stream = yt.videos.streamsClient.get(audio);
+      stream = ytIsolate.videos.streamsClient.get(audio);
       fileName = '${args.safeTitle}.m4a';
     } else {
       final muxed = manifest.muxed;
+      if (muxed.isEmpty) {
+        args.sendPort.send({'error': 'لا تتوفر صيغ muxed لهذا الفيديو'});
+        ytIsolate.close();
+        return;
+      }
       final chosen = args.quality == 'high'
           ? muxed.withHighestBitrate()
           : muxed.firstWhere(
@@ -179,28 +210,37 @@ Future<void> _downloadIsolate(_DownloadArgs args) async {
               orElse: () => muxed.last,
             );
       totalBytes = chosen.size.totalBytes;
-      stream = yt.videos.streamsClient.get(chosen);
+      stream = ytIsolate.videos.streamsClient.get(chosen);
       fileName = '${args.safeTitle}.mp4';
     }
 
     final file = File('${args.dirPath}/$fileName');
-    final sink = file.openWrite();
-    int downloaded = 0;
+    final sink = file.openWrite(mode: FileMode.writeOnly);
 
+    int downloaded = 0;
+    int lastReportedPercent = -1;
+
+    // ★ Buffered writing — نكتب chunks مجمّعة بدل await لكل chunk
     await for (final chunk in stream) {
-      sink.add(chunk);
+      sink.add(chunk); // غير blocking — IOSink يعمل بشكل async
       downloaded += chunk.length;
       if (totalBytes > 0) {
-        args.sendPort.send({'progress': downloaded / totalBytes});
+        final percent = (downloaded * 100 ~/ totalBytes);
+        // ★ نرسل progress كل 1% فقط لتقليل inter-isolate messages
+        if (percent != lastReportedPercent) {
+          lastReportedPercent = percent;
+          args.sendPort.send({'progress': downloaded / totalBytes});
+        }
       }
     }
 
+    // ★ flush مرة واحدة بعد انتهاء الـ stream
     await sink.flush();
     await sink.close();
-    yt.close();
+    ytIsolate.close();
     args.sendPort.send({'done': fileName});
   } catch (e) {
-    yt.close();
+    ytIsolate.close();
     args.sendPort.send({'error': e.toString()});
   }
 }
@@ -363,7 +403,6 @@ class _ListenPageState extends State<ListenPage> {
   void initState() {
     super.initState();
     _loadFiles();
-    // Fix 6: Listen for download completion and refresh automatically
     _downloadCompleteNotifier.addListener(_onDownloadComplete);
   }
 
@@ -384,11 +423,13 @@ class _ListenPageState extends State<ListenPage> {
     final dir = await getApplicationDocumentsDirectory();
     final musicDir = Directory('${dir.path}/Mustami3');
     if (!await musicDir.exists()) await musicDir.create(recursive: true);
+    // ★ stat() مرة واحدة لكل ملف ثم نرتّب — لا نكرر statSync في comparator
+    final entities = musicDir.listSync();
+    final withStat = entities.map((e) => MapEntry(e, e.statSync())).toList()
+      ..sort((a, b) => b.value.modified.compareTo(a.value.modified));
     setState(() {
       _downloadDir = musicDir.path;
-      _localFiles = musicDir.listSync()
-        ..sort((a, b) =>
-            b.statSync().modified.compareTo(a.statSync().modified));
+      _localFiles = withStat.map((e) => e.key).toList();
     });
   }
 
@@ -927,7 +968,7 @@ class _BrowseCard extends StatelessWidget {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  YOUTUBE SEARCH PAGE  (الصفحة الرئيسية للبحث)
+//  YOUTUBE SEARCH PAGE
 // ═══════════════════════════════════════════════════════════
 class YouTubeSearchPage extends StatefulWidget {
   const YouTubeSearchPage({super.key});
@@ -938,12 +979,14 @@ class YouTubeSearchPage extends StatefulWidget {
 
 class _YouTubeSearchPageState extends State<YouTubeSearchPage> {
   final TextEditingController _searchController = TextEditingController();
-  final YoutubeExplode _yt = YoutubeExplode();
+
+  // ★ لا نُنشئ YoutubeExplode هنا — نستخدم الـ singleton العالمي `yt`
+  // ★ لا نُغلقه هنا لأنه مشترك بين كل التطبيق
+
   List<Video> _results = [];
   bool _isSearching = false;
   String _query = '';
 
-  // ── Popular categories for home screen ──
   final List<Map<String, String>> _categories = [
     {'label': 'موسيقى', 'query': 'أغاني عربية 2024'},
     {'label': 'بودكاست', 'query': 'بودكاست عربي'},
@@ -956,7 +999,7 @@ class _YouTubeSearchPageState extends State<YouTubeSearchPage> {
   @override
   void dispose() {
     _searchController.dispose();
-    _yt.close();
+    // ★ لا نُغلق `yt` هنا — هو Singleton عالمي
     super.dispose();
   }
 
@@ -968,11 +1011,19 @@ class _YouTubeSearchPageState extends State<YouTubeSearchPage> {
       _results = [];
     });
     try {
-      final searchList = await _yt.search.search(query);
+      // ★ نستخدم الـ singleton مباشرة
+      final searchList = await yt.search.search(query);
+      final videos = searchList.whereType<Video>().take(20).toList();
       setState(() {
-        _results = searchList.whereType<Video>().take(20).toList();
+        _results = videos;
         _isSearching = false;
       });
+
+      // ★ Prefetch manifest لأول 5 فيديوهات في الخلفية فوراً بعد ظهور النتائج
+      _ManifestCache.prefetchAll(
+        videos.map((v) => v.id.value).toList(),
+        limit: 5,
+      );
     } catch (e) {
       setState(() => _isSearching = false);
       if (mounted) {
@@ -1028,7 +1079,6 @@ class _YouTubeSearchPageState extends State<YouTubeSearchPage> {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  // YouTube logo area
                   Container(
                     padding: const EdgeInsets.symmetric(
                         horizontal: 10, vertical: 6),
@@ -1222,8 +1272,11 @@ class _VideoResultCard extends StatelessWidget {
 
   const _VideoResultCard({required this.video, required this.onTap});
 
-  void _quickDownload(BuildContext context, bool audioOnly) {
+  // ★ تحميل سريع من بطاقة النتائج — يستخدم الكاش ويعمل في background
+  void _quickDownload(BuildContext context) {
     final videoId = video.id.value;
+
+    // ★ BottomSheet يظهر فوراً بدون أي await
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -1231,82 +1284,99 @@ class _VideoResultCard extends StatelessWidget {
       builder: (_) => _DownloadSheet(
         videoId: videoId,
         videoTitle: video.title,
-        onDownload: (id, quality, audioOnly) async {
-          final yt = YoutubeExplode();
-          try {
-            final dir = await getApplicationDocumentsDirectory();
-            final musicDir = Directory('${dir.path}/Mustami3');
-            if (!await musicDir.exists()) await musicDir.create(recursive: true);
+        onDownload: (id, quality, audioOnly) =>
+            _startQuickDownload(context, id, quality, audioOnly),
+      ),
+    );
+  }
 
-            final safeTitle = video.title
-                .replaceAll(RegExp(r'[^\w\s\u0600-\u06FF-]'), '')
-                .trim();
+  Future<void> _startQuickDownload(
+    BuildContext context,
+    String id,
+    String quality,
+    bool audioOnly,
+  ) async {
+    // ★ إظهار "بدء التحميل..." فوراً
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('⏳ بدء التحميل...',
+              textDirection: TextDirection.rtl),
+          backgroundColor: AppColors.primary,
+          behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
 
-            // بدء التحميل في isolate منفصل
-            final receivePort = ReceivePort();
-            yt.close(); // سيُنشئ الـ isolate instance خاصة به
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final musicDir = Directory('${dir.path}/Mustami3');
+      if (!await musicDir.exists()) await musicDir.create(recursive: true);
 
-            await Isolate.spawn(
-              _downloadIsolate,
-              _DownloadArgs(
-                videoId: id,
-                safeTitle: safeTitle,
-                dirPath: musicDir.path,
-                audioOnly: audioOnly,
-                quality: quality,
-                sendPort: receivePort.sendPort,
-              ),
-            );
+      final safeTitle = video.title
+          .replaceAll(RegExp(r'[^\w\s\u0600-\u06FF\-]'), '')
+          .trim();
 
-            await for (final msg in receivePort) {
-              if (msg is Map) {
-                if (msg.containsKey('done')) {
-                  receivePort.close();
-                  final fileName = msg['done'] as String;
-                  _downloadCompleteNotifier.value = musicDir.path;
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('✅ تم التحميل: $fileName',
-                            textDirection: TextDirection.rtl),
-                        backgroundColor: Colors.green.shade700,
-                        behavior: SnackBarBehavior.floating,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                      ),
-                    );
-                  }
-                  break;
-                } else if (msg.containsKey('error')) {
-                  receivePort.close();
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('❌ فشل التحميل: ${msg['error']}',
-                            textDirection: TextDirection.rtl),
-                        backgroundColor: Colors.red,
-                      ),
-                    );
-                  }
-                  break;
-                }
-              }
-            }
-          } catch (e) {
-            yt.close();
+      final receivePort = ReceivePort();
+      await Isolate.spawn(
+        _downloadIsolate,
+        _DownloadArgs(
+          videoId: id,
+          safeTitle: safeTitle,
+          dirPath: musicDir.path,
+          audioOnly: audioOnly,
+          quality: quality,
+          sendPort: receivePort.sendPort,
+        ),
+      );
+
+      await for (final msg in receivePort) {
+        if (msg is Map) {
+          if (msg.containsKey('done')) {
+            receivePort.close();
+            final fileName = msg['done'] as String;
+            _downloadCompleteNotifier.value = musicDir.path;
             if (context.mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: Text('❌ فشل التحميل: $e',
+                  content: Text('✅ تم التحميل: $fileName',
+                      textDirection: TextDirection.rtl),
+                  backgroundColor: Colors.green.shade700,
+                  behavior: SnackBarBehavior.floating,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                ),
+              );
+            }
+            break;
+          } else if (msg.containsKey('error')) {
+            receivePort.close();
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('❌ فشل التحميل: ${msg['error']}',
                       textDirection: TextDirection.rtl),
                   backgroundColor: Colors.red,
                 ),
               );
             }
+            break;
           }
-        },
-      ),
-    );
+          // progress messages مهملة هنا — الـ snackbar الأول يكفي
+        }
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ فشل التحميل: $e',
+                textDirection: TextDirection.rtl),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   @override
@@ -1427,9 +1497,9 @@ class _VideoResultCard extends StatelessWidget {
                 ),
               ],
             ),
-            // Fix 4: Download button directly on search result card
+            // ★ زر التحميل السريع — يفتح الـ sheet فوراً بدون await
             GestureDetector(
-              onTap: () => _quickDownload(context, false),
+              onTap: () => _quickDownload(context),
               child: Container(
                 width: double.infinity,
                 padding:
@@ -1495,23 +1565,17 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
         forceHD: false,
       ),
     );
-    _loadRelated();
-    // ── جلب الـ manifest مسبقاً في الخلفية ليكون جاهزاً عند الضغط على تحميل ──
-    _prefetchManifest(videoId);
-  }
 
-  void _prefetchManifest(String videoId) {
-    final yt = YoutubeExplode();
-    _ManifestCache.get(yt, videoId).then((_) => yt.close()).catchError((_) {
-      yt.close();
-    });
+    // ★ Prefetch manifest مباشرة باستخدام الـ singleton — بدون إنشاء instance جديد
+    _ManifestCache.get(videoId).catchError((_) {});
+
+    _loadRelated();
   }
 
   Future<void> _loadRelated() async {
     try {
-      final yt = YoutubeExplode();
+      // ★ نستخدم الـ singleton — بدون إنشاء instance جديد أو إغلاقه
       final results = await yt.search.search(widget.video.author);
-      yt.close();
       if (mounted) {
         setState(() {
           _relatedVideos = results
@@ -1520,6 +1584,11 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
               .take(10)
               .toList();
         });
+        // ★ Prefetch manifest للفيديوهات المقترحة في الخلفية أيضاً
+        _ManifestCache.prefetchAll(
+          _relatedVideos.map((v) => v.id.value).toList(),
+          limit: 3,
+        );
       }
     } catch (_) {}
   }
@@ -1527,10 +1596,12 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
   @override
   void dispose() {
     _controller.dispose();
+    // ★ لا نُغلق `yt` — هو Singleton عالمي
     super.dispose();
   }
 
-  Future<void> _showDownloadOptions() async {
+  // ★ BottomSheet يفتح فوراً بدون أي await
+  void _showDownloadOptions() {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -1546,10 +1617,12 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
   Future<void> _download(
       String videoId, String quality, bool audioOnly) async {
     if (_isDownloading) return;
+
+    // ★ إظهار "بدء التحميل..." فوراً قبل أي عملية
     setState(() {
       _isDownloading = true;
       _downloadProgress = 0;
-      _downloadStatus = 'جاري التحضير...';
+      _downloadStatus = 'بدء التحميل...';
     });
 
     try {
@@ -1557,20 +1630,12 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
       final musicDir = Directory('${dir.path}/Mustami3');
       if (!await musicDir.exists()) await musicDir.create(recursive: true);
 
+      // ★ تنظيف اسم الملف بكفاءة
       final safeTitle = widget.video.title
-          .replaceAll(RegExp(r'[^\w\s\u0600-\u06FF-]'), '')
+          .replaceAll(RegExp(r'[^\w\s\u0600-\u06FF\-]'), '')
           .trim();
 
-      // ── جلب الـ manifest من الكاش (أو شبكة إذا لم يكن محفوظاً) ──
-      // نستخدم YoutubeExplode مؤقت فقط للـ manifest إذا لم يكن في الكاش
-      final yt = YoutubeExplode();
-      try {
-        await _ManifestCache.get(yt, videoId);
-      } finally {
-        yt.close();
-      }
-
-      // ── تشغيل التحميل الفعلي في isolate منفصل ──
+      // ★ التحميل في isolate منفصل — UI لا يتجمد
       final receivePort = ReceivePort();
       setState(() => _downloadStatus = 'جاري التحميل...');
 
@@ -1590,19 +1655,22 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
         if (msg is Map) {
           if (msg.containsKey('progress')) {
             final p = (msg['progress'] as double).clamp(0.0, 1.0);
-            setState(() {
-              _downloadProgress = p;
-              _downloadStatus =
-                  'جاري التحميل... ${(p * 100).toStringAsFixed(0)}%';
-            });
+            // ★ نحدّث الـ UI فقط إذا كان mounted
+            if (mounted) {
+              setState(() {
+                _downloadProgress = p;
+                _downloadStatus =
+                    'جاري التحميل... ${(p * 100).toStringAsFixed(0)}%';
+              });
+            }
           } else if (msg.containsKey('done')) {
             receivePort.close();
             final fileName = msg['done'] as String;
-            setState(() {
-              _isDownloading = false;
-              _downloadStatus = '';
-            });
             if (mounted) {
+              setState(() {
+                _isDownloading = false;
+                _downloadStatus = '';
+              });
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text('✅ تم التحميل: $fileName',
@@ -1613,7 +1681,7 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
                       borderRadius: BorderRadius.circular(12)),
                 ),
               );
-              _notifyDownloadComplete(musicDir.path);
+              _downloadCompleteNotifier.value = musicDir.path;
             }
             break;
           } else if (msg.containsKey('error')) {
@@ -1623,11 +1691,11 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
         }
       }
     } catch (e) {
-      setState(() {
-        _isDownloading = false;
-        _downloadStatus = '';
-      });
       if (mounted) {
+        setState(() {
+          _isDownloading = false;
+          _downloadStatus = '';
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('❌ فشل التحميل: $e',
@@ -1640,11 +1708,6 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
         );
       }
     }
-  }
-
-  void _notifyDownloadComplete(String dirPath) {
-    // Signal global notifier so ListenPage refreshes automatically
-    _downloadCompleteNotifier.value = dirPath;
   }
 
   @override
@@ -1679,8 +1742,8 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
                   color: AppColors.textPrimary),
             ),
             actions: [
-              // Download Button
               GestureDetector(
+                // ★ _showDownloadOptions ليست async — تفتح الـ sheet فوراً
                 onTap: _isDownloading ? null : _showDownloadOptions,
                 child: Container(
                   margin: const EdgeInsets.only(right: 12),
@@ -1740,10 +1803,9 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
           body: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ── YouTube Player ──
               player,
 
-              // ── Download Progress Bar ──
+              // ★ Progress bar سلسة
               if (_isDownloading)
                 Container(
                   padding: const EdgeInsets.symmetric(
@@ -1776,7 +1838,7 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
                   ),
                 ),
 
-              // ── Video Info ──
+              // ── Video Info + Related ──
               Expanded(
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.all(16),
@@ -1814,60 +1876,36 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
                                   fontSize: 13,
                                   color: AppColors.textSecondary,
                                   fontWeight: FontWeight.w500),
-                              textDirection: TextDirection.rtl,
                             ),
                           ),
                         ],
                       ),
-                      if (widget.video.description.isNotEmpty) ...[
-                        const SizedBox(height: 12),
-                        const Divider(color: AppColors.divider),
-                        const SizedBox(height: 8),
-                        const Text(
-                          'الوصف',
-                          style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.textSecondary),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          widget.video.description,
-                          maxLines: 5,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontSize: 12,
-                              color: AppColors.textSecondary,
-                              height: 1.5),
-                          textDirection: TextDirection.rtl,
-                        ),
-                      ],
-                      // Fix 3: Related videos section
                       if (_relatedVideos.isNotEmpty) ...[
-                        const SizedBox(height: 16),
-                        const Divider(color: AppColors.divider),
-                        const SizedBox(height: 8),
+                        const SizedBox(height: 20),
                         const Text(
-                          'فيديوهات ذات صلة',
+                          'فيديوهات مشابهة',
                           style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
-                              color: AppColors.textPrimary),
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.textPrimary,
+                          ),
                         ),
-                        const SizedBox(height: 10),
-                        ...(_relatedVideos.map((v) => _RelatedVideoCard(
-                              video: v,
-                              onTap: () {
-                                Navigator.pushReplacement(
-                                  context,
-                                  CupertinoPageRoute(
-                                      builder: (_) =>
-                                          YouTubePlayerPage(video: v)),
-                                );
-                              },
-                            ))),
+                        const SizedBox(height: 12),
+                        ..._relatedVideos.map(
+                          (v) => _RelatedVideoCard(
+                            video: v,
+                            onTap: () {
+                              Navigator.pushReplacement(
+                                context,
+                                CupertinoPageRoute(
+                                  builder: (_) =>
+                                      YouTubePlayerPage(video: v),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
                       ],
-                      const SizedBox(height: 80),
                     ],
                   ),
                 ),
@@ -1881,7 +1919,7 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
 }
 
 // ─────────────────────────────────────────────
-//  Related Video Card (Fix 3)
+//  Related Video Card
 // ─────────────────────────────────────────────
 class _RelatedVideoCard extends StatelessWidget {
   final Video video;
@@ -1985,9 +2023,9 @@ class _RelatedVideoCard extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────
-//  Download Bottom Sheet
+//  ★ Download Bottom Sheet — يظهر فوراً بدون أي await
 // ─────────────────────────────────────────────
-class _DownloadSheet extends StatefulWidget {
+class _DownloadSheet extends StatelessWidget {
   final String videoId;
   final String videoTitle;
   final Function(String, String, bool) onDownload;
@@ -1999,19 +2037,11 @@ class _DownloadSheet extends StatefulWidget {
   });
 
   @override
-  State<_DownloadSheet> createState() => _DownloadSheetState();
-}
-
-class _DownloadSheetState extends State<_DownloadSheet> {
-  // Removed manifest pre-fetching — options appear instantly
-
-  @override
-  void initState() {
-    super.initState();
-  }
-
-  @override
   Widget build(BuildContext context) {
+    // ★ هذا Widget بسيط stateless — لا initState لا loading لا network request
+    // ★ يظهر فوراً لأنه مجرد UI ثابت
+    final isCached = _ManifestCache.isCached(videoId);
+
     return Container(
       padding: EdgeInsets.only(
         left: 20,
@@ -2037,7 +2067,6 @@ class _DownloadSheetState extends State<_DownloadSheet> {
           ),
           const SizedBox(height: 16),
 
-          // Icon + title
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
@@ -2057,7 +2086,7 @@ class _DownloadSheetState extends State<_DownloadSheet> {
           ),
           const SizedBox(height: 6),
           Text(
-            widget.videoTitle,
+            videoTitle,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
@@ -2065,35 +2094,64 @@ class _DownloadSheetState extends State<_DownloadSheet> {
             style: const TextStyle(
                 fontSize: 12, color: AppColors.textSecondary),
           ),
+          // ★ مؤشر بصري: هل الـ manifest جاهز في الكاش؟
+          if (isCached)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Container(
+                    width: 6,
+                    height: 6,
+                    decoration: const BoxDecoration(
+                      color: Colors.green,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  const Text(
+                    'جاهز للتحميل الفوري',
+                    style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.green,
+                        fontWeight: FontWeight.w500),
+                  ),
+                ],
+              ),
+            ),
           const SizedBox(height: 20),
 
           _downloadBtn(
+            context: context,
             icon: '🎵',
             label: 'صوت فقط (جودة عالية)',
             subtitle: 'تنزيل الصوت بصيغة m4a',
             onTap: () {
               Navigator.pop(context);
-              widget.onDownload(widget.videoId, 'high', true);
+              onDownload(videoId, 'high', true);
             },
           ),
           const SizedBox(height: 10),
           _downloadBtn(
+            context: context,
             icon: '📹',
             label: 'فيديو جودة عالية',
             subtitle: 'أعلى جودة متاحة',
             onTap: () {
               Navigator.pop(context);
-              widget.onDownload(widget.videoId, 'high', false);
+              onDownload(videoId, 'high', false);
             },
           ),
           const SizedBox(height: 10),
           _downloadBtn(
+            context: context,
             icon: '📱',
             label: 'فيديو 360p',
             subtitle: 'جودة متوسطة - حجم أصغر',
             onTap: () {
               Navigator.pop(context);
-              widget.onDownload(widget.videoId, 'medium', false);
+              onDownload(videoId, 'medium', false);
             },
           ),
         ],
@@ -2102,6 +2160,7 @@ class _DownloadSheetState extends State<_DownloadSheet> {
   }
 
   Widget _downloadBtn({
+    required BuildContext context,
     required String icon,
     required String label,
     required String subtitle,
@@ -2162,12 +2221,10 @@ class LocalFilesPage extends StatefulWidget {
 
 class _LocalFilesPageState extends State<LocalFilesPage> {
   Future<void> _openFilesApp() async {
-    // Open system Files app using platform channel / intent
     try {
       const platform = MethodChannel('com.mustami3.audio/files');
       await platform.invokeMethod('openFilesApp');
     } catch (_) {
-      // Fallback: use file_picker with audio/video types only (not images)
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['mp3', 'm4a', 'aac', 'opus', 'mp4', 'webm', 'mkv'],

@@ -34,7 +34,8 @@ dependencies:
  
   # HTTP downloads
   dio: ^5.4.0
- 
+  cached_network_image: ^3.3.0
+
   # Preferences
   shared_preferences: ^2.3.3
  

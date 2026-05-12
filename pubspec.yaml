@@ -1,0 +1,49 @@
+name: mustm3
+description: "A new Flutter project."
+
+publish_to: 'none'
+version: 1.0.0+1
+ 
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+ 
+dependencies:
+  flutter:
+    sdk: flutter
+ 
+  # Audio playback with background support
+  just_audio: ^0.9.40
+  just_audio_background: ^0.0.1-beta.11
+  audio_session: ^0.1.21
+ 
+  # WebView for YouTube
+  webview_flutter: ^4.10.0
+ 
+  # YouTube download
+  youtube_explode_dart: ^2.3.5
+ 
+  # File picker for local files
+  file_picker: ^8.1.2
+ 
+  # Permissions
+  permission_handler: ^11.3.1
+ 
+  # Storage paths
+  path_provider: ^2.1.4
+ 
+  # HTTP downloads
+  dio: ^5.7.0
+ 
+  # Preferences
+  shared_preferences: ^2.3.3
+ 
+  cupertino_icons: ^1.0.8
+ 
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+ 
+flutter:
+  uses-material-design: true
+ 

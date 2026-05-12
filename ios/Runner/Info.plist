@@ -2,60 +2,90 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <!-- اسم التطبيق -->
-  <key>CFBundleDisplayName</key>
-  <string>مستمع</string>
 
-  <!-- تشغيل الصوت في الخلفية -->
-  <key>UIBackgroundModes</key>
-  <array>
-    <string>audio</string>
-    <string>fetch</string>
-  </array>
+	<!-- معلومات التطبيق الأساسية -->
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
 
-  <!-- صلاحية الوصول للملفات المحلية -->
-  <key>NSDocumentsFolderUsageDescription</key>
-  <string>مستمع يحتاج إلى الوصول للملفات لتشغيلها</string>
+	<key>CFBundleDisplayName</key>
+	<string>مستمع</string>
 
-  <key>NSMicrophoneUsageDescription</key>
-  <string>مستمع يحتاج صلاحية الميكروفون لدعم الصوت</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
 
-  <!-- دعم الشبكة المحلية -->
-  <key>NSLocalNetworkUsageDescription</key>
-  <string>مستمع يستخدم الشبكة للتحميل من يوتيوب</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 
-  <!-- السماح بمحتوى HTTP عند الحاجة -->
-  <key>NSAppTransportSecurity</key>
-  <dict>
-    <key>NSAllowsArbitraryLoads</key>
-    <true/>
-    <key>NSAllowsArbitraryLoadsInWebContent</key>
-    <true/>
-  </dict>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
 
-  <!-- دعم الاتجاه -->
-  <key>UISupportedInterfaceOrientations</key>
-  <array>
-    <string>UIInterfaceOrientationPortrait</string>
-    <string>UIInterfaceOrientationLandscapeLeft</string>
-    <string>UIInterfaceOrientationLandscapeRight</string>
-  </array>
+	<key>CFBundleName</key>
+	<string>mustm3</string>
 
-  <key>UISupportedInterfaceOrientations~ipad</key>
-  <array>
-    <string>UIInterfaceOrientationPortrait</string>
-    <string>UIInterfaceOrientationPortraitUpsideDown</string>
-    <string>UIInterfaceOrientationLandscapeLeft</string>
-    <string>UIInterfaceOrientationLandscapeRight</string>
-  </array>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
 
-  <key>UILaunchStoryboardName</key>
-  <string>LaunchScreen</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(FLUTTER_BUILD_NAME)</string>
 
-  <key>UIMainStoryboardFile</key>
-  <string>Main</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
 
-  <key>CFBundlePackageType</key>
-  <string>APPL</string>
+	<key>CFBundleVersion</key>
+	<string>$(FLUTTER_BUILD_NUMBER)</string>
+
+	<!-- التشغيل بالخلفية -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+		<string>fetch</string>
+	</array>
+
+	<!-- صلاحيات -->
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>مستمع يحتاج إلى الوصول للملفات لتشغيلها</string>
+
+	<key>NSMicrophoneUsageDescription</key>
+	<string>مستمع يحتاج صلاحية الميكروفون لدعم الصوت</string>
+
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>مستمع يستخدم الشبكة للتحميل من يوتيوب</string>
+
+	<!-- السماح بمحتوى HTTP -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+		<key>NSAllowsArbitraryLoadsInWebContent</key>
+		<true/>
+	</dict>
+
+	<!-- الاتجاهات -->
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+
+	<!-- شاشة البداية -->
+	<key>UILaunchStoryboardName</key>
+	<string>LaunchScreen</string>
+
+	<key>UIMainStoryboardFile</key>
+	<string>Main</string>
+
+	<!-- دعم iOS Scene -->
+	<key>UIApplicationSupportsIndirectInputEvents</key>
+	<true/>
+
 </dict>
 </plist>

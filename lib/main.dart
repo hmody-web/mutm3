@@ -281,6 +281,10 @@ class _DownloadArgs {
   final String quality;
   final SendPort sendPort;
 
+  /// ★ URL جاهز من الكاش — إذا موجود يتجاوز الـ isolate كل network calls
+  /// بدون getManifest، بدون parsing، بدون decipher — تحميل فوري
+  final String? directUrl;
+
   const _DownloadArgs({
     required this.videoId,
     required this.safeTitle,
@@ -288,6 +292,7 @@ class _DownloadArgs {
     required this.audioOnly,
     required this.quality,
     required this.sendPort,
+    this.directUrl, // اختياري — null = fallback لـ YoutubeExplode
   });
 }
 
@@ -335,8 +340,31 @@ Future<void> _downloadWithDio({
   }
 }
 
-/// ★ الـ isolate الجديد — يجلب الـ URL أولاً ثم يُحيل لـ Dio
+/// ★ الـ isolate المحسّن — مسارَان:
+///   FAST PATH : directUrl موجود → Dio مباشرة — لا network، لا parsing
+///   FALLBACK  : directUrl null  → YoutubeExplode يجلب manifest ثم Dio
 Future<void> _downloadIsolate(_DownloadArgs args) async {
+  // ════════════════════════════════════════════
+  //  FAST PATH — URL جاهز من الكاش
+  //  لا YoutubeExplode، لا getManifest، لا decipher
+  // ════════════════════════════════════════════
+  if (args.directUrl != null) {
+    final ext = args.audioOnly ? 'm4a' : 'mp4';
+    final savePath = '${args.dirPath}/${args.safeTitle}.$ext';
+    args.sendPort.send({'status': 'جاري التحميل...'});
+    // ★ Dio مباشر — أسرع بدء ممكن
+    await _downloadWithDio(
+      url: args.directUrl!,
+      savePath: savePath,
+      sendPort: args.sendPort,
+    );
+    return; // ← نخرج — لا حاجة لأي شيء آخر
+  }
+
+  // ════════════════════════════════════════════
+  //  FALLBACK — لا يوجد URL مسبق في الكاش
+  //  ننشئ YoutubeExplode خاص بهذا الـ isolate
+  // ════════════════════════════════════════════
   final ytIsolate = YoutubeExplode();
   try {
     final manifest =
@@ -346,9 +374,8 @@ Future<void> _downloadIsolate(_DownloadArgs args) async {
     String fileName;
 
     if (args.audioOnly) {
-      // ★ audioOnly: أسرع دائماً — لا ترميز مزدوج
       final audio = manifest.audioOnly.withHighestBitrate();
-      url = audio.url.toString(); // ★ استخرج الـ URL فقط — لا get()
+      url = audio.url.toString();
       fileName = '${args.safeTitle}.m4a';
     } else {
       final muxed = manifest.muxed;
@@ -357,7 +384,7 @@ Future<void> _downloadIsolate(_DownloadArgs args) async {
         ytIsolate.close();
         return;
       }
-      // ★ يفضّل 360p تلقائياً لأسرع بدء تحميل
+      // ★ يفضّل 360p — أسرع بدء تحميل مع جودة مقبولة
       final chosen = args.quality == 'high'
           ? muxed.withHighestBitrate()
           : muxed.firstWhere(
@@ -373,17 +400,16 @@ Future<void> _downloadIsolate(_DownloadArgs args) async {
                 return sorted.first;
               },
             );
-      url = chosen.url.toString(); // ★ URL مباشر — لا streamsClient.get()
+      url = chosen.url.toString();
       fileName = '${args.safeTitle}.mp4';
     }
 
-    // ★ نُغلق ytIsolate فوراً — لم نعد بحاجة إليه
+    // ★ أغلق YoutubeExplode فوراً — لم نعد بحاجة إليه
     ytIsolate.close();
 
     final savePath = '${args.dirPath}/$fileName';
     args.sendPort.send({'status': 'جاري التحميل...'});
 
-    // ★ Dio يتولى التحميل — أسرع بكثير من stream يدوي
     await _downloadWithDio(
       url: url,
       savePath: savePath,
@@ -1469,6 +1495,14 @@ class _VideoResultCard extends StatelessWidget {
           .trim();
 
       final receivePort = ReceivePort();
+
+      // ★ FAST PATH: تحقق من الكاش — إذا URL جاهز يتجاوز الـ isolate كل
+      // network requests (getManifest + parsing + decipher)
+      String? directUrl;
+      if (!audioOnly && _ManifestCache.isVideoCached(id)) {
+        directUrl = _ManifestCache.getCachedVideo(id)!.url;
+      }
+
       // ★ ابدأ الـ isolate فوراً بدون await — لا lag على الواجهة
       unawaited(Isolate.spawn(
         _downloadIsolate,
@@ -1479,6 +1513,7 @@ class _VideoResultCard extends StatelessWidget {
           audioOnly: audioOnly,
           quality: quality,
           sendPort: receivePort.sendPort,
+          directUrl: directUrl, // ★ null = fallback، غير null = تحميل فوري
         ),
       ));
 
@@ -1785,20 +1820,18 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
           .replaceAll(RegExp(r'[^\w\s\u0600-\u06FF\-]'), '')
           .trim();
 
+      // ★ FAST PATH: تحقق من الكاش قبل إطلاق الـ isolate
+      // إذا كان URL موجوداً → الـ isolate يتجاوز getManifest كلياً
+      String? directUrl;
+      if (!audioOnly && _ManifestCache.isVideoCached(videoId)) {
+        directUrl = _ManifestCache.getCachedVideo(videoId)!.url;
+      }
+      // ملاحظة: audioOnly لا يستفيد من _videoCache لأنها تخزّن muxed فقط
+      // في هذه الحالة يسلك الـ isolate المسار الاحتياطي تلقائياً
+
       final receivePort = ReceivePort();
 
-      // ★ إذا كان الـ URL مخزّناً في الكاش، مرّره مباشرة للـ isolate
-      // بدون getManifest() مرة أخرى — صفر تأخير إضافي
-      String? cachedUrl;
-      String? cachedFileName;
-      if (!audioOnly && _ManifestCache.isVideoCached(videoId)) {
-        final cached = _ManifestCache.getCachedVideo(videoId)!;
-        cachedUrl = cached.url;
-        cachedFileName =
-            quality == 'high' ? null : cachedUrl; // نستخدمه فقط للـ medium
-      }
-
-      // ★ ابدأ الـ isolate فوراً — لا await هنا
+      // ★ ابدأ الـ isolate فوراً — بدون await
       unawaited(Isolate.spawn(
         _downloadIsolate,
         _DownloadArgs(
@@ -1808,6 +1841,7 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
           audioOnly: audioOnly,
           quality: quality,
           sendPort: receivePort.sendPort,
+          directUrl: directUrl, // ★ null = fallback، غير null = تحميل فوري
         ),
       ));
 

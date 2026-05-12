@@ -21,7 +21,8 @@ dependencies:
  
   # YouTube download
   youtube_explode_dart: ^2.3.5
- 
+  youtube_player_flutter: ^9.1.1
+
   # File picker for local files
   file_picker: ^8.1.2
  

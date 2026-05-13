@@ -299,11 +299,19 @@ class AudioPlayerService {
     final session = await AudioSession.instance;
     await session.configure(const AudioSessionConfiguration.music());
 
-    // تحديث currentIndex عند تغيّر المسار الحالي (يشمل الضغط على next/prev من شاشة القفل)
+    // تحديث currentIndex عند تغيّر المسار الحالي (next/prev من شاشة القفل فقط)
+    // نستخدم تأخيراً قصيراً حتى لا يتداخل مع القيم التي نضبطها يدوياً
     player.currentIndexStream.listen((index) {
-      if (index != null && index != currentIndex.value) {
-        currentIndex.value = index;
-        isVisible.value = true;
+      if (index != null) {
+        final list = playlist.value;
+        if (index < list.length && index != currentIndex.value) {
+          Future.microtask(() {
+            if (index != currentIndex.value) {
+              currentIndex.value = index;
+              isVisible.value = true;
+            }
+          });
+        }
       }
     });
 
@@ -378,19 +386,23 @@ class AudioPlayerService {
   /// تشغيل قائمة كاملة ابتداءً من index معيّن
   Future<void> playList(List<LocalMediaItem> items, int startIndex) async {
     if (items.isEmpty) return;
+    final clampedIndex = startIndex.clamp(0, items.length - 1);
+    // نضبط القيم فوراً قبل أي عملية غير متزامنة لتجنب التحديث المتأخر من الـ stream
     playlist.value = items;
-    currentIndex.value = startIndex.clamp(0, items.length - 1);
+    currentIndex.value = clampedIndex;
+    isVisible.value = true;
 
     _concatenating = _buildSource(items);
     try {
+      // نُوقف الـ stream مؤقتاً حتى لا يتداخل مع القيمة التي ضبطناها
       await player.setAudioSource(
         _concatenating!,
-        initialIndex: currentIndex.value,
+        initialIndex: clampedIndex,
         initialPosition: Duration.zero,
+        preload: false,
       );
+      currentIndex.value = clampedIndex; // نُعيد الضبط بعد setAudioSource
       await player.play();
-      isVisible.value = true;
-      // تحديث الصورة المحلية في MediaItem بعد التشغيل
       updateCurrentArtwork();
     } catch (e) {
       debugPrint('Error playList: $e');
@@ -406,9 +418,9 @@ class AudioPlayerService {
     if (_concatenating != null &&
         _concatenating!.length == list.length) {
       try {
+        currentIndex.value = index; // فوري قبل seek
         await player.seek(Duration.zero, index: index);
         await player.play();
-        currentIndex.value = index;
         isVisible.value = true;
         updateCurrentArtwork();
         return;
@@ -610,53 +622,38 @@ class MainShell extends StatefulWidget {
   State<MainShell> createState() => _MainShellState();
 }
 
-class _MainShellState extends State<MainShell>
-    with SingleTickerProviderStateMixin {
+class _MainShellState extends State<MainShell> {
   static const List<Widget> _pages = [
     ListenPage(),
     BrowsePage(),
     SettingsPage(),
   ];
 
-  late AnimationController _animCtrl;
   int _currentIndex = 0;
-  int _prevIndex = 0;
-  bool _goingRight = false; // اتجاه الانتقال
 
   @override
   void initState() {
     super.initState();
     audioService.init();
-    _animCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 320),
-      value: 1.0,
-    );
     _navIndexNotifier.addListener(_onNavChange);
   }
 
   @override
   void dispose() {
     _navIndexNotifier.removeListener(_onNavChange);
-    _animCtrl.dispose();
     super.dispose();
   }
 
   void _onNavChange() {
     final next = _navIndexNotifier.value;
     if (next == _currentIndex) return;
-    _prevIndex = _currentIndex;
-    _goingRight = next > _currentIndex;
     _currentIndex = next;
-    _animCtrl.forward(from: 0.0);
     setState(() {});
   }
 
   void _onSwipe(DragEndDetails d) {
     final v = d.primaryVelocity ?? 0;
     final cur = _navIndexNotifier.value;
-    // RTL: سحب يسار (سالب) → تبويب سابق (رقم أصغر = يمين)
-    //      سحب يمين (موجب) → تبويب تالٍ (رقم أكبر = يسار)
     if (v < -350 && cur > 0) {
       _navIndexNotifier.value = cur - 1;
     } else if (v > 350 && cur < 2) {
@@ -671,39 +668,10 @@ class _MainShellState extends State<MainShell>
       body: GestureDetector(
         onHorizontalDragEnd: _onSwipe,
         child: Stack(children: [
-          // ─ صفحة سابقة تخرج ─
-          if (_prevIndex != _currentIndex)
-            AnimatedBuilder(
-              animation: _animCtrl,
-              builder: (_, __) {
-                final exit = _animCtrl.value;
-                final dx = _goingRight ? -exit * 0.15 : exit * 0.15;
-                return Opacity(
-                  opacity: (1.0 - exit * 0.7).clamp(0.0, 1.0),
-                  child: Transform.translate(
-                    offset: Offset(
-                        MediaQuery.of(context).size.width * dx, 0),
-                    child: _pages[_prevIndex],
-                  ),
-                );
-              },
-            ),
-          // ─ صفحة حالية تدخل ─
-          AnimatedBuilder(
-            animation: _animCtrl,
-            builder: (_, __) {
-              final enter = _animCtrl.value;
-              final startDx = _goingRight ? 0.3 : -0.3;
-              final dx = startDx * (1.0 - enter);
-              return Opacity(
-                opacity: enter.clamp(0.0, 1.0),
-                child: Transform.translate(
-                  offset: Offset(
-                      MediaQuery.of(context).size.width * dx, 0),
-                  child: _pages[_currentIndex],
-                ),
-              );
-            },
+          // ─ الصفحات بدون انيميشن ─
+          IndexedStack(
+            index: _currentIndex,
+            children: _pages,
           ),
           // ─ Mini Player + Bottom Nav ─
           Positioned(
@@ -801,45 +769,50 @@ class _GlassNavBarState extends State<_GlassNavBar>
       child: ClipRRect(
         borderRadius: BorderRadius.circular(36),
         child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 28, sigmaY: 28),
+          filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
           child: Container(
             height: 66,
             decoration: BoxDecoration(
-              // خلفية زجاجية مائلة للأحمر
+              // زجاج شفاف حقيقي
               color: isDark
-                  ? const Color(0xFF1A0A0A).withOpacity(0.88)
-                  : Colors.white.withOpacity(0.78),
+                  ? Colors.black.withOpacity(0.30)
+                  : Colors.white.withOpacity(0.28),
               borderRadius: BorderRadius.circular(36),
               border: Border.all(
                 color: isDark
-                    ? AppColors.primary.withOpacity(0.18)
-                    : AppColors.primary.withOpacity(0.14),
-                width: 1.0,
+                    ? Colors.white.withOpacity(0.10)
+                    : Colors.white.withOpacity(0.75),
+                width: 1.2,
               ),
               gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
                 colors: isDark
                     ? [
-                        const Color(0xFF1A0A0A).withOpacity(0.92),
-                        const Color(0xFF0D0505).withOpacity(0.92),
+                        Colors.white.withOpacity(0.08),
+                        Colors.white.withOpacity(0.02),
                       ]
                     : [
-                        Colors.white.withOpacity(0.85),
-                        AppColors.primary.withOpacity(0.04),
+                        Colors.white.withOpacity(0.60),
+                        Colors.white.withOpacity(0.20),
                       ],
               ),
               boxShadow: [
                 BoxShadow(
-                  color: AppColors.primary.withOpacity(isDark ? 0.25 : 0.12),
-                  blurRadius: 28,
-                  spreadRadius: -2,
-                  offset: const Offset(0, 6),
+                  color: AppColors.primary.withOpacity(isDark ? 0.18 : 0.08),
+                  blurRadius: 32,
+                  spreadRadius: -4,
+                  offset: const Offset(0, 8),
                 ),
                 BoxShadow(
-                  color: Colors.black.withOpacity(isDark ? 0.45 : 0.08),
+                  color: Colors.black.withOpacity(isDark ? 0.25 : 0.06),
                   blurRadius: 20,
                   offset: const Offset(0, 4),
+                ),
+                BoxShadow(
+                  color: Colors.white.withOpacity(isDark ? 0.04 : 0.50),
+                  blurRadius: 1,
+                  offset: const Offset(0, 1),
                 ),
               ],
             ),
@@ -906,15 +879,34 @@ class _GlassNavBarState extends State<_GlassNavBar>
                               curve: Curves.easeOutBack,
                               child: AnimatedContainer(
                                 duration: const Duration(milliseconds: 200),
-                                child: Icon(
-                                  tab.icon,
-                                  size: 22,
-                                  color: isSelected
-                                      ? AppColors.primary
-                                      : (isDark
-                                          ? Colors.white38
-                                          : AppColors.textSecondary),
-                                ),
+                                child: i == 0
+                                    ? ClipRRect(
+                                        borderRadius: BorderRadius.circular(6),
+                                        child: Image.asset(
+                                          'assets/images/logo.png',
+                                          width: 22,
+                                          height: 22,
+                                          fit: BoxFit.cover,
+                                          color: isSelected ? null : (isDark ? Colors.white38 : AppColors.textSecondary),
+                                          colorBlendMode: isSelected ? null : BlendMode.srcIn,
+                                          errorBuilder: (_, __, ___) => Icon(
+                                            tab.icon,
+                                            size: 22,
+                                            color: isSelected
+                                                ? AppColors.primary
+                                                : (isDark ? Colors.white38 : AppColors.textSecondary),
+                                          ),
+                                        ),
+                                      )
+                                    : Icon(
+                                        tab.icon,
+                                        size: 22,
+                                        color: isSelected
+                                            ? AppColors.primary
+                                            : (isDark
+                                                ? Colors.white38
+                                                : AppColors.textSecondary),
+                                      ),
                               ),
                             ),
                             const SizedBox(height: 3),
@@ -1855,6 +1847,22 @@ class _ListenPageState extends State<ListenPage> {
               ),
             const SizedBox(width: 8),
             GestureDetector(
+              onTap: () => Navigator.push(
+                context,
+                CupertinoPageRoute(builder: (_) => const FileBrowserPage()),
+              ).then((_) => _loadFiles()),
+              child: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: context.appSurface,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(CupertinoIcons.folder_fill,
+                    size: 18, color: context.appTextSec),
+              ),
+            ),
+            const SizedBox(width: 8),
+            GestureDetector(
               onTap: _loadFiles,
               child: Container(
                 padding: const EdgeInsets.all(8),
@@ -1902,6 +1910,37 @@ class _ListenPageState extends State<ListenPage> {
               Text(
                 'حمّل مقاطع من تبويب تصفح',
                 style: TextStyle(fontSize: 14, fontFamily: 'Tajawal', color: context.appTextSec),
+              ),
+              const SizedBox(height: 24),
+              GestureDetector(
+                onTap: () => Navigator.push(
+                  context,
+                  CupertinoPageRoute(builder: (_) => const FileBrowserPage()),
+                ),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: context.appSurface,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: context.appDivider, width: 0.8),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(CupertinoIcons.folder_fill, size: 18, color: context.appText),
+                      const SizedBox(width: 8),
+                      Text(
+                        'استيراد من الجهاز',
+                        style: TextStyle(
+                          fontFamily: 'Tajawal',
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: context.appText,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ],
           ),
@@ -1989,11 +2028,11 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
     if (mounted) setState(() => _thumbPath = path);
   }
 
-  // السحب للجهة اليمين (موجب) فقط
+  // السحب للجهة اليسرى (سالب) فقط في RTL
   void _onHorizontalDrag(DragUpdateDetails details) {
     setState(() {
       _dragOffset =
-          (_dragOffset + details.delta.dx).clamp(0.0, _revealWidth);
+          (_dragOffset - details.delta.dx).clamp(0.0, _revealWidth);
     });
   }
 
@@ -2048,10 +2087,10 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
       child: Stack(
         clipBehavior: Clip.none,
         children: [
-          // ── زر الحذف خلف الكرت (جهة اليمين) ──
+          // ── زر الحذف خلف الكرت (جهة اليسار) ──
           Positioned.fill(
             child: Align(
-              alignment: Alignment.centerRight,
+              alignment: Alignment.centerLeft,
               child: GestureDetector(
                 onTap: () {
                   _closeSwipe();
@@ -2063,7 +2102,7 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
                   margin: const EdgeInsets.symmetric(vertical: 2),
                   decoration: BoxDecoration(
                     gradient: const LinearGradient(
-                      colors: [Color(0xFFFF3B30), Color(0xFFD32F2F)],
+                      colors: [Color(0xFFD32F2F), Color(0xFFFF3B30)],
                     ),
                     borderRadius: BorderRadius.circular(16),
                   ),
@@ -2093,7 +2132,7 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
             onHorizontalDragEnd: _onDragEnd,
             onTap: _handleTap,
             child: Transform.translate(
-              offset: Offset(_dragOffset, 0),
+              offset: Offset(-_dragOffset, 0),
               child: _buildTile(isActive),
             ),
           ),
@@ -2536,18 +2575,28 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bg = isDark ? AppColors.darkBg : AppColors.background;
+    final surface = isDark ? AppColors.darkSurface : AppColors.surface;
+    final surfaceAlt = isDark ? AppColors.darkSurfaceAlt : AppColors.surfaceAlt;
+    final textPrimary = isDark ? AppColors.darkText : AppColors.textPrimary;
+    final textSecondary = isDark ? AppColors.darkTextSec : AppColors.textSecondary;
+    final divider = isDark ? AppColors.darkDivider : AppColors.divider;
+    final redLight = isDark ? AppColors.darkRedLight : AppColors.redLight;
+    final borderColor = isDark ? AppColors.darkDivider : AppColors.divider;
+
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: bg,
       body: SafeArea(
         child: Column(
           children: [
             // ── Header ──
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: const BoxDecoration(
-                color: AppColors.background,
+              decoration: BoxDecoration(
+                color: bg,
                 border: Border(
-                    bottom: BorderSide(color: AppColors.divider, width: 0.5)),
+                    bottom: BorderSide(color: divider, width: 0.5)),
               ),
               child: Row(
                 children: [
@@ -2556,21 +2605,22 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
                     child: Container(
                       padding: const EdgeInsets.all(8),
                       decoration: BoxDecoration(
-                        color: AppColors.surface,
+                        color: surface,
                         borderRadius: BorderRadius.circular(10),
                       ),
-                      child: const Icon(CupertinoIcons.xmark,
-                          size: 18, color: AppColors.textPrimary),
+                      child: Icon(CupertinoIcons.xmark,
+                          size: 18, color: textPrimary),
                     ),
                   ),
                   const SizedBox(width: 12),
-                  const Expanded(
+                  Expanded(
                     child: Text(
                       'ملفات الجهاز',
                       style: TextStyle(
                         fontSize: 17,
                         fontWeight: FontWeight.w700,
-                        color: AppColors.textPrimary,
+                        color: textPrimary,
+                        fontFamily: 'Tajawal',
                       ),
                     ),
                   ),
@@ -2608,14 +2658,15 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              const Icon(CupertinoIcons.music_note_2,
-                                  size: 48, color: AppColors.divider),
+                              Icon(CupertinoIcons.music_note_2,
+                                  size: 48, color: divider),
                               const SizedBox(height: 12),
-                              const Text(
+                              Text(
                                 'لم يُعثر على ملفات صوتية',
                                 style: TextStyle(
-                                    color: AppColors.textSecondary,
-                                    fontSize: 15),
+                                    color: textSecondary,
+                                    fontSize: 15,
+                                    fontFamily: 'Tajawal'),
                               ),
                               const SizedBox(height: 8),
                               TextButton(
@@ -2649,13 +2700,13 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
                               child: Container(
                                 decoration: BoxDecoration(
                                   color: isSelected
-                                      ? AppColors.redLight
-                                      : AppColors.surface,
+                                      ? redLight
+                                      : surface,
                                   borderRadius: BorderRadius.circular(14),
                                   border: Border.all(
                                     color: isSelected
                                         ? AppColors.primary.withOpacity(0.4)
-                                        : AppColors.divider,
+                                        : borderColor,
                                     width: 0.8,
                                   ),
                                 ),
@@ -2669,7 +2720,7 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
                                     decoration: BoxDecoration(
                                       color: isSelected
                                           ? AppColors.primary
-                                          : AppColors.surfaceAlt,
+                                          : surfaceAlt,
                                       borderRadius:
                                           BorderRadius.circular(10),
                                     ),
@@ -2679,7 +2730,7 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
                                           : CupertinoIcons.music_note,
                                       color: isSelected
                                           ? Colors.white
-                                          : AppColors.textSecondary,
+                                          : textSecondary,
                                       size: 20,
                                     ),
                                   ),
@@ -2690,17 +2741,18 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
                                     overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
                                       fontSize: 14,
+                                      fontFamily: 'Tajawal',
                                       fontWeight: FontWeight.w500,
                                       color: isSelected
                                           ? AppColors.primary
-                                          : AppColors.textPrimary,
+                                          : textPrimary,
                                     ),
                                   ),
                                   subtitle: Text(
                                     name.split('.').last.toUpperCase(),
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                         fontSize: 11,
-                                        color: AppColors.textSecondary),
+                                        color: textSecondary),
                                   ),
                                 ),
                               ),
@@ -2713,10 +2765,10 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
               Container(
                 padding: EdgeInsets.fromLTRB(
                     16, 12, 16, MediaQuery.of(context).padding.bottom + 12),
-                decoration: const BoxDecoration(
-                  color: AppColors.background,
+                decoration: BoxDecoration(
+                  color: bg,
                   border: Border(
-                      top: BorderSide(color: AppColors.divider, width: 0.5)),
+                      top: BorderSide(color: divider, width: 0.5)),
                 ),
                 child: GestureDetector(
                   onTap: _importSelected,
@@ -2734,6 +2786,7 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
                         color: Colors.white,
                         fontSize: 15,
                         fontWeight: FontWeight.w700,
+                        fontFamily: 'Tajawal',
                       ),
                     ),
                   ),
@@ -2817,17 +2870,24 @@ class _SearchPageState extends State<SearchPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bg = isDark ? AppColors.darkBg : AppColors.background;
+    final surface = isDark ? AppColors.darkSurface : AppColors.surface;
+    final textPrimary = isDark ? AppColors.darkText : AppColors.textPrimary;
+    final textSecondary = isDark ? AppColors.darkTextSec : AppColors.textSecondary;
+    final divider = isDark ? AppColors.darkDivider : AppColors.divider;
+
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: bg,
       body: SafeArea(
         child: Column(
           children: [
             // Top Bar
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: const BoxDecoration(
-                color: AppColors.background,
-                border: Border(bottom: BorderSide(color: AppColors.divider, width: 0.5)),
+              decoration: BoxDecoration(
+                color: bg,
+                border: Border(bottom: BorderSide(color: divider, width: 0.5)),
               ),
               child: Row(
                 children: [
@@ -2836,11 +2896,11 @@ class _SearchPageState extends State<SearchPage> {
                     child: Container(
                       padding: const EdgeInsets.all(8),
                       decoration: BoxDecoration(
-                        color: AppColors.surface,
+                        color: surface,
                         borderRadius: BorderRadius.circular(10),
                       ),
-                      child: const Icon(CupertinoIcons.xmark,
-                          size: 18, color: AppColors.textPrimary),
+                      child: Icon(CupertinoIcons.xmark,
+                          size: 18, color: textPrimary),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -2859,7 +2919,8 @@ class _SearchPageState extends State<SearchPage> {
                             style: TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.w700,
-                                fontSize: 14)),
+                                fontSize: 14,
+                                fontFamily: 'Tajawal')),
                       ],
                     ),
                   ),
@@ -2875,24 +2936,25 @@ class _SearchPageState extends State<SearchPage> {
                     child: Container(
                       height: 46,
                       decoration: BoxDecoration(
-                        color: AppColors.surface,
+                        color: surface,
                         borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: AppColors.divider, width: 0.5),
+                        border: Border.all(color: divider, width: 0.5),
                       ),
                       child: TextField(
                         controller: _searchController,
                         textDirection: TextDirection.rtl,
                         textInputAction: TextInputAction.search,
                         onSubmitted: _search,
-                        decoration: const InputDecoration(
+                        style: TextStyle(color: textPrimary, fontFamily: 'Tajawal'),
+                        decoration: InputDecoration(
                           hintText: 'ابحث عن فيديو...',
                           hintStyle: TextStyle(
-                              color: AppColors.textSecondary, fontSize: 14),
+                              color: textSecondary, fontSize: 14, fontFamily: 'Tajawal'),
                           prefixIcon: Icon(CupertinoIcons.search,
-                              color: AppColors.textSecondary, size: 18),
+                              color: textSecondary, size: 18),
                           border: InputBorder.none,
                           contentPadding:
-                              EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                              const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
                         ),
                       ),
                     ),
@@ -2921,7 +2983,7 @@ class _SearchPageState extends State<SearchPage> {
                       child: CircularProgressIndicator(
                           valueColor: AlwaysStoppedAnimation(AppColors.primary)))
                   : _results.isEmpty
-                      ? _buildHomeCategories()
+                      ? _buildHomeCategories(isDark: isDark, bg: bg, textPrimary: textPrimary, textSecondary: textSecondary)
                       : _buildSearchResults(),
             ),
           ],
@@ -2930,17 +2992,19 @@ class _SearchPageState extends State<SearchPage> {
     );
   }
 
-  Widget _buildHomeCategories() {
+  Widget _buildHomeCategories({required bool isDark, required Color bg, required Color textPrimary, required Color textSecondary}) {
+    final redLight = isDark ? AppColors.darkRedLight : AppColors.redLight;
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('اكتشف',
+          Text('اكتشف',
               style: TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.w700,
-                  color: AppColors.textPrimary)),
+                  fontFamily: 'Tajawal',
+                  color: textPrimary)),
           const SizedBox(height: 12),
           GridView.builder(
             shrinkWrap: true,
@@ -2961,7 +3025,7 @@ class _SearchPageState extends State<SearchPage> {
                 },
                 child: Container(
                   decoration: BoxDecoration(
-                    color: AppColors.redLight,
+                    color: redLight,
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
                         color: AppColors.primary.withOpacity(0.2), width: 0.5),
@@ -2972,6 +3036,7 @@ class _SearchPageState extends State<SearchPage> {
                     style: const TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
+                        fontFamily: 'Tajawal',
                         color: AppColors.primary),
                   ),
                 ),
@@ -2982,10 +3047,10 @@ class _SearchPageState extends State<SearchPage> {
           Center(
             child: Column(
               children: [
-                Icon(CupertinoIcons.search, size: 48, color: AppColors.divider),
+                Icon(CupertinoIcons.search, size: 48, color: isDark ? AppColors.darkDivider : AppColors.divider),
                 const SizedBox(height: 12),
-                const Text('ابحث عن أي فيديو يوتيوب',
-                    style: TextStyle(fontSize: 15, color: AppColors.textSecondary)),
+                Text('ابحث عن أي فيديو يوتيوب',
+                    style: TextStyle(fontSize: 15, fontFamily: 'Tajawal', color: textSecondary)),
               ],
             ),
           ),
@@ -3128,6 +3193,14 @@ class _VideoResultCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final surface = isDark ? AppColors.darkSurface : AppColors.surface;
+    final surfaceAlt = isDark ? AppColors.darkSurfaceAlt : AppColors.surfaceAlt;
+    final textPrimary = isDark ? AppColors.darkText : AppColors.textPrimary;
+    final textSecondary = isDark ? AppColors.darkTextSec : AppColors.textSecondary;
+    final divider = isDark ? AppColors.darkDivider : AppColors.divider;
+    final redLight = isDark ? AppColors.darkRedLight : AppColors.redLight;
+
     final thumb = video.thumbnails.mediumResUrl;
     final duration = video.duration;
     final durationStr = duration != null
@@ -3138,9 +3211,9 @@ class _VideoResultCard extends StatelessWidget {
       onTap: onTap,
       child: Container(
         decoration: BoxDecoration(
-          color: AppColors.surface,
+          color: surface,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: AppColors.divider, width: 0.5),
+          border: Border.all(color: divider, width: 0.5),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -3162,16 +3235,16 @@ class _VideoResultCard extends StatelessWidget {
                         placeholder: (_, __) => Container(
                           width: 120,
                           height: 80,
-                          color: AppColors.surfaceAlt,
-                          child: const Icon(CupertinoIcons.photo,
-                              color: AppColors.textSecondary),
+                          color: surfaceAlt,
+                          child: Icon(CupertinoIcons.photo,
+                              color: textSecondary),
                         ),
                         errorWidget: (_, __, ___) => Container(
                           width: 120,
                           height: 80,
-                          color: AppColors.surfaceAlt,
-                          child: const Icon(CupertinoIcons.play_rectangle_fill,
-                              color: AppColors.textSecondary),
+                          color: surfaceAlt,
+                          child: Icon(CupertinoIcons.play_rectangle_fill,
+                              color: textSecondary),
                         ),
                       ),
                       if (durationStr.isNotEmpty)
@@ -3204,10 +3277,11 @@ class _VideoResultCard extends StatelessWidget {
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           textDirection: TextDirection.rtl,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 13,
+                            fontFamily: 'Tajawal',
                             fontWeight: FontWeight.w600,
-                            color: AppColors.textPrimary,
+                            color: textPrimary,
                           ),
                         ),
                         const SizedBox(height: 4),
@@ -3216,15 +3290,16 @@ class _VideoResultCard extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           textDirection: TextDirection.rtl,
-                          style: const TextStyle(
-                              fontSize: 11, color: AppColors.textSecondary),
+                          style: TextStyle(
+                              fontFamily: 'Tajawal',
+                              fontSize: 11, color: textSecondary),
                         ),
                         const SizedBox(height: 6),
                         Container(
                           padding: const EdgeInsets.symmetric(
                               horizontal: 8, vertical: 3),
                           decoration: BoxDecoration(
-                            color: AppColors.redLight,
+                            color: redLight,
                             borderRadius: BorderRadius.circular(6),
                           ),
                           child: const Row(
@@ -3236,6 +3311,7 @@ class _VideoResultCard extends StatelessWidget {
                               Text('تشغيل',
                                   style: TextStyle(
                                       fontSize: 10,
+                                      fontFamily: 'Tajawal',
                                       color: AppColors.primary,
                                       fontWeight: FontWeight.w600)),
                             ],
@@ -3254,7 +3330,7 @@ class _VideoResultCard extends StatelessWidget {
                 padding:
                     const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
                 decoration: BoxDecoration(
-                  color: AppColors.redLight,
+                  color: redLight,
                   borderRadius: const BorderRadius.only(
                     bottomLeft: Radius.circular(16),
                     bottomRight: Radius.circular(16),
@@ -3269,6 +3345,7 @@ class _VideoResultCard extends StatelessWidget {
                     Text('تحميل فيديو',
                         style: TextStyle(
                             fontSize: 12,
+                            fontFamily: 'Tajawal',
                             color: AppColors.primary,
                             fontWeight: FontWeight.w600)),
                   ],
@@ -3293,6 +3370,13 @@ class _RelatedVideoCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final surface = isDark ? AppColors.darkSurface : AppColors.surface;
+    final surfaceAlt = isDark ? AppColors.darkSurfaceAlt : AppColors.surfaceAlt;
+    final textPrimary = isDark ? AppColors.darkText : AppColors.textPrimary;
+    final textSecondary = isDark ? AppColors.darkTextSec : AppColors.textSecondary;
+    final divider = isDark ? AppColors.darkDivider : AppColors.divider;
+
     final thumb = video.thumbnails.mediumResUrl;
     final duration = video.duration;
     final durationStr = duration != null
@@ -3304,9 +3388,9 @@ class _RelatedVideoCard extends StatelessWidget {
       child: Container(
         margin: const EdgeInsets.only(bottom: 10),
         decoration: BoxDecoration(
-          color: AppColors.surface,
+          color: surface,
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: AppColors.divider, width: 0.5),
+          border: Border.all(color: divider, width: 0.5),
         ),
         child: Row(
           children: [
@@ -3325,9 +3409,9 @@ class _RelatedVideoCard extends StatelessWidget {
                     errorWidget: (_, __, ___) => Container(
                       width: 110,
                       height: 72,
-                      color: AppColors.surfaceAlt,
-                      child: const Icon(CupertinoIcons.play_rectangle_fill,
-                          color: AppColors.textSecondary),
+                      color: surfaceAlt,
+                      child: Icon(CupertinoIcons.play_rectangle_fill,
+                          color: textSecondary),
                     ),
                   ),
                   if (durationStr.isNotEmpty)
@@ -3360,18 +3444,20 @@ class _RelatedVideoCard extends StatelessWidget {
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       textDirection: TextDirection.rtl,
-                      style: const TextStyle(
+                      style: TextStyle(
+                          fontFamily: 'Tajawal',
                           fontSize: 12,
                           fontWeight: FontWeight.w600,
-                          color: AppColors.textPrimary),
+                          color: textPrimary),
                     ),
                     const SizedBox(height: 4),
                     Text(
                       video.author,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          fontSize: 11, color: AppColors.textSecondary),
+                      style: TextStyle(
+                          fontFamily: 'Tajawal',
+                          fontSize: 11, color: textSecondary),
                     ),
                   ],
                 ),
@@ -3559,6 +3645,10 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bg = isDark ? AppColors.darkBg : AppColors.background;
+    final textPrimary = isDark ? AppColors.darkText : AppColors.textPrimary;
+
     return YoutubePlayerBuilder(
       player: YoutubePlayer(
         controller: _controller,
@@ -3571,22 +3661,22 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
       ),
       builder: (context, player) {
         return Scaffold(
-          backgroundColor: AppColors.background,
+          backgroundColor: bg,
           appBar: AppBar(
-            backgroundColor: AppColors.background,
+            backgroundColor: bg,
             elevation: 0,
             surfaceTintColor: Colors.transparent,
             leading: GestureDetector(
               onTap: () => Navigator.pop(context),
-              child: const Icon(CupertinoIcons.xmark,
-                  color: AppColors.textPrimary),
+              child: Icon(CupertinoIcons.xmark, color: textPrimary),
             ),
-            title: const Text(
+            title: Text(
               'مشاهدة الفيديو',
               style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
-                  color: AppColors.textPrimary),
+                  fontFamily: 'Tajawal',
+                  color: textPrimary),
             ),
             actions: [
               GestureDetector(
@@ -3652,7 +3742,7 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
                 Container(
                   padding: const EdgeInsets.symmetric(
                       horizontal: 16, vertical: 8),
-                  color: AppColors.redLight,
+                  color: isDark ? AppColors.darkRedLight : AppColors.redLight,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -3661,7 +3751,8 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
                         style: const TextStyle(
                             fontSize: 12,
                             color: AppColors.primary,
-                            fontWeight: FontWeight.w500),
+                            fontWeight: FontWeight.w500,
+                            fontFamily: 'Tajawal'),
                       ),
                       const SizedBox(height: 4),
                       ClipRRect(
@@ -3670,7 +3761,7 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
                           value: _downloadProgress > 0
                               ? _downloadProgress
                               : null,
-                          backgroundColor: Colors.white,
+                          backgroundColor: isDark ? Colors.white10 : Colors.white,
                           valueColor: const AlwaysStoppedAnimation(
                               AppColors.primary),
                           minHeight: 4,
@@ -3687,10 +3778,11 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
                     children: [
                       Text(
                         widget.video.title,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w700,
-                          color: AppColors.textPrimary,
+                          fontFamily: 'Tajawal',
+                          color: textPrimary,
                         ),
                         textDirection: TextDirection.rtl,
                       ),
@@ -3700,7 +3792,7 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
                           Container(
                             padding: const EdgeInsets.all(8),
                             decoration: BoxDecoration(
-                              color: AppColors.redLight,
+                              color: isDark ? AppColors.darkRedLight : AppColors.redLight,
                               borderRadius: BorderRadius.circular(10),
                             ),
                             child: const Icon(
@@ -3712,9 +3804,10 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
                           Expanded(
                             child: Text(
                               widget.video.author,
-                              style: const TextStyle(
+                              style: TextStyle(
                                   fontSize: 13,
-                                  color: AppColors.textSecondary,
+                                  fontFamily: 'Tajawal',
+                                  color: isDark ? AppColors.darkTextSec : AppColors.textSecondary,
                                   fontWeight: FontWeight.w500),
                             ),
                           ),
@@ -3722,12 +3815,13 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
                       ),
                       if (_relatedVideos.isNotEmpty) ...[
                         const SizedBox(height: 20),
-                        const Text(
+                        Text(
                           'فيديوهات مشابهة',
                           style: TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.w700,
-                            color: AppColors.textPrimary,
+                            fontFamily: 'Tajawal',
+                            color: textPrimary,
                           ),
                         ),
                         const SizedBox(height: 12),
@@ -3776,6 +3870,13 @@ class _DownloadSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bg = isDark ? AppColors.darkSurface : AppColors.background;
+    final textPrimary = isDark ? AppColors.darkText : AppColors.textPrimary;
+    final textSecondary = isDark ? AppColors.darkTextSec : AppColors.textSecondary;
+    final divider = isDark ? AppColors.darkDivider : AppColors.divider;
+    final redLight = isDark ? AppColors.darkRedLight : AppColors.redLight;
+
     final isCached = _ManifestCache.isCached(videoId);
     final isVideoCached = _ManifestCache.isVideoCached(videoId);
 
@@ -3786,9 +3887,9 @@ class _DownloadSheet extends StatelessWidget {
         top: 20,
         bottom: MediaQuery.of(context).padding.bottom + 20,
       ),
-      decoration: const BoxDecoration(
-        color: AppColors.background,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -3797,7 +3898,7 @@ class _DownloadSheet extends StatelessWidget {
             width: 36,
             height: 4,
             decoration: BoxDecoration(
-              color: AppColors.divider,
+              color: divider,
               borderRadius: BorderRadius.circular(2),
             ),
           ),
@@ -3813,19 +3914,20 @@ class _DownloadSheet extends StatelessWidget {
               errorWidget: (_, __, ___) => Container(
                 width: 120,
                 height: 80,
-                color: AppColors.redLight,
+                color: redLight,
                 child: const Icon(CupertinoIcons.cloud_download_fill,
                     color: AppColors.primary, size: 28),
               ),
             ),
           ),
           const SizedBox(height: 12),
-          const Text(
+          Text(
             'تحميل الفيديو',
             style: TextStyle(
                 fontSize: 18,
+                fontFamily: 'Tajawal',
                 fontWeight: FontWeight.w700,
-                color: AppColors.textPrimary),
+                color: textPrimary),
           ),
           const SizedBox(height: 6),
           Text(
@@ -3834,7 +3936,7 @@ class _DownloadSheet extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
             textDirection: TextDirection.rtl,
-            style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+            style: TextStyle(fontFamily: 'Tajawal', fontSize: 12, color: textSecondary),
           ),
           if (isVideoCached || isCached)
             Padding(
@@ -3854,6 +3956,7 @@ class _DownloadSheet extends StatelessWidget {
                   Text(
                     isVideoCached ? 'جاهز للتحميل الفوري ⚡' : 'جاهز للتحميل',
                     style: TextStyle(
+                        fontFamily: 'Tajawal',
                         fontSize: 11,
                         color: isVideoCached ? Colors.green : Colors.orange,
                         fontWeight: FontWeight.w500),
@@ -3867,6 +3970,10 @@ class _DownloadSheet extends StatelessWidget {
             icon: '📹',
             label: 'فيديو جودة عالية',
             subtitle: 'أعلى جودة متاحة',
+            isDark: isDark,
+            textPrimary: textPrimary,
+            textSecondary: textSecondary,
+            divider: divider,
             onTap: () {
               Navigator.pop(context);
               onDownload(videoId, 'high');
@@ -3878,6 +3985,10 @@ class _DownloadSheet extends StatelessWidget {
             icon: '📱',
             label: 'فيديو 360p',
             subtitle: 'جودة متوسطة - حجم أصغر',
+            isDark: isDark,
+            textPrimary: textPrimary,
+            textSecondary: textSecondary,
+            divider: divider,
             onTap: () {
               Navigator.pop(context);
               onDownload(videoId, 'medium');
@@ -3894,16 +4005,21 @@ class _DownloadSheet extends StatelessWidget {
     required String label,
     required String subtitle,
     required VoidCallback onTap,
+    required bool isDark,
+    required Color textPrimary,
+    required Color textSecondary,
+    required Color divider,
   }) {
+    final surface = isDark ? AppColors.darkSurfaceAlt : AppColors.surface;
     return GestureDetector(
       onTap: onTap,
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
         decoration: BoxDecoration(
-          color: AppColors.surface,
+          color: surface,
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: AppColors.divider, width: 0.5),
+          border: Border.all(color: divider, width: 0.5),
         ),
         child: Row(
           children: [
@@ -3914,18 +4030,20 @@ class _DownloadSheet extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(label,
-                      style: const TextStyle(
+                      style: TextStyle(
+                          fontFamily: 'Tajawal',
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
-                          color: AppColors.textPrimary)),
+                          color: textPrimary)),
                   Text(subtitle,
-                      style: const TextStyle(
-                          fontSize: 11, color: AppColors.textSecondary)),
+                      style: TextStyle(
+                          fontFamily: 'Tajawal',
+                          fontSize: 11, color: textSecondary)),
                 ],
               ),
             ),
-            const Icon(CupertinoIcons.chevron_left,
-                size: 14, color: AppColors.textSecondary),
+            Icon(CupertinoIcons.chevron_left,
+                size: 14, color: textSecondary),
           ],
         ),
       ),

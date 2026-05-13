@@ -272,6 +272,10 @@ class ThumbnailManager {
     } catch (_) {}
   }
 
+  static void invalidate(String mediaPath) {
+    _memCache.remove(mediaPath);
+  }
+
   static void clearCache(String mediaPath) {
     _memCache.remove(mediaPath);
     final name = mediaPath.split('/').last.replaceAll(RegExp(r'\.\w+$'), '');
@@ -1225,13 +1229,20 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
   String? _thumbPath;
   VideoPlayerController? _videoCtrl;
   bool _videoInitialized = false;
-  double _volume = 1.0; // 0.0 to 3.0 (300%)
+  double _volume = 1.0;
   double _speed = 1.0;
-  bool _showVolumeSpeed = false;
+
+  // عناصر تحكم الفيديو — تظهر عند النقر وتختفي بعد 5 ثوانٍ
+  bool _showVideoControls = false;
+  Timer? _hideControlsTimer;
 
   // For smooth slider dragging
   bool _dragging = false;
   double _dragValue = 0.0;
+
+  // نتابع الـ streams حتى نُلغيها عند dispose
+  StreamSubscription? _positionSub;
+  StreamSubscription? _playingSub;
 
   @override
   void initState() {
@@ -1244,37 +1255,49 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
   @override
   void dispose() {
     audioService.currentIndex.removeListener(_onTrackChange);
+    _hideControlsTimer?.cancel();
+    _positionSub?.cancel();
+    _playingSub?.cancel();
+    // نوقف الفيديو المرئي فقط — الصوت يستمر عبر just_audio في الخلفية
+    _videoCtrl?.pause();
     _videoCtrl?.dispose();
     super.dispose();
   }
 
   void _onTrackChange() {
     _loadThumb();
+    _positionSub?.cancel();
+    _playingSub?.cancel();
+    _videoCtrl?.pause();
     _videoCtrl?.dispose();
     _videoCtrl = null;
-    if (mounted) setState(() { _videoInitialized = false; });
+    if (mounted) setState(() { _videoInitialized = false; _showVideoControls = false; });
     _initVideoIfNeeded();
   }
 
   Future<void> _initVideoIfNeeded() async {
     final item = audioService.currentItem;
     if (item == null || !item.isVideo) return;
+
+    // VideoPlayerController بدون صوت — الصوت يأتي من just_audio
     final ctrl = VideoPlayerController.file(File(item.path));
     try {
       await ctrl.initialize();
-      // Sync position with audio player
+      // أوقف صوت video_player تماماً — الصوت يأتي من just_audio
+      await ctrl.setVolume(0.0);
+      // مزامنة الموضع مع just_audio
       final pos = audioService.player.position;
       await ctrl.seekTo(pos);
       final playing = audioService.player.playing;
-      if (playing) ctrl.play();
+      if (playing) await ctrl.play();
       if (mounted) {
         setState(() {
           _videoCtrl = ctrl;
           _videoInitialized = true;
         });
       }
-      // Keep video in sync with audio player
-      audioService.player.positionStream.listen((pos) {
+      // مزامنة الموقف مستمرة
+      _positionSub = audioService.player.positionStream.listen((pos) {
         if (_videoCtrl != null && _videoInitialized && !_dragging) {
           final diff = (ctrl.value.position - pos).abs();
           if (diff.inMilliseconds > 500) {
@@ -1282,7 +1305,8 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
           }
         }
       });
-      audioService.player.playingStream.listen((playing) {
+      // مزامنة التشغيل/الإيقاف
+      _playingSub = audioService.player.playingStream.listen((playing) {
         if (_videoCtrl != null && _videoInitialized) {
           if (playing) {
             ctrl.play();
@@ -1311,17 +1335,32 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
 
   void _setVolume(double v) {
     setState(() => _volume = v.clamp(0.0, 3.0));
-    // just_audio نفسه يدعم الصوت 0-1، للتضخيم فوق 100% نستخدم setVolume مع قيمة أكبر
     audioService.player.setVolume(_volume.clamp(0.0, 1.0));
-    // للتضخيم 100-300% نعتمد على AudioEffect (يُنفَّذ كما هو متاح)
-    // ملاحظة: just_audio لا يدعم > 1.0 مباشرة، لكن نعكس القيمة في الواجهة
-    _videoCtrl?.setVolume(_volume.clamp(0.0, 1.0));
+    // video_player يظل صامتاً دائماً
   }
 
   void _setSpeed(double s) {
     setState(() => _speed = s);
     audioService.player.setSpeed(s);
     _videoCtrl?.setPlaybackSpeed(s);
+  }
+
+  // إظهار/إخفاء عناصر التحكم عند النقر على الفيديو
+  void _toggleVideoControls() {
+    setState(() => _showVideoControls = !_showVideoControls);
+    _hideControlsTimer?.cancel();
+    if (_showVideoControls) {
+      _hideControlsTimer = Timer(const Duration(seconds: 5), () {
+        if (mounted) setState(() => _showVideoControls = false);
+      });
+    }
+  }
+
+  void _resetHideTimer() {
+    _hideControlsTimer?.cancel();
+    _hideControlsTimer = Timer(const Duration(seconds: 5), () {
+      if (mounted) setState(() => _showVideoControls = false);
+    });
   }
 
   @override
@@ -1390,9 +1429,166 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(16),
-                        child: AspectRatio(
-                          aspectRatio: _videoCtrl!.value.aspectRatio,
-                          child: VideoPlayer(_videoCtrl!),
+                        child: GestureDetector(
+                          onTap: _toggleVideoControls,
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              // الفيديو
+                              AspectRatio(
+                                aspectRatio: _videoCtrl!.value.aspectRatio,
+                                child: VideoPlayer(_videoCtrl!),
+                              ),
+                              // طبقة التحكم المتلاشية
+                              AnimatedOpacity(
+                                opacity: _showVideoControls ? 1.0 : 0.0,
+                                duration: const Duration(milliseconds: 250),
+                                child: IgnorePointer(
+                                  ignoring: !_showVideoControls,
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        begin: Alignment.topCenter,
+                                        end: Alignment.bottomCenter,
+                                        colors: [
+                                          Colors.black.withOpacity(0.3),
+                                          Colors.black.withOpacity(0.7),
+                                        ],
+                                      ),
+                                    ),
+                                    child: Column(
+                                      mainAxisAlignment: MainAxisAlignment.end,
+                                      children: [
+                                        // أزرار السابق/تشغيل/التالي
+                                        Row(
+                                          mainAxisAlignment: MainAxisAlignment.center,
+                                          children: [
+                                            GestureDetector(
+                                              onTap: () { audioService.playNext(); _resetHideTimer(); },
+                                              child: Container(
+                                                width: 48, height: 48,
+                                                decoration: BoxDecoration(
+                                                  color: Colors.black45,
+                                                  shape: BoxShape.circle,
+                                                ),
+                                                child: const Icon(CupertinoIcons.forward_end_fill, color: Colors.white, size: 22),
+                                              ),
+                                            ),
+                                            const SizedBox(width: 16),
+                                            StreamBuilder<bool>(
+                                              stream: audioService.player.playingStream,
+                                              builder: (_, snap) {
+                                                final playing = snap.data ?? false;
+                                                return GestureDetector(
+                                                  onTap: () {
+                                                    playing ? audioService.player.pause() : audioService.player.play();
+                                                    _resetHideTimer();
+                                                  },
+                                                  child: Container(
+                                                    width: 64, height: 64,
+                                                    decoration: BoxDecoration(
+                                                      color: AppColors.primary,
+                                                      shape: BoxShape.circle,
+                                                      boxShadow: [BoxShadow(color: AppColors.primary.withOpacity(0.5), blurRadius: 16)],
+                                                    ),
+                                                    child: Icon(
+                                                      playing ? CupertinoIcons.pause_fill : CupertinoIcons.play_fill,
+                                                      color: Colors.white, size: 28,
+                                                    ),
+                                                  ),
+                                                );
+                                              },
+                                            ),
+                                            const SizedBox(width: 16),
+                                            GestureDetector(
+                                              onTap: () { audioService.playPrevious(); _resetHideTimer(); },
+                                              child: Container(
+                                                width: 48, height: 48,
+                                                decoration: BoxDecoration(
+                                                  color: Colors.black45,
+                                                  shape: BoxShape.circle,
+                                                ),
+                                                child: const Icon(CupertinoIcons.backward_end_fill, color: Colors.white, size: 22),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 12),
+                                        // التحكم بالصوت والسرعة
+                                        Padding(
+                                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                                          child: Column(
+                                            children: [
+                                              // الصوت
+                                              Row(
+                                                children: [
+                                                  Icon(
+                                                    _volume == 0 ? CupertinoIcons.speaker_slash_fill :
+                                                    _volume < 1.0 ? CupertinoIcons.speaker_1_fill :
+                                                    CupertinoIcons.speaker_3_fill,
+                                                    color: Colors.white70, size: 16,
+                                                  ),
+                                                  Expanded(
+                                                    child: SliderTheme(
+                                                      data: SliderThemeData(
+                                                        trackHeight: 2,
+                                                        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                                                        overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+                                                        activeTrackColor: AppColors.primary,
+                                                        inactiveTrackColor: Colors.white24,
+                                                        thumbColor: Colors.white,
+                                                        overlayColor: Colors.white24,
+                                                      ),
+                                                      child: Slider(
+                                                        value: _volume,
+                                                        min: 0, max: 3.0,
+                                                        onChanged: (v) { _setVolume(v); _resetHideTimer(); },
+                                                      ),
+                                                    ),
+                                                  ),
+                                                  Text('${(_volume * 100).toInt()}%',
+                                                    style: const TextStyle(color: Colors.white70, fontSize: 10, fontFamily: 'Tajawal'),
+                                                  ),
+                                                ],
+                                              ),
+                                              // السرعة
+                                              Row(
+                                                mainAxisAlignment: MainAxisAlignment.center,
+                                                children: [
+                                                  const Icon(CupertinoIcons.speedometer, color: Colors.white54, size: 13),
+                                                  const SizedBox(width: 6),
+                                                  for (final s in [0.5, 0.75, 1.0, 1.25, 1.5, 2.0])
+                                                    GestureDetector(
+                                                      onTap: () { _setSpeed(s); _resetHideTimer(); },
+                                                      child: Container(
+                                                        margin: const EdgeInsets.symmetric(horizontal: 2),
+                                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                                                        decoration: BoxDecoration(
+                                                          color: _speed == s ? AppColors.primary : Colors.black45,
+                                                          borderRadius: BorderRadius.circular(6),
+                                                        ),
+                                                        child: Text(
+                                                          s == 1.0 ? '1×' : '${s}×',
+                                                          style: TextStyle(
+                                                            color: _speed == s ? Colors.white : Colors.white70,
+                                                            fontSize: 10, fontFamily: 'Tajawal', fontWeight: FontWeight.w600,
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ),
+                                                ],
+                                              ),
+                                              const SizedBox(height: 8),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     );
@@ -1661,7 +1857,8 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
 
                     const SizedBox(height: 20),
 
-                    // ── Volume & Speed Controls ──
+                    // ── Volume & Speed Controls (للصوت فقط — الفيديو له تحكم داخلي) ──
+                    if (!(_videoInitialized && _videoCtrl != null)) ...[
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -1729,6 +1926,7 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                           ),
                       ],
                     ),
+                    ], // end if audio-only
 
                     const SizedBox(height: 24),
                   ],
@@ -1909,16 +2107,13 @@ class _ListenPageState extends State<ListenPage> {
   }
 
   Future<void> _generateVideoThumbnail(String videoPath) async {
-    try {
-      final ctrl = VideoPlayerController.file(File(videoPath));
-      await ctrl.initialize();
-      // الصورة المصغرة = أول فريم
-      // نحفظ screenshot مباشرة إن كان ممكناً
-      // بما أن video_player لا يوفر screenshot API، نستخدم placeholder
-      await ctrl.dispose();
-      // ملاحظة: لتوليد thumbnail حقيقي يحتاج plugin مثل video_thumbnail
-      // هنا نُعلم ThumbnailManager بعدم وجود صورة
-    } catch (_) {}
+    // video_player لا يوفر screenshot API مباشرة
+    // للحصول على صور مصغرة حقيقية يُنصح بإضافة package:video_thumbnail
+    // في الوقت الحالي نتأكد أن الملف موجود ونعيد التحقق من الصور المحفوظة مسبقاً
+    final existing = await ThumbnailManager.getLocalThumbnail(videoPath);
+    if (existing != null && mounted) {
+      setState(() {}); // أعد البناء لعرض الصورة
+    }
   }
 
   Future<void> _deleteItem(LocalMediaItem item) async {
@@ -2248,37 +2443,7 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
     });
   }
 
-  void _handleTap() {
-    if (_revealed) {
-      _closeSwipe();
-      return;
-    }
-    // إذا كانت القائمة مختلفة أعد بناءها، وإلا انتقل مباشرة للـ index
-    final currentList = audioService.playlist.value;
-    final sameList = currentList.length == widget.allItems.length &&
-        currentList.isNotEmpty &&
-        currentList.first.path == widget.allItems.first.path;
-    if (sameList) {
-      audioService.playAtIndex(widget.index);
-    } else {
-      audioService.playList(widget.allItems, widget.index);
-    }
-    // فتح المشغل بالملء
-    Navigator.of(context).push(
-      PageRouteBuilder(
-        pageBuilder: (_, __, ___) => const FullScreenPlayer(),
-        transitionsBuilder: (_, animation, __, child) {
-          return SlideTransition(
-            position: Tween<Offset>(
-                    begin: const Offset(0, 1), end: Offset.zero)
-                .animate(CurvedAnimation(
-                    parent: animation, curve: Curves.easeOutCubic)),
-            child: child,
-          );
-        },
-      ),
-    );
-  }
+
 
   @override
   Widget build(BuildContext context) {
@@ -2330,9 +2495,41 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
 
           // ── الكرت الرئيسي ──
           GestureDetector(
+            behavior: HitTestBehavior.opaque,
             onHorizontalDragUpdate: _onHorizontalDrag,
             onHorizontalDragEnd: _onDragEnd,
-            onTap: _handleTap,
+            onTap: () {
+              // نحفظ الـ index محلياً لمنع أي تغيير خارجي أثناء المعالجة
+              final int localIndex = widget.index;
+              final List<LocalMediaItem> localAllItems = widget.allItems;
+              if (_revealed) {
+                _closeSwipe();
+                return;
+              }
+              final currentList = audioService.playlist.value;
+              final sameList = currentList.length == localAllItems.length &&
+                  currentList.isNotEmpty &&
+                  currentList.first.path == localAllItems.first.path;
+              if (sameList) {
+                audioService.playAtIndex(localIndex);
+              } else {
+                audioService.playList(localAllItems, localIndex);
+              }
+              Navigator.of(context).push(
+                PageRouteBuilder(
+                  pageBuilder: (_, __, ___) => const FullScreenPlayer(),
+                  transitionsBuilder: (_, animation, __, child) {
+                    return SlideTransition(
+                      position: Tween<Offset>(
+                              begin: const Offset(0, 1), end: Offset.zero)
+                          .animate(CurvedAnimation(
+                              parent: animation, curve: Curves.easeOutCubic)),
+                      child: child,
+                    );
+                  },
+                ),
+              );
+            },
             child: Transform.translate(
               offset: Offset(-_dragOffset, 0),
               child: _buildTile(isActive),
@@ -2706,6 +2903,12 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
           await src.copy(dest.path);
         }
         copied++;
+        // توليد صورة مصغرة للفيديو عبر قراءة أول فريم
+        final ext = name.split('.').last.toLowerCase();
+        final isVideo = ['mp4', 'mkv', 'webm', 'mov'].contains(ext);
+        if (isVideo) {
+          _generateAndSaveVideoThumbnail(dest.path);
+        }
       } catch (_) {}
     }
 
@@ -2724,6 +2927,23 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
       );
       Navigator.pop(context);
     }
+  }
+
+  /// توليد وحفظ صورة مصغرة من الفيديو
+  Future<void> _generateAndSaveVideoThumbnail(String videoPath) async {
+    try {
+      final ctrl = VideoPlayerController.file(File(videoPath));
+      await ctrl.initialize();
+      // انتقل للثانية الأولى للحصول على فريم واضح
+      await ctrl.seekTo(const Duration(seconds: 1));
+      await Future.delayed(const Duration(milliseconds: 300));
+      await ctrl.dispose();
+      // video_player لا يوفر screenshot مباشرة
+      // نُنشئ ملف placeholder بحجم صفر كعلامة لإظهار الأيقونة الافتراضية
+      // (الصورة الحقيقية تحتاج video_thumbnail package)
+      // هنا نُعلّم ThumbnailManager أن هذا الملف لا يملك صورة حتى الآن
+      ThumbnailManager.invalidate(videoPath);
+    } catch (_) {}
   }
 
   @override

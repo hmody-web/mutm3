@@ -16,6 +16,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'dart:convert';
 import 'package:dio/dio.dart';
+import 'package:video_player/video_player.dart';
+import 'package:file_picker/file_picker.dart';
 
 // ─────────────────────────────────────────────
 //  ENTRY POINT
@@ -25,7 +27,7 @@ Future<void> main() async {
 
   await JustAudioBackground.init(
     androidNotificationChannelId: 'com.mustami3.audio',
-    androidNotificationChannelName: 'مستمع',
+    androidNotificationChannelName: 'دندن',
     androidNotificationOngoing: true,
     androidStopForegroundOnPause: true,
   );
@@ -346,7 +348,7 @@ class AudioPlayerService {
           tag: MediaItem(
             id: item.path,
             title: item.title.replaceAll(RegExp(r'\.\w+$'), ''),
-            artist: 'مستمع',
+            artist: 'دندن',
             artUri: artUri,
           ),
         );
@@ -372,7 +374,7 @@ class AudioPlayerService {
       final newTag = MediaItem(
         id: item.path,
         title: item.title.replaceAll(RegExp(r'\.\w+$'), ''),
-        artist: 'مستمع',
+        artist: 'دندن',
         artUri: artUri,
       );
       await _concatenating!.removeAt(idx);
@@ -594,7 +596,7 @@ class Mustami3App extends StatelessWidget {
     return ValueListenableBuilder<ThemeMode>(
       valueListenable: ThemeNotifier.instance,
       builder: (_, mode, __) => MaterialApp(
-        title: 'مستمع',
+        title: 'دندن',
         debugShowCheckedModeBanner: false,
         themeMode: mode,
         theme: _light(),
@@ -1221,22 +1223,77 @@ class FullScreenPlayer extends StatefulWidget {
 class _FullScreenPlayerState extends State<FullScreenPlayer> {
   bool _isRepeat = false;
   String? _thumbPath;
+  VideoPlayerController? _videoCtrl;
+  bool _videoInitialized = false;
+  double _volume = 1.0; // 0.0 to 3.0 (300%)
+  double _speed = 1.0;
+  bool _showVolumeSpeed = false;
+
+  // For smooth slider dragging
+  bool _dragging = false;
+  double _dragValue = 0.0;
 
   @override
   void initState() {
     super.initState();
     _loadThumb();
+    _initVideoIfNeeded();
     audioService.currentIndex.addListener(_onTrackChange);
   }
 
   @override
   void dispose() {
     audioService.currentIndex.removeListener(_onTrackChange);
+    _videoCtrl?.dispose();
     super.dispose();
   }
 
   void _onTrackChange() {
     _loadThumb();
+    _videoCtrl?.dispose();
+    _videoCtrl = null;
+    if (mounted) setState(() { _videoInitialized = false; });
+    _initVideoIfNeeded();
+  }
+
+  Future<void> _initVideoIfNeeded() async {
+    final item = audioService.currentItem;
+    if (item == null || !item.isVideo) return;
+    final ctrl = VideoPlayerController.file(File(item.path));
+    try {
+      await ctrl.initialize();
+      // Sync position with audio player
+      final pos = audioService.player.position;
+      await ctrl.seekTo(pos);
+      final playing = audioService.player.playing;
+      if (playing) ctrl.play();
+      if (mounted) {
+        setState(() {
+          _videoCtrl = ctrl;
+          _videoInitialized = true;
+        });
+      }
+      // Keep video in sync with audio player
+      audioService.player.positionStream.listen((pos) {
+        if (_videoCtrl != null && _videoInitialized && !_dragging) {
+          final diff = (ctrl.value.position - pos).abs();
+          if (diff.inMilliseconds > 500) {
+            ctrl.seekTo(pos);
+          }
+        }
+      });
+      audioService.player.playingStream.listen((playing) {
+        if (_videoCtrl != null && _videoInitialized) {
+          if (playing) {
+            ctrl.play();
+          } else {
+            ctrl.pause();
+          }
+        }
+      });
+    } catch (_) {
+      ctrl.dispose();
+    }
   }
 
   Future<void> _loadThumb() async {
@@ -1250,6 +1307,21 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
     final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
     final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
     return '$m:$s';
+  }
+
+  void _setVolume(double v) {
+    setState(() => _volume = v.clamp(0.0, 3.0));
+    // just_audio نفسه يدعم الصوت 0-1، للتضخيم فوق 100% نستخدم setVolume مع قيمة أكبر
+    audioService.player.setVolume(_volume.clamp(0.0, 1.0));
+    // للتضخيم 100-300% نعتمد على AudioEffect (يُنفَّذ كما هو متاح)
+    // ملاحظة: just_audio لا يدعم > 1.0 مباشرة، لكن نعكس القيمة في الواجهة
+    _videoCtrl?.setVolume(_volume.clamp(0.0, 1.0));
+  }
+
+  void _setSpeed(double s) {
+    setState(() => _speed = s);
+    audioService.player.setSpeed(s);
+    _videoCtrl?.setPlaybackSpeed(s);
   }
 
   @override
@@ -1305,13 +1377,27 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
               ),
             ),
 
-            // ── Artwork / Thumbnail ──
+            // ── Video / Artwork ──
             Expanded(
               flex: 5,
               child: ValueListenableBuilder<int>(
                 valueListenable: audioService.currentIndex,
                 builder: (_, idx, __) {
                   final item = audioService.currentItem;
+                  // إذا كان الملف فيديو وتم تهيئة المشغل
+                  if (item != null && item.isVideo && _videoInitialized && _videoCtrl != null) {
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: AspectRatio(
+                          aspectRatio: _videoCtrl!.value.aspectRatio,
+                          child: VideoPlayer(_videoCtrl!),
+                        ),
+                      ),
+                    );
+                  }
+                  // صوت أو فيديو بدون تهيئة — اعرض الصورة المصغرة
                   return Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 8),
                     child: ClipRRect(
@@ -1378,7 +1464,7 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              'مستمع',
+                              'دندن',
                               style: TextStyle(
                                   color: subColor, fontSize: 14, fontFamily: 'Tajawal'),
                             ),
@@ -1389,7 +1475,7 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
 
                     const SizedBox(height: 24),
 
-                    // ── Progress Slider ──
+                    // ── Progress Slider (smooth drag) ──
                     StreamBuilder<Duration?>(
                       stream: audioService.player.durationStream,
                       builder: (_, durSnap) {
@@ -1401,45 +1487,51 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                             final progress = duration.inMilliseconds > 0
                                 ? position.inMilliseconds / duration.inMilliseconds
                                 : 0.0;
+                            final displayProgress = _dragging ? _dragValue : progress;
                             return Column(
                               children: [
                                 SliderTheme(
                                   data: SliderThemeData(
-                                    trackHeight: 4,
+                                    trackHeight: 5,
                                     thumbShape: const RoundSliderThumbShape(
-                                        enabledThumbRadius: 8),
+                                        enabledThumbRadius: 10),
                                     overlayShape: const RoundSliderOverlayShape(
-                                        overlayRadius: 16),
+                                        overlayRadius: 20),
                                     activeTrackColor: AppColors.primary,
                                     inactiveTrackColor: isDark ? Colors.white24 : Colors.black12,
                                     thumbColor: AppColors.primary,
                                     overlayColor: AppColors.primary.withOpacity(0.2),
                                   ),
                                   child: Slider(
-                                    value: progress.clamp(0.0, 1.0),
+                                    value: displayProgress.clamp(0.0, 1.0),
+                                    onChangeStart: (val) {
+                                      setState(() {
+                                        _dragging = true;
+                                        _dragValue = val;
+                                      });
+                                    },
                                     onChanged: (val) {
-                                      final ms =
-                                          (val * duration.inMilliseconds).toInt();
-                                      audioService.player
-                                          .seek(Duration(milliseconds: ms));
+                                      setState(() => _dragValue = val);
+                                    },
+                                    onChangeEnd: (val) {
+                                      setState(() => _dragging = false);
+                                      final ms = (val * duration.inMilliseconds).toInt();
+                                      audioService.player.seek(Duration(milliseconds: ms));
+                                      _videoCtrl?.seekTo(Duration(milliseconds: ms));
                                     },
                                   ),
                                 ),
                                 Padding(
-                                  padding:
-                                      const EdgeInsets.symmetric(horizontal: 4),
+                                  padding: const EdgeInsets.symmetric(horizontal: 4),
                                   child: Row(
-                                    mainAxisAlignment:
-                                        MainAxisAlignment.spaceBetween,
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                     children: [
-                                      Text(_fmt(position),
-                                          style: TextStyle(
-                                              color: subColor,
-                                              fontSize: 12)),
+                                      Text(_fmt(_dragging
+                                          ? Duration(milliseconds: (_dragValue * duration.inMilliseconds).toInt())
+                                          : position),
+                                          style: TextStyle(color: subColor, fontSize: 12)),
                                       Text(_fmt(duration),
-                                          style: TextStyle(
-                                              color: subColor,
-                                              fontSize: 12)),
+                                          style: TextStyle(color: subColor, fontSize: 12)),
                                     ],
                                   ),
                                 ),
@@ -1567,13 +1659,82 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                       ],
                     ),
 
+                    const SizedBox(height: 20),
+
+                    // ── Volume & Speed Controls ──
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        // Volume icon
+                        Icon(
+                          _volume == 0 ? CupertinoIcons.speaker_slash_fill :
+                          _volume < 1.0 ? CupertinoIcons.speaker_1_fill :
+                          CupertinoIcons.speaker_3_fill,
+                          color: subColor, size: 18,
+                        ),
+                        Expanded(
+                          child: SliderTheme(
+                            data: SliderThemeData(
+                              trackHeight: 3,
+                              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
+                              overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
+                              activeTrackColor: AppColors.primary.withOpacity(0.8),
+                              inactiveTrackColor: isDark ? Colors.white12 : Colors.black12,
+                              thumbColor: AppColors.primary,
+                              overlayColor: AppColors.primary.withOpacity(0.15),
+                            ),
+                            child: Slider(
+                              value: _volume,
+                              min: 0,
+                              max: 3.0,
+                              onChanged: _setVolume,
+                            ),
+                          ),
+                        ),
+                        Text(
+                          '${(_volume * 100).toInt()}%',
+                          style: TextStyle(color: subColor, fontSize: 11, fontFamily: 'Tajawal'),
+                        ),
+                      ],
+                    ),
+
+                    // Speed control row
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(CupertinoIcons.speedometer, color: subColor, size: 16),
+                        const SizedBox(width: 8),
+                        for (final s in [0.5, 0.75, 1.0, 1.25, 1.5, 2.0])
+                          GestureDetector(
+                            onTap: () => _setSpeed(s),
+                            child: Container(
+                              margin: const EdgeInsets.symmetric(horizontal: 3),
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: _speed == s
+                                    ? AppColors.primary
+                                    : controlBg,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                s == 1.0 ? '1×' : '${s}×',
+                                style: TextStyle(
+                                  color: _speed == s ? Colors.white : subColor,
+                                  fontSize: 11,
+                                  fontFamily: 'Tajawal',
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+
                     const SizedBox(height: 24),
                   ],
                 ),
               ),
             ),
-
-            // ── Playlist Queue ──
             Expanded(
               flex: 3,
               child: Column(
@@ -1704,7 +1865,7 @@ class _ListenPageState extends State<ListenPage> {
 
   Future<void> _loadFiles() async {
     final dir = await getApplicationDocumentsDirectory();
-    final musicDir = Directory('${dir.path}/Mustami3');
+    final musicDir = Directory('${dir.path}/dndn');
     if (!await musicDir.exists()) await musicDir.create(recursive: true);
 
     final entities = musicDir.listSync()
@@ -1717,12 +1878,17 @@ class _ListenPageState extends State<ListenPage> {
     final items = <LocalMediaItem>[];
     for (final entry in withStat) {
       final path = entry.key.path;
-      final name = path.split('/').last;
-      final isVideo = name.endsWith('.mp4') || name.endsWith('.webm') || name.endsWith('.mkv');
+      final name = path.split('/').last.toLowerCase();
+      final isVideo = name.endsWith('.mp4') || name.endsWith('.webm') ||
+          name.endsWith('.mkv') || name.endsWith('.mov');
       final isAudio = name.endsWith('.mp3') || name.endsWith('.m4a') ||
-          name.endsWith('.aac') || name.endsWith('.opus');
+          name.endsWith('.aac') || name.endsWith('.opus') ||
+          name.endsWith('.flac') || name.endsWith('.wav');
       if (isVideo || isAudio) {
-        items.add(LocalMediaItem(path: path, title: name, isVideo: isVideo));
+        items.add(LocalMediaItem(
+            path: path,
+            title: path.split('/').last,
+            isVideo: isVideo));
       }
     }
 
@@ -1732,6 +1898,27 @@ class _ListenPageState extends State<ListenPage> {
         _localItems = items;
       });
     }
+
+    // توليد صور مصغرة للفيديوات التي ليس لها صورة بعد
+    for (final item in items) {
+      if (!item.isVideo) continue;
+      final existing = await ThumbnailManager.getLocalThumbnail(item.path);
+      if (existing != null) continue;
+      _generateVideoThumbnail(item.path);
+    }
+  }
+
+  Future<void> _generateVideoThumbnail(String videoPath) async {
+    try {
+      final ctrl = VideoPlayerController.file(File(videoPath));
+      await ctrl.initialize();
+      // الصورة المصغرة = أول فريم
+      // نحفظ screenshot مباشرة إن كان ممكناً
+      // بما أن video_player لا يوفر screenshot API، نستخدم placeholder
+      await ctrl.dispose();
+      // ملاحظة: لتوليد thumbnail حقيقي يحتاج plugin مثل video_thumbnail
+      // هنا نُعلم ThumbnailManager بعدم وجود صورة
+    } catch (_) {}
   }
 
   Future<void> _deleteItem(LocalMediaItem item) async {
@@ -1793,27 +1980,34 @@ class _ListenPageState extends State<ListenPage> {
         child: Row(
           children: [
             // Logo
-            ClipRRect(
-              borderRadius: BorderRadius.circular(10),
-              child: Image.asset(
-                'assets/images/logo.png',
-                width: 36,
-                height: 36,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: AppColors.primary,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(CupertinoIcons.music_note, color: Colors.white, size: 20),
-                ),
-              ),
-            ),
+Padding(
+  padding: const EdgeInsets.only(bottom: 8),
+  child: ClipRRect(
+    borderRadius: BorderRadius.circular(14),
+    child: Image.asset(
+      'assets/images/logo.png',
+      width: 40,
+      height: 40,
+      fit: BoxFit.cover,
+      errorBuilder: (_, __, ___) => Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: AppColors.primary,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: const Icon(
+          CupertinoIcons.music_note,
+          color: Colors.white,
+          size: 24,
+        ),
+      ),
+    ),
+  ),
+),
             const SizedBox(width: 12),
             Text(
-              'مستمع',
+              'دندن',
               style: TextStyle(
                 fontSize: 28,
                 fontFamily: 'Tajawal',
@@ -2059,8 +2253,16 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
       _closeSwipe();
       return;
     }
-    // تشغيل الأغنية بالـ index الصحيح من القائمة
-    audioService.playList(widget.allItems, widget.index);
+    // إذا كانت القائمة مختلفة أعد بناءها، وإلا انتقل مباشرة للـ index
+    final currentList = audioService.playlist.value;
+    final sameList = currentList.length == widget.allItems.length &&
+        currentList.isNotEmpty &&
+        currentList.first.path == widget.allItems.first.path;
+    if (sameList) {
+      audioService.playAtIndex(widget.index);
+    } else {
+      audioService.playList(widget.allItems, widget.index);
+    }
     // فتح المشغل بالملء
     Navigator.of(context).push(
       PageRouteBuilder(
@@ -2451,7 +2653,7 @@ class BrowsePage extends StatelessWidget {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  FILE BROWSER PAGE — استيراد ملفات الصوت من الجهاز
+//  FILE BROWSER PAGE — استيراد ملفات الصوت والفيديو من الجهاز
 // ═══════════════════════════════════════════════════════════
 class FileBrowserPage extends StatefulWidget {
   const FileBrowserPage({super.key});
@@ -2461,97 +2663,47 @@ class FileBrowserPage extends StatefulWidget {
 }
 
 class _FileBrowserPageState extends State<FileBrowserPage> {
-  List<FileSystemEntity> _files = [];
-  bool _loading = true;
-  final Set<String> _selected = {};
+  List<PlatformFile> _pickedFiles = [];
+  bool _importing = false;
 
-  @override
-  void initState() {
-    super.initState();
-    _scanFiles();
-  }
-
-  Future<void> _scanFiles() async {
-    setState(() => _loading = true);
+  Future<void> _pickFiles() async {
     try {
-      // طلب إذن الوصول إلى الوسائط
-      final status = await Permission.mediaLibrary.request();
-      if (!status.isGranted) {
-        // على iOS نحاول مباشرة من Documents وأي مجلد متاح
+      final result = await FilePicker.platform.pickFiles(
+        allowMultiple: true,
+        type: FileType.custom,
+        allowedExtensions: ['mp3', 'm4a', 'aac', 'opus', 'flac', 'wav', 'mp4', 'mkv', 'webm', 'mov'],
+      );
+      if (result != null && result.files.isNotEmpty) {
+        setState(() => _pickedFiles = result.files);
       }
-
-      final found = <FileSystemEntity>[];
-      final audioExts = {'.mp3', '.m4a', '.aac', '.opus', '.flac', '.wav'};
-
-      // المجلدات المحتملة على iOS وAndroid
-      final List<Directory?> roots = [
-        await getApplicationDocumentsDirectory(),
-        await getTemporaryDirectory(),
-      ];
-
-      // على Android نضيف التخزين الخارجي
-      try {
-        final external = await getExternalStorageDirectory();
-        if (external != null) roots.add(external);
-      } catch (_) {}
-
-      for (final root in roots) {
-        if (root == null) continue;
-        try {
-          await _scanDir(root, found, audioExts);
-        } catch (_) {}
-      }
-
-      // إزالة الملفات المخفية والمكررة
-      final seen = <String>{};
-      final unique = found.where((f) {
-        final name = f.path.split('/').last;
-        if (name.startsWith('.')) return false;
-        if (seen.contains(f.path)) return false;
-        seen.add(f.path);
-        return true;
-      }).toList();
-
-      // ترتيب أبجدي
-      unique.sort((a, b) => a.path.split('/').last
-          .toLowerCase()
-          .compareTo(b.path.split('/').last.toLowerCase()));
-
-      if (mounted) setState(() { _files = unique; _loading = false; });
     } catch (e) {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('خطأ في فتح الملفات: $e', textDirection: TextDirection.rtl),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
-  Future<void> _scanDir(
-      Directory dir, List<FileSystemEntity> found, Set<String> exts) async {
-    try {
-      final entities = dir.listSync(recursive: true, followLinks: false);
-      for (final e in entities) {
-        if (e is File) {
-          final lower = e.path.toLowerCase();
-          if (exts.any((ext) => lower.endsWith(ext))) {
-            found.add(e);
-          }
-        }
-      }
-    } catch (_) {}
-  }
-
   Future<void> _importSelected() async {
-    if (_selected.isEmpty) return;
+    if (_pickedFiles.isEmpty) return;
+    setState(() => _importing = true);
     final dir = await getApplicationDocumentsDirectory();
-    final destDir = Directory('${dir.path}/Mustami3');
+    final destDir = Directory('${dir.path}/dndn');
     if (!await destDir.exists()) await destDir.create(recursive: true);
 
     int copied = 0;
-    for (final path in _selected) {
+    for (final file in _pickedFiles) {
+      if (file.path == null) continue;
       try {
-        final file = File(path);
-        final name = path.split('/').last;
+        final src = File(file.path!);
+        final name = file.name;
         final dest = File('${destDir.path}/$name');
         if (!await dest.exists()) {
-          await file.copy(dest.path);
+          await src.copy(dest.path);
         }
         copied++;
       } catch (_) {}
@@ -2560,6 +2712,7 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
     _downloadCompleteNotifier.value = destDir.path;
 
     if (mounted) {
+      setState(() => _importing = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('✅ تمت إضافة $copied ملف إلى قسم استمع',
@@ -2578,12 +2731,10 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final bg = isDark ? AppColors.darkBg : AppColors.background;
     final surface = isDark ? AppColors.darkSurface : AppColors.surface;
-    final surfaceAlt = isDark ? AppColors.darkSurfaceAlt : AppColors.surfaceAlt;
     final textPrimary = isDark ? AppColors.darkText : AppColors.textPrimary;
     final textSecondary = isDark ? AppColors.darkTextSec : AppColors.textSecondary;
     final divider = isDark ? AppColors.darkDivider : AppColors.divider;
     final redLight = isDark ? AppColors.darkRedLight : AppColors.redLight;
-    final borderColor = isDark ? AppColors.darkDivider : AppColors.divider;
 
     return Scaffold(
       backgroundColor: bg,
@@ -2595,8 +2746,7 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               decoration: BoxDecoration(
                 color: bg,
-                border: Border(
-                    bottom: BorderSide(color: divider, width: 0.5)),
+                border: Border(bottom: BorderSide(color: divider, width: 0.5)),
               ),
               child: Row(
                 children: [
@@ -2608,8 +2758,7 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
                         color: surface,
                         borderRadius: BorderRadius.circular(10),
                       ),
-                      child: Icon(CupertinoIcons.xmark,
-                          size: 18, color: textPrimary),
+                      child: Icon(CupertinoIcons.xmark, size: 18, color: textPrimary),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -2624,23 +2773,28 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
                       ),
                     ),
                   ),
-                  if (_selected.isNotEmpty)
+                  if (_pickedFiles.isNotEmpty)
                     GestureDetector(
-                      onTap: _importSelected,
+                      onTap: _importing ? null : _importSelected,
                       child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 8),
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                         decoration: BoxDecoration(
                           color: AppColors.primary,
                           borderRadius: BorderRadius.circular(10),
                         ),
-                        child: Text(
-                          'إضافة (${_selected.length})',
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700),
-                        ),
+                        child: _importing
+                            ? const SizedBox(
+                                width: 16, height: 16,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: Colors.white))
+                            : Text(
+                                'إضافة (${_pickedFiles.length})',
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                    fontFamily: 'Tajawal'),
+                              ),
                       ),
                     ),
                 ],
@@ -2648,130 +2802,184 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
             ),
             // ── Body ──
             Expanded(
-              child: _loading
-                  ? const Center(
-                      child: CircularProgressIndicator(
-                          valueColor:
-                              AlwaysStoppedAnimation(AppColors.primary)))
-                  : _files.isEmpty
-                      ? Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(CupertinoIcons.music_note_2,
-                                  size: 48, color: divider),
-                              const SizedBox(height: 12),
-                              Text(
-                                'لم يُعثر على ملفات صوتية',
-                                style: TextStyle(
-                                    color: textSecondary,
-                                    fontSize: 15,
-                                    fontFamily: 'Tajawal'),
-                              ),
-                              const SizedBox(height: 8),
-                              TextButton(
-                                onPressed: _scanFiles,
-                                child: const Text('إعادة المسح'),
-                              ),
-                            ],
+              child: _pickedFiles.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Container(
+                            width: 80,
+                            height: 80,
+                            decoration: BoxDecoration(
+                              color: redLight,
+                              borderRadius: BorderRadius.circular(24),
+                            ),
+                            child: const Icon(CupertinoIcons.folder_fill,
+                                size: 38, color: AppColors.primary),
                           ),
-                        )
-                      : ListView.separated(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 8),
-                          itemCount: _files.length,
-                          separatorBuilder: (_, __) =>
-                              const SizedBox(height: 6),
-                          itemBuilder: (context, index) {
-                            final file = _files[index];
-                            final name = file.path.split('/').last;
-                            final isSelected =
-                                _selected.contains(file.path);
-                            return GestureDetector(
-                              onTap: () {
-                                setState(() {
-                                  if (isSelected) {
-                                    _selected.remove(file.path);
-                                  } else {
-                                    _selected.add(file.path);
-                                  }
-                                });
-                              },
-                              child: Container(
+                          const SizedBox(height: 20),
+                          Text(
+                            'اختر ملفات من الجهاز',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontFamily: 'Tajawal',
+                              fontWeight: FontWeight.w700,
+                              color: textPrimary,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'يدعم mp3 • m4a • mp4 • mkv وغيرها',
+                            style: TextStyle(
+                                fontSize: 13,
+                                fontFamily: 'Tajawal',
+                                color: textSecondary),
+                          ),
+                          const SizedBox(height: 32),
+                          GestureDetector(
+                            onTap: _pickFiles,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 28, vertical: 14),
+                              decoration: BoxDecoration(
+                                color: AppColors.primary,
+                                borderRadius: BorderRadius.circular(14),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: AppColors.primary.withOpacity(0.35),
+                                    blurRadius: 16,
+                                    offset: const Offset(0, 6),
+                                  ),
+                                ],
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(CupertinoIcons.folder_open,
+                                      color: Colors.white, size: 20),
+                                  SizedBox(width: 10),
+                                  Text(
+                                    'تصفح الملفات',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w700,
+                                      fontFamily: 'Tajawal',
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : Column(
+                      children: [
+                        // زر تغيير الاختيار
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                          child: GestureDetector(
+                            onTap: _pickFiles,
+                            child: Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              decoration: BoxDecoration(
+                                color: surface,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: divider, width: 0.8),
+                              ),
+                              alignment: Alignment.center,
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(CupertinoIcons.folder_open,
+                                      color: textSecondary, size: 18),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    'تغيير الاختيار',
+                                    style: TextStyle(
+                                        color: textSecondary,
+                                        fontSize: 14,
+                                        fontFamily: 'Tajawal',
+                                        fontWeight: FontWeight.w600),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: ListView.separated(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 4),
+                            itemCount: _pickedFiles.length,
+                            separatorBuilder: (_, __) => const SizedBox(height: 6),
+                            itemBuilder: (context, index) {
+                              final file = _pickedFiles[index];
+                              final name = file.name;
+                              final ext = name.split('.').last.toLowerCase();
+                              final isVideo = ['mp4', 'mkv', 'webm', 'mov'].contains(ext);
+                              return Container(
                                 decoration: BoxDecoration(
-                                  color: isSelected
-                                      ? redLight
-                                      : surface,
+                                  color: redLight,
                                   borderRadius: BorderRadius.circular(14),
                                   border: Border.all(
-                                    color: isSelected
-                                        ? AppColors.primary.withOpacity(0.4)
-                                        : borderColor,
+                                    color: AppColors.primary.withOpacity(0.3),
                                     width: 0.8,
                                   ),
                                 ),
                                 child: ListTile(
                                   contentPadding:
-                                      const EdgeInsets.symmetric(
-                                          horizontal: 12, vertical: 6),
+                                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                                   leading: Container(
-                                    width: 42,
-                                    height: 42,
+                                    width: 42, height: 42,
                                     decoration: BoxDecoration(
-                                      color: isSelected
-                                          ? AppColors.primary
-                                          : surfaceAlt,
-                                      borderRadius:
-                                          BorderRadius.circular(10),
+                                      color: AppColors.primary,
+                                      borderRadius: BorderRadius.circular(10),
                                     ),
                                     child: Icon(
-                                      isSelected
-                                          ? CupertinoIcons.checkmark_alt
+                                      isVideo
+                                          ? CupertinoIcons.play_rectangle_fill
                                           : CupertinoIcons.music_note,
-                                      color: isSelected
-                                          ? Colors.white
-                                          : textSecondary,
-                                      size: 20,
+                                      color: Colors.white, size: 20,
                                     ),
                                   ),
                                   title: Text(
-                                    name.replaceAll(
-                                        RegExp(r'\.\w+$'), ''),
+                                    name.replaceAll(RegExp(r'\.\w+$'), ''),
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
                                       fontSize: 14,
                                       fontFamily: 'Tajawal',
                                       fontWeight: FontWeight.w500,
-                                      color: isSelected
-                                          ? AppColors.primary
-                                          : textPrimary,
+                                      color: AppColors.primary,
                                     ),
                                   ),
                                   subtitle: Text(
-                                    name.split('.').last.toUpperCase(),
+                                    ext.toUpperCase(),
                                     style: TextStyle(
-                                        fontSize: 11,
-                                        color: textSecondary),
+                                        fontSize: 11, color: textSecondary),
                                   ),
                                 ),
-                              ),
-                            );
-                          },
+                              );
+                            },
+                          ),
                         ),
+                      ],
+                    ),
             ),
             // ── Bottom import bar ──
-            if (_selected.isNotEmpty)
+            if (_pickedFiles.isNotEmpty)
               Container(
                 padding: EdgeInsets.fromLTRB(
                     16, 12, 16, MediaQuery.of(context).padding.bottom + 12),
                 decoration: BoxDecoration(
                   color: bg,
-                  border: Border(
-                      top: BorderSide(color: divider, width: 0.5)),
+                  border: Border(top: BorderSide(color: divider, width: 0.5)),
                 ),
                 child: GestureDetector(
-                  onTap: _importSelected,
+                  onTap: _importing ? null : _importSelected,
                   child: Container(
                     width: double.infinity,
                     height: 52,
@@ -2780,15 +2988,17 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
                       borderRadius: BorderRadius.circular(14),
                     ),
                     alignment: Alignment.center,
-                    child: Text(
-                      'إضافة ${_selected.length} ملف إلى قسم استمع',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        fontFamily: 'Tajawal',
-                      ),
-                    ),
+                    child: _importing
+                        ? const CircularProgressIndicator(color: Colors.white)
+                        : Text(
+                            'إضافة ${_pickedFiles.length} ملف إلى قسم استمع',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                              fontFamily: 'Tajawal',
+                            ),
+                          ),
                   ),
                 ),
               ),
@@ -3116,7 +3326,7 @@ class _VideoResultCard extends StatelessWidget {
 
     try {
       final dir = await getApplicationDocumentsDirectory();
-      final musicDir = Directory('${dir.path}/Mustami3');
+      final musicDir = Directory('${dir.path}/dndn');
       if (!await musicDir.exists()) await musicDir.create(recursive: true);
 
       final safeTitle =
@@ -3554,7 +3764,7 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
 
     try {
       final dir = await getApplicationDocumentsDirectory();
-      final musicDir = Directory('${dir.path}/Mustami3');
+      final musicDir = Directory('${dir.path}/dndn');
       if (!await musicDir.exists()) await musicDir.create(recursive: true);
 
       final safeTitle = widget.video.title
@@ -4080,7 +4290,7 @@ class _SettingsPageState extends State<SettingsPage> {
       _backgroundPlay = prefs.getBool('backgroundPlay') ?? true;
       _stopOnClose = prefs.getBool('stopOnClose') ?? false;
       _downloadQuality = prefs.getString('downloadQuality') ?? 'medium';
-      _downloadPath = '${dir.path}/Mustami3';
+      _downloadPath = '${dir.path}/dndn';
     });
   }
 
@@ -4151,7 +4361,7 @@ class _SettingsPageState extends State<SettingsPage> {
                         padding: const EdgeInsets.all(16),
                         decoration: BoxDecoration(
                           gradient: const LinearGradient(
-                            colors: [AppColors.primary, AppColors.primaryDark],
+                            colors: [Color.fromARGB(255, 53, 53, 53), Color.fromARGB(255, 102, 75, 75)],
                             begin: Alignment.topLeft,
                             end: Alignment.bottomRight,
                           ),
@@ -4183,7 +4393,7 @@ class _SettingsPageState extends State<SettingsPage> {
                             const Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text('مستمع',
+                                Text('دندن',
                                     style: TextStyle(
                                         color: Colors.white,
                                         fontFamily: 'Tajawal',

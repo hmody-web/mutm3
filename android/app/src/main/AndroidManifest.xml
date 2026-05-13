@@ -4,7 +4,7 @@
 
 
     <application
-        android:label="mustm3"
+        android:label="دندن"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <service android:name="com.ryanheise.audioservice.AudioServiceTask" 

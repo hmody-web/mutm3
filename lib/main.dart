@@ -30,8 +30,8 @@ Future<void> main() async {
     androidStopForegroundOnPause: true,
   );
 
-  // تحميل الثيم المحفوظ قبل تشغيل التطبيق
-  await ThemeNotifier.instance.loadFromPrefs();
+  // تحميل الثيم المحفوظ أولاً
+  await ThemeNotifier.instance.load();
 
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
@@ -59,76 +59,59 @@ void _warmUpDioConnection() {
 class AppColors {
   static const Color primary = Color(0xFFE8272A);
   static const Color primaryDark = Color(0xFFB71C1C);
+  // Light
   static const Color background = Color(0xFFFFFFFF);
   static const Color surface = Color(0xFFF7F7F7);
-  static const Color surfaceAlt = Color(0xFFF0F0F0);
+  static const Color surfaceAlt = Color(0xFFEEEEEE);
   static const Color textPrimary = Color(0xFF1A1A1A);
   static const Color textSecondary = Color(0xFF6B6B6B);
   static const Color divider = Color(0xFFE0E0E0);
   static const Color redLight = Color(0xFFFFEBEB);
-
-  // Dark mode colors
-  static const Color darkBackground = Color(0xFF0D0D0D);
+  // Dark
+  static const Color darkBg = Color(0xFF0D0D0D);
   static const Color darkSurface = Color(0xFF1C1C1E);
   static const Color darkSurfaceAlt = Color(0xFF2C2C2E);
-  static const Color darkTextPrimary = Color(0xFFF2F2F7);
-  static const Color darkTextSecondary = Color(0xFF8E8E93);
+  static const Color darkText = Color(0xFFF2F2F7);
+  static const Color darkTextSec = Color(0xFF8E8E93);
   static const Color darkDivider = Color(0xFF38383A);
   static const Color darkRedLight = Color(0xFF3A1212);
 }
 
 // ─────────────────────────────────────────────
-//  THEME NOTIFIER — يدير الثيم مع SharedPreferences
+//  THEME NOTIFIER — persistent dark mode
 // ─────────────────────────────────────────────
 class ThemeNotifier extends ValueNotifier<ThemeMode> {
-  ThemeNotifier() : super(ThemeMode.light);
-
-  static ThemeNotifier? _instance;
-  static ThemeNotifier get instance {
-    _instance ??= ThemeNotifier();
-    return _instance!;
-  }
+  ThemeNotifier._() : super(ThemeMode.light);
+  static final ThemeNotifier instance = ThemeNotifier._();
 
   bool get isDark => value == ThemeMode.dark;
 
-  Future<void> loadFromPrefs() async {
+  Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
-    final isDark = prefs.getBool('darkMode') ?? false;
-    value = isDark ? ThemeMode.dark : ThemeMode.light;
+    value = (prefs.getBool('darkMode') ?? false)
+        ? ThemeMode.dark
+        : ThemeMode.light;
   }
 
-  Future<void> setDark(bool dark) async {
+  Future<void> toggle(bool dark) async {
     value = dark ? ThemeMode.dark : ThemeMode.light;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('darkMode', dark);
   }
 }
 
-// Helper to get colors based on current theme
-class AppTheme {
-  static bool isDark(BuildContext context) =>
-      Theme.of(context).brightness == Brightness.dark;
-
-  static Color bg(BuildContext context) =>
-      isDark(context) ? AppColors.darkBackground : AppColors.background;
-
-  static Color surface(BuildContext context) =>
-      isDark(context) ? AppColors.darkSurface : AppColors.surface;
-
-  static Color surfaceAlt(BuildContext context) =>
-      isDark(context) ? AppColors.darkSurfaceAlt : AppColors.surfaceAlt;
-
-  static Color textPrimary(BuildContext context) =>
-      isDark(context) ? AppColors.darkTextPrimary : AppColors.textPrimary;
-
-  static Color textSecondary(BuildContext context) =>
-      isDark(context) ? AppColors.darkTextSecondary : AppColors.textSecondary;
-
-  static Color divider(BuildContext context) =>
-      isDark(context) ? AppColors.darkDivider : AppColors.divider;
-
-  static Color redLight(BuildContext context) =>
-      isDark(context) ? AppColors.darkRedLight : AppColors.redLight;
+// ─────────────────────────────────────────────
+//  CONTEXT HELPERS — pick color by theme
+// ─────────────────────────────────────────────
+extension AppTheme on BuildContext {
+  bool get isDark => Theme.of(this).brightness == Brightness.dark;
+  Color get appBg => isDark ? AppColors.darkBg : AppColors.background;
+  Color get appSurface => isDark ? AppColors.darkSurface : AppColors.surface;
+  Color get appSurfaceAlt => isDark ? AppColors.darkSurfaceAlt : AppColors.surfaceAlt;
+  Color get appText => isDark ? AppColors.darkText : AppColors.textPrimary;
+  Color get appTextSec => isDark ? AppColors.darkTextSec : AppColors.textSecondary;
+  Color get appDivider => isDark ? AppColors.darkDivider : AppColors.divider;
+  Color get appRedLight => isDark ? AppColors.darkRedLight : AppColors.redLight;
 }
 
 // ─────────────────────────────────────────────
@@ -572,43 +555,44 @@ Future<void> _downloadIsolate(_DownloadArgs args) async {
 class Mustami3App extends StatelessWidget {
   const Mustami3App({super.key});
 
+  static ThemeData _light() => ThemeData(
+        useMaterial3: true,
+        brightness: Brightness.light,
+        fontFamily: 'Tajawal',
+        colorScheme: ColorScheme.fromSeed(seedColor: AppColors.primary),
+        scaffoldBackgroundColor: AppColors.background,
+        dividerColor: AppColors.divider,
+      );
+
+  static ThemeData _dark() => ThemeData(
+        useMaterial3: true,
+        brightness: Brightness.dark,
+        fontFamily: 'Tajawal',
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: AppColors.primary,
+          brightness: Brightness.dark,
+        ),
+        scaffoldBackgroundColor: AppColors.darkBg,
+        cardColor: AppColors.darkSurface,
+        dividerColor: AppColors.darkDivider,
+      );
+
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<ThemeMode>(
       valueListenable: ThemeNotifier.instance,
-      builder: (context, themeMode, _) {
-        return MaterialApp(
-          title: 'مستمع',
-          debugShowCheckedModeBanner: false,
-          themeMode: themeMode,
-          theme: ThemeData(
-            colorScheme: ColorScheme.fromSeed(seedColor: AppColors.primary),
-            scaffoldBackgroundColor: AppColors.background,
-            fontFamily: 'Tajawal',
-            useMaterial3: true,
-            brightness: Brightness.light,
-          ),
-          darkTheme: ThemeData(
-            colorScheme: ColorScheme.fromSeed(
-              seedColor: AppColors.primary,
-              brightness: Brightness.dark,
-            ),
-            scaffoldBackgroundColor: AppColors.darkBackground,
-            fontFamily: 'Tajawal',
-            useMaterial3: true,
-            brightness: Brightness.dark,
-            cardColor: AppColors.darkSurface,
-            dividerColor: AppColors.darkDivider,
-          ),
-          home: const MainShell(),
-          builder: (context, child) {
-            return Directionality(
-              textDirection: TextDirection.rtl,
-              child: child!,
-            );
-          },
-        );
-      },
+      builder: (_, mode, __) => MaterialApp(
+        title: 'مستمع',
+        debugShowCheckedModeBanner: false,
+        themeMode: mode,
+        theme: _light(),
+        darkTheme: _dark(),
+        home: const MainShell(),
+        builder: (ctx, child) => Directionality(
+          textDirection: TextDirection.rtl,
+          child: child!,
+        ),
+      ),
     );
   }
 }
@@ -628,106 +612,105 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell>
     with SingleTickerProviderStateMixin {
-  final List<Widget> _pages = const [ListenPage(), BrowsePage(), SettingsPage()];
-  late AnimationController _pageCtrl;
-  late Animation<double> _pageAnim;
+  static const List<Widget> _pages = [
+    ListenPage(),
+    BrowsePage(),
+    SettingsPage(),
+  ];
+
+  late AnimationController _animCtrl;
+  int _currentIndex = 0;
   int _prevIndex = 0;
-  bool _swipeLeft = false; // اتجاه السحب
+  bool _goingRight = false; // اتجاه الانتقال
 
   @override
   void initState() {
     super.initState();
     audioService.init();
-    _pageCtrl = AnimationController(
+    _animCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 380),
+      duration: const Duration(milliseconds: 320),
+      value: 1.0,
     );
-    _pageAnim = CurvedAnimation(parent: _pageCtrl, curve: Curves.easeOutCubic);
     _navIndexNotifier.addListener(_onNavChange);
   }
 
   @override
   void dispose() {
     _navIndexNotifier.removeListener(_onNavChange);
-    _pageCtrl.dispose();
+    _animCtrl.dispose();
     super.dispose();
   }
 
   void _onNavChange() {
-    final newIdx = _navIndexNotifier.value;
-    _swipeLeft = newIdx > _prevIndex;
-    _prevIndex = newIdx;
-    _pageCtrl.forward(from: 0.0);
+    final next = _navIndexNotifier.value;
+    if (next == _currentIndex) return;
+    _prevIndex = _currentIndex;
+    _goingRight = next > _currentIndex;
+    _currentIndex = next;
+    _animCtrl.forward(from: 0.0);
     setState(() {});
   }
 
-  void _onHorizontalSwipe(DragEndDetails details) {
-    final velocity = details.primaryVelocity ?? 0;
-    final current = _navIndexNotifier.value;
-    // في RTL: سحب يسار (velocity سالب) → تبويب تالٍ (index أكبر)
-    //         سحب يمين (velocity موجب) → تبويب سابق (index أصغر)
-    if (velocity < -300 && current < 2) {
-      _navIndexNotifier.value = current + 1;
-    } else if (velocity > 300 && current > 0) {
-      _navIndexNotifier.value = current - 1;
+  void _onSwipe(DragEndDetails d) {
+    final v = d.primaryVelocity ?? 0;
+    final cur = _navIndexNotifier.value;
+    // RTL: سحب يسار (سالب) → تبويب سابق (رقم أصغر = يمين)
+    //      سحب يمين (موجب) → تبويب تالٍ (رقم أكبر = يسار)
+    if (v < -350 && cur > 0) {
+      _navIndexNotifier.value = cur - 1;
+    } else if (v > 350 && cur < 2) {
+      _navIndexNotifier.value = cur + 1;
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final navIndex = _navIndexNotifier.value;
     return Scaffold(
+      backgroundColor: context.appBg,
       body: GestureDetector(
-        onHorizontalDragEnd: _onHorizontalSwipe,
-        child: Stack(
-          children: [
-            // ★ تأثير انتقال رائع بين الصفحات
+        onHorizontalDragEnd: _onSwipe,
+        child: Stack(children: [
+          // ─ صفحة سابقة تخرج ─
+          if (_prevIndex != _currentIndex)
             AnimatedBuilder(
-              animation: _pageAnim,
-              builder: (context, _) {
-                return Stack(
-                  children: List.generate(_pages.length, (i) {
-                    final isActive = i == navIndex;
-                    if (!isActive && i != _prevIndex) return const SizedBox.shrink();
-
-                    double dx = 0;
-                    double opacity = 1;
-
-                    if (isActive) {
-                      // الصفحة الداخلة: تدخل من الجانب مع fade
-                      final enter = _pageAnim.value;
-                      dx = _swipeLeft
-                          ? (1.0 - enter) * 0.25
-                          : -(1.0 - enter) * 0.25;
-                      opacity = enter;
-                    } else {
-                      // الصفحة الخارجة: تخرج للجانب مع fade
-                      final exit = _pageAnim.value;
-                      dx = _swipeLeft ? -exit * 0.12 : exit * 0.12;
-                      opacity = 1.0 - exit * 0.6;
-                    }
-
-                    return Opacity(
-                      opacity: opacity.clamp(0.0, 1.0),
-                      child: Transform.translate(
-                        offset: Offset(
-                            MediaQuery.of(context).size.width * dx, 0),
-                        child: _pages[i],
-                      ),
-                    );
-                  }),
+              animation: _animCtrl,
+              builder: (_, __) {
+                final exit = _animCtrl.value;
+                final dx = _goingRight ? -exit * 0.15 : exit * 0.15;
+                return Opacity(
+                  opacity: (1.0 - exit * 0.7).clamp(0.0, 1.0),
+                  child: Transform.translate(
+                    offset: Offset(
+                        MediaQuery.of(context).size.width * dx, 0),
+                    child: _pages[_prevIndex],
+                  ),
                 );
               },
             ),
-            // ★ Mini Player + Bottom Nav فوق كل شيء
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: _BottomArea(),
-            ),
-          ],
-        ),
+          // ─ صفحة حالية تدخل ─
+          AnimatedBuilder(
+            animation: _animCtrl,
+            builder: (_, __) {
+              final enter = _animCtrl.value;
+              final startDx = _goingRight ? 0.3 : -0.3;
+              final dx = startDx * (1.0 - enter);
+              return Opacity(
+                opacity: enter.clamp(0.0, 1.0),
+                child: Transform.translate(
+                  offset: Offset(
+                      MediaQuery.of(context).size.width * dx, 0),
+                  child: _pages[_currentIndex],
+                ),
+              );
+            },
+          ),
+          // ─ Mini Player + Bottom Nav ─
+          Positioned(
+            left: 0, right: 0, bottom: 0,
+            child: _BottomArea(),
+          ),
+        ]),
       ),
     );
   }
@@ -762,7 +745,6 @@ class _BottomArea extends StatelessWidget {
 // ─────────────────────────────────────────────
 class _GlassNavBar extends StatefulWidget {
   const _GlassNavBar();
-
   @override
   State<_GlassNavBar> createState() => _GlassNavBarState();
 }
@@ -806,104 +788,140 @@ class _GlassNavBarState extends State<_GlassNavBar>
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final isDark = context.isDark;
     final bottomPadding = MediaQuery.of(context).padding.bottom;
     final idx = _navIndexNotifier.value;
 
     return Padding(
       padding: EdgeInsets.only(
-        left: 20,
-        right: 20,
-        bottom: bottomPadding > 0 ? bottomPadding + 8 : 16,
+        left: 18,
+        right: 18,
+        bottom: bottomPadding > 0 ? bottomPadding + 6 : 14,
       ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(40),
+        borderRadius: BorderRadius.circular(36),
         child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+          filter: ImageFilter.blur(sigmaX: 28, sigmaY: 28),
           child: Container(
-            foregroundDecoration: BoxDecoration(
-  borderRadius: BorderRadius.circular(40),
-  gradient: LinearGradient(
-    begin: Alignment.topCenter,
-    end: Alignment.bottomCenter,
-    colors: [
-      const Color.fromARGB(255, 255, 0, 0).withOpacity(0.06),
-      const Color.fromARGB(6, 212, 40, 40).withOpacity(0.06),
-    ],
-  ),
-),
-            height: 64,
+            height: 66,
             decoration: BoxDecoration(
+              // خلفية زجاجية مائلة للأحمر
               color: isDark
-                  ? const Color(0xFF1C1C1E).withOpacity(0.92)
-                  : const Color.fromARGB(255, 255, 255, 255).withOpacity(0.72),
-              borderRadius: BorderRadius.circular(40),
+                  ? const Color(0xFF1A0A0A).withOpacity(0.88)
+                  : Colors.white.withOpacity(0.78),
+              borderRadius: BorderRadius.circular(36),
               border: Border.all(
                 color: isDark
-                    ? Colors.white.withOpacity(0.08)
-                    : const Color.fromARGB(71, 197, 149, 149).withOpacity(0.9),
+                    ? AppColors.primary.withOpacity(0.18)
+                    : AppColors.primary.withOpacity(0.14),
                 width: 1.0,
+              ),
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: isDark
+                    ? [
+                        const Color(0xFF1A0A0A).withOpacity(0.92),
+                        const Color(0xFF0D0505).withOpacity(0.92),
+                      ]
+                    : [
+                        Colors.white.withOpacity(0.85),
+                        AppColors.primary.withOpacity(0.04),
+                      ],
               ),
               boxShadow: [
                 BoxShadow(
-                  color: isDark
-                      ? Colors.black.withOpacity(0.4)
-                      : Colors.black.withOpacity(0.12),
-                  blurRadius: 32,
-                  offset: const Offset(0, 8),
+                  color: AppColors.primary.withOpacity(isDark ? 0.25 : 0.12),
+                  blurRadius: 28,
+                  spreadRadius: -2,
+                  offset: const Offset(0, 6),
+                ),
+                BoxShadow(
+                  color: Colors.black.withOpacity(isDark ? 0.45 : 0.08),
+                  blurRadius: 20,
+                  offset: const Offset(0, 4),
                 ),
               ],
             ),
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final tabWidth = constraints.maxWidth / _tabs.length;
-                return Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    // ── Animated Indicator ──
-                    AnimatedPositioned(
-                      duration: const Duration(milliseconds: 300),
-                      curve: Curves.easeOutCubic,
-                      // RTL: tab 0 (استمع) في أقصى اليمين → right = 0
-                      // tab 1 (تصفح) → right = tabWidth
-                      // tab 2 (إعدادات) → right = 2*tabWidth (أقصى اليسار)
-                      right: idx * tabWidth + tabWidth * 0.15,
-                      top: 10,
-                      bottom: 10,
-                      width: tabWidth * 0.7,
-                      child: AnimatedBuilder(
-                        animation: _indicatorCtrl,
-                        builder: (_, __) {
-                          final scale = Tween<double>(begin: 0.85, end: 1.0)
-                              .animate(CurvedAnimation(
-                                  parent: _indicatorCtrl,
-                                  curve: Curves.easeOutBack))
-                              .value;
-                          return Transform.scale(
-                            scale: scale,
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: AppColors.primary.withOpacity(0.14),
-                                borderRadius: BorderRadius.circular(28),
+            child: LayoutBuilder(builder: (ctx, constraints) {
+              final tabWidth = constraints.maxWidth / _tabs.length;
+              return Stack(alignment: Alignment.center, children: [
+                // ── Animated Red Indicator Pill ──
+                // RTL: tab 0 (استمع) في أقصى اليمين
+                // right = idx * tabWidth يضع الـ indicator عند التبويب الصحيح
+                AnimatedPositioned(
+                  duration: const Duration(milliseconds: 320),
+                  curve: Curves.easeOutCubic,
+                  right: idx * tabWidth + tabWidth * 0.12,
+                  top: 8,
+                  bottom: 8,
+                  width: tabWidth * 0.76,
+                  child: AnimatedBuilder(
+                    animation: _indicatorCtrl,
+                    builder: (_, __) {
+                      final s = Tween<double>(begin: 0.82, end: 1.0)
+                          .animate(CurvedAnimation(
+                              parent: _indicatorCtrl,
+                              curve: Curves.easeOutBack))
+                          .value;
+                      return Transform.scale(
+                        scale: s,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                AppColors.primary.withOpacity(0.18),
+                                AppColors.primaryDark.withOpacity(0.10),
+                              ],
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                            ),
+                            borderRadius: BorderRadius.circular(26),
+                            border: Border.all(
+                              color: AppColors.primary.withOpacity(0.30),
+                              width: 0.8,
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+
+                // ── Tab Buttons ──
+                Row(
+                  children: List.generate(_tabs.length, (i) {
+                    final tab = _tabs[i];
+                    final isSelected = i == idx;
+                    return Expanded(
+                      child: GestureDetector(
+                        onTap: () => _navIndexNotifier.value = i,
+                        behavior: HitTestBehavior.opaque,
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            AnimatedScale(
+                              scale: isSelected ? 1.2 : 1.0,
+                              duration: const Duration(milliseconds: 260),
+                              curve: Curves.easeOutBack,
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 200),
+                                child: Icon(
+                                  tab.icon,
+                                  size: 22,
+                                  color: isSelected
+                                      ? AppColors.primary
+                                      : (isDark
+                                          ? Colors.white38
+                                          : AppColors.textSecondary),
+                                ),
                               ),
                             ),
-                          );
-                        },
-                      ),
-                    ),
-
-                    // ── Tab Buttons ──
-                    Row(
-                      children: List.generate(_tabs.length, (i) {
-                        final tab = _tabs[i];
-                        final isSelected = i == idx;
-                        return Expanded(
-                          child: GestureDetector(
-                            onTap: () => _navIndexNotifier.value = i,
-                            behavior: HitTestBehavior.opaque,
-                            child: AnimatedDefaultTextStyle(
+                            const SizedBox(height: 3),
+                            AnimatedDefaultTextStyle(
                               duration: const Duration(milliseconds: 200),
                               style: TextStyle(
+                                fontFamily: 'Tajawal',
                                 fontSize: 10,
                                 fontWeight: isSelected
                                     ? FontWeight.w700
@@ -911,40 +929,19 @@ class _GlassNavBarState extends State<_GlassNavBar>
                                 color: isSelected
                                     ? AppColors.primary
                                     : (isDark
-                                        ? Colors.white54
+                                        ? Colors.white38
                                         : AppColors.textSecondary),
                               ),
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  AnimatedScale(
-                                    scale: isSelected ? 1.18 : 1.0,
-                                    duration:
-                                        const Duration(milliseconds: 250),
-                                    curve: Curves.easeOutBack,
-                                    child: Icon(
-                                      tab.icon,
-                                      size: 22,
-                                      color: isSelected
-                                          ? AppColors.primary
-                                          : (isDark
-                                              ? Colors.white54
-                                              : AppColors.textSecondary),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 3),
-                                  Text(tab.label),
-                                ],
-                              ),
+                              child: Text(tab.label),
                             ),
-                          ),
-                        );
-                      }),
-                    ),
-                  ],
-                );
-              },
-            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }),
+                ),
+              ]);
+            }),
           ),
         ),
       ),
@@ -1015,7 +1012,9 @@ class _MiniPlayerState extends State<_MiniPlayer>
         child: Container(
           margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           decoration: BoxDecoration(
-            color: const Color(0xFF1C1C1E),
+            color: context.isDark
+                ? const Color(0xFF1C1C1E)
+                : const Color(0xFF2C2C2E),
             borderRadius: BorderRadius.circular(20),
             boxShadow: [
               BoxShadow(
@@ -1263,8 +1262,21 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
+    final isDark = context.isDark;
+    final bgColor = isDark ? const Color(0xFF0D0D0D) : const Color(0xFFF2F2F7);
+    final textColor = isDark ? Colors.white : const Color(0xFF1A1A1A);
+    final subColor = isDark ? Colors.white54 : Colors.black45;
+    final controlBg = isDark ? Colors.white12 : Colors.black.withOpacity(0.07);
+
+    return GestureDetector(
+      onHorizontalDragEnd: (details) {
+        // سحب يمين لإغلاق المشغل
+        if ((details.primaryVelocity ?? 0) > 400) {
+          Navigator.pop(context);
+        }
+      },
+      child: Scaffold(
+      backgroundColor: bgColor,
       body: SafeArea(
         child: Column(
           children: [
@@ -1278,19 +1290,20 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                     child: Container(
                       padding: const EdgeInsets.all(8),
                       decoration: BoxDecoration(
-                        color: Colors.white12,
+                        color: controlBg,
                         borderRadius: BorderRadius.circular(12),
                       ),
-                      child: const Icon(CupertinoIcons.chevron_down,
-                          color: Colors.white, size: 20),
+                      child: Icon(CupertinoIcons.chevron_down,
+                          color: textColor, size: 20),
                     ),
                   ),
                   const Spacer(),
-                  const Text(
+                  Text(
                     'يُشغَّل الآن',
                     style: TextStyle(
-                      color: Colors.white,
+                      color: textColor,
                       fontSize: 14,
+                      fontFamily: 'Tajawal',
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -1364,17 +1377,18 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                               title,
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: Colors.white,
+                              style: TextStyle(
+                                color: textColor,
                                 fontSize: 20,
+                                fontFamily: 'Tajawal',
                                 fontWeight: FontWeight.w700,
                               ),
                             ),
                             const SizedBox(height: 4),
-                            const Text(
+                            Text(
                               'مستمع',
                               style: TextStyle(
-                                  color: Colors.white54, fontSize: 14),
+                                  color: subColor, fontSize: 14, fontFamily: 'Tajawal'),
                             ),
                           ],
                         );
@@ -1405,8 +1419,8 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                                     overlayShape: const RoundSliderOverlayShape(
                                         overlayRadius: 16),
                                     activeTrackColor: AppColors.primary,
-                                    inactiveTrackColor: Colors.white24,
-                                    thumbColor: Colors.white,
+                                    inactiveTrackColor: isDark ? Colors.white24 : Colors.black12,
+                                    thumbColor: AppColors.primary,
                                     overlayColor: AppColors.primary.withOpacity(0.2),
                                   ),
                                   child: Slider(
@@ -1427,12 +1441,12 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                                         MainAxisAlignment.spaceBetween,
                                     children: [
                                       Text(_fmt(position),
-                                          style: const TextStyle(
-                                              color: Colors.white54,
+                                          style: TextStyle(
+                                              color: subColor,
                                               fontSize: 12)),
                                       Text(_fmt(duration),
-                                          style: const TextStyle(
-                                              color: Colors.white54,
+                                          style: TextStyle(
+                                              color: subColor,
                                               fontSize: 12)),
                                     ],
                                   ),
@@ -1463,31 +1477,31 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                             decoration: BoxDecoration(
                               color: _isRepeat
                                   ? AppColors.primary.withOpacity(0.2)
-                                  : Colors.white10,
+                                  : controlBg,
                               shape: BoxShape.circle,
                             ),
                             child: Icon(
                               CupertinoIcons.repeat,
                               color: _isRepeat
                                   ? AppColors.primary
-                                  : Colors.white54,
+                                  : subColor,
                               size: 20,
                             ),
                           ),
                         ),
-                        // ── التالي → (يمين في RTL = أغنية تالية) ──
+                        // ── التالي → ──
                         GestureDetector(
                           onTap: () => audioService.playNext(),
                           child: Container(
                             width: 52,
                             height: 52,
                             decoration: BoxDecoration(
-                              color: Colors.white10,
+                              color: controlBg,
                               shape: BoxShape.circle,
                             ),
-                            child: const Icon(
+                            child: Icon(
                               CupertinoIcons.forward_end_fill,
-                              color: Colors.white,
+                              color: textColor,
                               size: 26,
                             ),
                           ),
@@ -1527,34 +1541,34 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                             );
                           },
                         ),
-                        // ── السابق ← (يسار في RTL = أغنية سابقة) ──
+                        // ── السابق ← ──
                         GestureDetector(
                           onTap: () => audioService.playPrevious(),
                           child: Container(
                             width: 52,
                             height: 52,
                             decoration: BoxDecoration(
-                              color: Colors.white10,
+                              color: controlBg,
                               shape: BoxShape.circle,
                             ),
-                            child: const Icon(
+                            child: Icon(
                               CupertinoIcons.backward_end_fill,
-                              color: Colors.white,
+                              color: textColor,
                               size: 26,
                             ),
                           ),
                         ),
-                        // Shuffle placeholder
+                        // Shuffle
                         Container(
                           width: 40,
                           height: 40,
                           decoration: BoxDecoration(
-                            color: Colors.white10,
+                            color: controlBg,
                             shape: BoxShape.circle,
                           ),
-                          child: const Icon(
+                          child: Icon(
                             CupertinoIcons.shuffle,
-                            color: Colors.white54,
+                            color: subColor,
                             size: 20,
                           ),
                         ),
@@ -1573,13 +1587,14 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 28, vertical: 4),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 4),
                     child: Text(
                       'قائمة التشغيل',
                       style: TextStyle(
-                        color: Colors.white54,
+                        color: subColor,
                         fontSize: 13,
+                        fontFamily: 'Tajawal',
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -1617,7 +1632,7 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                                               : CupertinoIcons.music_note,
                                           color: isActive
                                               ? AppColors.primary
-                                              : Colors.white38,
+                                              : subColor,
                                           size: 16,
                                         ),
                                         const SizedBox(width: 10),
@@ -1630,8 +1645,9 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                                             style: TextStyle(
                                               color: isActive
                                                   ? AppColors.primary
-                                                  : Colors.white70,
+                                                  : textColor.withOpacity(0.7),
                                               fontSize: 13,
+                                              fontFamily: 'Tajawal',
                                               fontWeight: isActive
                                                   ? FontWeight.w600
                                                   : FontWeight.w400,
@@ -1655,6 +1671,7 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
           ],
         ),
       ),
+    ),
     );
   }
 }
@@ -1760,13 +1777,13 @@ class _ListenPageState extends State<ListenPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: context.appBg,
       body: CustomScrollView(
         slivers: [
           _buildHeader(),
           _buildFileList(),
           // bottom padding for mini player + nav bar
-          const SliverToBoxAdapter(child: SizedBox(height: 140)),
+          const SliverToBoxAdapter(child: SizedBox(height: 160)),
         ],
       ),
     );
@@ -1783,22 +1800,33 @@ class _ListenPageState extends State<ListenPage> {
         ),
         child: Row(
           children: [
-            Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                color: AppColors.primary,
-                borderRadius: BorderRadius.circular(10),
+            // Logo
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: Image.asset(
+                'assets/images/logo.png',
+                width: 36,
+                height: 36,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: AppColors.primary,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(CupertinoIcons.music_note, color: Colors.white, size: 20),
+                ),
               ),
-              child: const Icon(CupertinoIcons.music_note, color: Colors.white, size: 20),
             ),
             const SizedBox(width: 12),
-            const Text(
+            Text(
               'مستمع',
               style: TextStyle(
                 fontSize: 28,
+                fontFamily: 'Tajawal',
                 fontWeight: FontWeight.w700,
-                color: AppColors.textPrimary,
+                color: context.appText,
                 letterSpacing: -0.5,
               ),
             ),
@@ -1831,11 +1859,11 @@ class _ListenPageState extends State<ListenPage> {
               child: Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: AppColors.surface,
+                  color: context.appSurface,
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: const Icon(CupertinoIcons.refresh,
-                    size: 18, color: AppColors.textSecondary),
+                child: Icon(CupertinoIcons.refresh,
+                    size: 18, color: context.appTextSec),
               ),
             ),
           ],
@@ -1855,24 +1883,25 @@ class _ListenPageState extends State<ListenPage> {
                 width: 80,
                 height: 80,
                 decoration: BoxDecoration(
-                  color: AppColors.redLight,
+                  color: context.appRedLight,
                   borderRadius: BorderRadius.circular(24),
                 ),
                 child: const Icon(CupertinoIcons.music_note_2,
                     size: 40, color: AppColors.primary),
               ),
               const SizedBox(height: 16),
-              const Text(
+              Text(
                 'لا توجد ملفات بعد',
                 style: TextStyle(
                     fontSize: 18,
+                    fontFamily: 'Tajawal',
                     fontWeight: FontWeight.w600,
-                    color: AppColors.textPrimary),
+                    color: context.appText),
               ),
               const SizedBox(height: 8),
-              const Text(
+              Text(
                 'حمّل مقاطع من تبويب تصفح',
-                style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
+                style: TextStyle(fontSize: 14, fontFamily: 'Tajawal', color: context.appTextSec),
               ),
             ],
           ),
@@ -1889,7 +1918,8 @@ class _ListenPageState extends State<ListenPage> {
             return _SwipeableMediaTile(
               key: ValueKey(item.path),
               item: item,
-              onTap: () => _playAll(index),
+              index: index,
+              allItems: _localItems,
               onDelete: () => _deleteItem(item),
             );
           },
@@ -1905,13 +1935,15 @@ class _ListenPageState extends State<ListenPage> {
 // ─────────────────────────────────────────────
 class _SwipeableMediaTile extends StatefulWidget {
   final LocalMediaItem item;
-  final VoidCallback onTap;
+  final int index;
+  final List<LocalMediaItem> allItems;
   final VoidCallback onDelete;
 
   const _SwipeableMediaTile({
     super.key,
     required this.item,
-    required this.onTap,
+    required this.index,
+    required this.allItems,
     required this.onDelete,
   });
 
@@ -1988,11 +2020,23 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
       _closeSwipe();
       return;
     }
-    // لا تعيد التشغيل إن كانت الأغنية ذاتها تعمل حالياً
-    final isCurrentlyPlaying =
-        audioService.currentItem?.path == widget.item.path;
-    if (isCurrentlyPlaying) return;
-    widget.onTap();
+    // تشغيل الأغنية بالـ index الصحيح من القائمة
+    audioService.playList(widget.allItems, widget.index);
+    // فتح المشغل بالملء
+    Navigator.of(context).push(
+      PageRouteBuilder(
+        pageBuilder: (_, __, ___) => const FullScreenPlayer(),
+        transitionsBuilder: (_, animation, __, child) {
+          return SlideTransition(
+            position: Tween<Offset>(
+                    begin: const Offset(0, 1), end: Offset.zero)
+                .animate(CurvedAnimation(
+                    parent: animation, curve: Curves.easeOutCubic)),
+            child: child,
+          );
+        },
+      ),
+    );
   }
 
   @override
@@ -2059,18 +2103,19 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
   }
 
   Widget _buildTile(bool active) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return AnimatedContainer(
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeOut,
       decoration: BoxDecoration(
         color: active
             ? AppColors.primary.withOpacity(0.07)
-            : AppColors.surface,
+            : (isDark ? AppColors.darkSurface : AppColors.surface),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: active
               ? AppColors.primary.withOpacity(0.45)
-              : AppColors.divider,
+              : (isDark ? AppColors.darkDivider : AppColors.divider),
           width: active ? 1.2 : 0.6,
         ),
         boxShadow: active
@@ -2083,7 +2128,7 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
               ]
             : [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.04),
+                  color: Colors.black.withOpacity(isDark ? 0.20 : 0.04),
                   blurRadius: 6,
                   offset: const Offset(0, 2),
                 )
@@ -2109,10 +2154,11 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       fontSize: 14,
+                      fontFamily: 'Tajawal',
                       fontWeight: FontWeight.w600,
                       color: active
                           ? AppColors.primary
-                          : AppColors.textPrimary,
+                          : (isDark ? AppColors.darkText : AppColors.textPrimary),
                     ),
                   ),
                   const SizedBox(height: 4),
@@ -2125,16 +2171,17 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
                         size: 11,
                         color: active
                             ? AppColors.primary.withOpacity(0.7)
-                            : AppColors.textSecondary,
+                            : (isDark ? AppColors.darkTextSec : AppColors.textSecondary),
                       ),
                       const SizedBox(width: 4),
                       Text(
                         widget.item.isVideo ? 'فيديو' : 'صوت',
                         style: TextStyle(
+                            fontFamily: 'Tajawal',
                             fontSize: 12,
                             color: active
                                 ? AppColors.primary.withOpacity(0.7)
-                                : AppColors.textSecondary),
+                                : (isDark ? AppColors.darkTextSec : AppColors.textSecondary)),
                       ),
                     ],
                   ),
@@ -2183,17 +2230,16 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
                 },
               )
             else
-              // سهم صغير للإشارة بإمكانية التشغيل
               Container(
                 width: 32,
                 height: 32,
                 decoration: BoxDecoration(
-                  color: AppColors.surfaceAlt,
+                  color: isDark ? AppColors.darkSurfaceAlt : AppColors.surfaceAlt,
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(
+                child: Icon(
                   CupertinoIcons.play_fill,
-                  color: AppColors.textSecondary,
+                  color: isDark ? AppColors.darkTextSec : AppColors.textSecondary,
                   size: 13,
                 ),
               ),
@@ -2250,7 +2296,7 @@ class BrowsePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: context.appBg,
       body: CustomScrollView(
         slivers: [
           SliverToBoxAdapter(
@@ -2261,12 +2307,13 @@ class BrowsePage extends StatelessWidget {
                 right: 20,
                 bottom: 20,
               ),
-              child: const Text(
+              child: Text(
                 'تصفح',
                 style: TextStyle(
                   fontSize: 28,
+                  fontFamily: 'Tajawal',
                   fontWeight: FontWeight.w700,
-                  color: AppColors.textPrimary,
+                  color: context.appText,
                   letterSpacing: -0.5,
                 ),
               ),
@@ -2332,20 +2379,21 @@ class BrowsePage extends StatelessWidget {
                 child: Container(
                   height: 72,
                   decoration: BoxDecoration(
-                    color: AppColors.surface,
+                    color: context.appSurface,
                     borderRadius: BorderRadius.circular(18),
-                    border: Border.all(color: AppColors.divider, width: 0.8),
+                    border: Border.all(color: context.appDivider, width: 0.8),
                   ),
-                  child: const Row(
+                  child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Icon(CupertinoIcons.folder_fill,
-                          color: AppColors.textPrimary, size: 26),
-                      SizedBox(width: 10),
+                          color: context.appText, size: 26),
+                      const SizedBox(width: 10),
                       Text(
                         'ملفات الجهاز',
                         style: TextStyle(
-                          color: AppColors.textPrimary,
+                          color: context.appText,
+                          fontFamily: 'Tajawal',
                           fontSize: 18,
                           fontWeight: FontWeight.w700,
                         ),
@@ -3955,9 +4003,8 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = AppTheme.isDark(context);
     return Scaffold(
-      backgroundColor: AppTheme.bg(context),
+      backgroundColor: context.appBg,
       body: CustomScrollView(
         slivers: [
           SliverToBoxAdapter(
@@ -3975,8 +4022,9 @@ class _SettingsPageState extends State<SettingsPage> {
                         'الإعدادات',
                         style: TextStyle(
                           fontSize: 28,
+                          fontFamily: 'Tajawal',
                           fontWeight: FontWeight.w700,
-                          color: AppTheme.textPrimary(context),
+                          color: context.appText,
                           letterSpacing: -0.5,
                         ),
                       ),
@@ -3993,15 +4041,25 @@ class _SettingsPageState extends State<SettingsPage> {
                         ),
                         child: Row(
                           children: [
-                            Container(
-                              width: 52,
-                              height: 52,
-                              decoration: BoxDecoration(
-                                color: Colors.white24,
-                                borderRadius: BorderRadius.circular(14),
+                            // Logo in settings card
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(14),
+                              child: Image.asset(
+                                'assets/images/logo.png',
+                                width: 52,
+                                height: 52,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) => Container(
+                                  width: 52,
+                                  height: 52,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white24,
+                                    borderRadius: BorderRadius.circular(14),
+                                  ),
+                                  child: const Icon(CupertinoIcons.music_note_2,
+                                      color: Colors.white, size: 28),
+                                ),
                               ),
-                              child: const Icon(CupertinoIcons.music_note_2,
-                                  color: Colors.white, size: 28),
                             ),
                             const SizedBox(width: 14),
                             const Column(
@@ -4010,11 +4068,14 @@ class _SettingsPageState extends State<SettingsPage> {
                                 Text('مستمع',
                                     style: TextStyle(
                                         color: Colors.white,
+                                        fontFamily: 'Tajawal',
                                         fontSize: 20,
                                         fontWeight: FontWeight.w700)),
                                 Text('الإصدار 2.1.0',
                                     style: TextStyle(
-                                        color: Colors.white70, fontSize: 13)),
+                                        color: Colors.white70,
+                                        fontFamily: 'Tajawal',
+                                        fontSize: 13)),
                               ],
                             ),
                           ],
@@ -4029,18 +4090,6 @@ class _SettingsPageState extends State<SettingsPage> {
               padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Column(
                     children: [
-                      _settingsSection('المظهر', [
-                        _switchTile(
-                          'الوضع الداكن',
-                          'تغيير مظهر التطبيق إلى الداكن',
-                          CupertinoIcons.moon_fill,
-                          isDark,
-                          (v) {
-                            ThemeNotifier.instance.setDark(v);
-                          },
-                        ),
-                      ]),
-                      const SizedBox(height: 16),
                       _settingsSection('التشغيل', [
                         _switchTile(
                           'التشغيل في الخلفية',
@@ -4064,6 +4113,22 @@ class _SettingsPageState extends State<SettingsPage> {
                         ),
                       ]),
                       const SizedBox(height: 16),
+                      _settingsSection('المظهر', [
+                        ValueListenableBuilder<ThemeMode>(
+                          valueListenable: ThemeNotifier.instance,
+                          builder: (_, mode, __) {
+                            final isDarkNow = mode == ThemeMode.dark;
+                            return _switchTile(
+                              'الوضع الداكن',
+                              'تغيير مظهر التطبيق للوضع الداكن',
+                              CupertinoIcons.moon_fill,
+                              isDarkNow,
+                              (v) => ThemeNotifier.instance.toggle(v),
+                            );
+                          },
+                        ),
+                      ]),
+                      const SizedBox(height: 16),
                       _settingsSection('التحميل', [
                         _infoTile(
                             'مسار التحميل',
@@ -4081,7 +4146,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           _clearDownloads,
                         ),
                       ]),
-                      const SizedBox(height: 140),
+                      const SizedBox(height: 160),
                     ],
                   ),
                 ),
@@ -4092,6 +4157,7 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Widget _settingsSection(String title, List<Widget> children) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -4100,17 +4166,20 @@ class _SettingsPageState extends State<SettingsPage> {
           child: Text(
             title,
             style: TextStyle(
+              fontFamily: 'Tajawal',
               fontSize: 13,
               fontWeight: FontWeight.w600,
-              color: AppTheme.textSecondary(context),
+              color: isDark ? AppColors.darkTextSec : AppColors.textSecondary,
             ),
           ),
         ),
         Container(
           decoration: BoxDecoration(
-            color: AppTheme.surface(context),
+            color: isDark ? AppColors.darkSurface : AppColors.surface,
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: AppTheme.divider(context), width: 0.5),
+            border: Border.all(
+                color: isDark ? AppColors.darkDivider : AppColors.divider,
+                width: 0.5),
           ),
           child: Column(
             children: children.map((child) {
@@ -4121,7 +4190,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   if (index < children.length - 1)
                     Divider(
                         height: 1,
-                        color: AppTheme.divider(context),
+                        color: isDark ? AppColors.darkDivider : AppColors.divider,
                         indent: 16,
                         endIndent: 16),
                 ],
@@ -4135,6 +4204,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Widget _switchTile(String title, String subtitle, IconData icon, bool value,
       Function(bool) onChanged) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return ListTile(
       contentPadding:
           const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -4142,24 +4212,29 @@ class _SettingsPageState extends State<SettingsPage> {
         width: 36,
         height: 36,
         decoration: BoxDecoration(
-          color: AppTheme.redLight(context),
+          color: isDark ? AppColors.darkRedLight : AppColors.redLight,
           borderRadius: BorderRadius.circular(10),
         ),
         child: Icon(icon, color: AppColors.primary, size: 18),
       ),
       title: Text(title,
           style: TextStyle(
+              fontFamily: 'Tajawal',
               fontSize: 14,
               fontWeight: FontWeight.w500,
-              color: AppTheme.textPrimary(context))),
+              color: isDark ? AppColors.darkText : AppColors.textPrimary)),
       subtitle: Text(subtitle,
-          style: TextStyle(fontSize: 12, color: AppTheme.textSecondary(context))),
+          style: TextStyle(
+              fontFamily: 'Tajawal',
+              fontSize: 12,
+              color: isDark ? AppColors.darkTextSec : AppColors.textSecondary)),
       trailing:
           CupertinoSwitch(value: value, onChanged: onChanged, activeColor: AppColors.primary),
     );
   }
 
   Widget _infoTile(String title, String value, IconData icon) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return ListTile(
       contentPadding:
           const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -4167,22 +4242,27 @@ class _SettingsPageState extends State<SettingsPage> {
         width: 36,
         height: 36,
         decoration: BoxDecoration(
-          color: AppTheme.redLight(context),
+          color: isDark ? AppColors.darkRedLight : AppColors.redLight,
           borderRadius: BorderRadius.circular(10),
         ),
         child: Icon(icon, color: AppColors.primary, size: 18),
       ),
       title: Text(title,
           style: TextStyle(
+              fontFamily: 'Tajawal',
               fontSize: 14,
               fontWeight: FontWeight.w500,
-              color: AppTheme.textPrimary(context))),
+              color: isDark ? AppColors.darkText : AppColors.textPrimary)),
       trailing: Text(value,
-          style: TextStyle(fontSize: 13, color: AppTheme.textSecondary(context))),
+          style: TextStyle(
+              fontFamily: 'Tajawal',
+              fontSize: 13,
+              color: isDark ? AppColors.darkTextSec : AppColors.textSecondary)),
     );
   }
 
   Widget _qualityTile() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return ListTile(
       contentPadding:
           const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -4190,7 +4270,7 @@ class _SettingsPageState extends State<SettingsPage> {
         width: 36,
         height: 36,
         decoration: BoxDecoration(
-          color: AppTheme.redLight(context),
+          color: isDark ? AppColors.darkRedLight : AppColors.redLight,
           borderRadius: BorderRadius.circular(10),
         ),
         child: const Icon(CupertinoIcons.dial_fill,
@@ -4198,19 +4278,20 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
       title: Text('جودة التحميل',
           style: TextStyle(
+              fontFamily: 'Tajawal',
               fontSize: 14,
               fontWeight: FontWeight.w500,
-              color: AppTheme.textPrimary(context))),
+              color: isDark ? AppColors.darkText : AppColors.textPrimary)),
       trailing: CupertinoSlidingSegmentedControl<String>(
         groupValue: _downloadQuality,
         thumbColor: AppColors.primary,
         children: const {
           'high': Padding(
               padding: EdgeInsets.symmetric(horizontal: 8),
-              child: Text('عالية', style: TextStyle(fontSize: 11))),
+              child: Text('عالية', style: TextStyle(fontSize: 11, fontFamily: 'Tajawal'))),
           'medium': Padding(
               padding: EdgeInsets.symmetric(horizontal: 8),
-              child: Text('متوسطة', style: TextStyle(fontSize: 11))),
+              child: Text('متوسطة', style: TextStyle(fontSize: 11, fontFamily: 'Tajawal'))),
         },
         onValueChanged: (v) {
           if (v != null) {
@@ -4224,6 +4305,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Widget _actionTile(String title, String subtitle, IconData icon, Color color,
       VoidCallback onTap) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return ListTile(
       contentPadding:
           const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -4238,9 +4320,13 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
       title: Text(title,
           style: TextStyle(
+              fontFamily: 'Tajawal',
               fontSize: 14, fontWeight: FontWeight.w500, color: color)),
       subtitle: Text(subtitle,
-          style: TextStyle(fontSize: 12, color: AppTheme.textSecondary(context))),
+          style: TextStyle(
+              fontFamily: 'Tajawal',
+              fontSize: 12,
+              color: isDark ? AppColors.darkTextSec : AppColors.textSecondary)),
       onTap: onTap,
     );
   }

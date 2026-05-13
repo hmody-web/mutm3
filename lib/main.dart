@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:async';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
@@ -28,6 +29,9 @@ Future<void> main() async {
     androidNotificationOngoing: true,
     androidStopForegroundOnPause: true,
   );
+
+  // تحميل الثيم المحفوظ قبل تشغيل التطبيق
+  await ThemeNotifier.instance.loadFromPrefs();
 
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
@@ -62,6 +66,69 @@ class AppColors {
   static const Color textSecondary = Color(0xFF6B6B6B);
   static const Color divider = Color(0xFFE0E0E0);
   static const Color redLight = Color(0xFFFFEBEB);
+
+  // Dark mode colors
+  static const Color darkBackground = Color(0xFF0D0D0D);
+  static const Color darkSurface = Color(0xFF1C1C1E);
+  static const Color darkSurfaceAlt = Color(0xFF2C2C2E);
+  static const Color darkTextPrimary = Color(0xFFF2F2F7);
+  static const Color darkTextSecondary = Color(0xFF8E8E93);
+  static const Color darkDivider = Color(0xFF38383A);
+  static const Color darkRedLight = Color(0xFF3A1212);
+}
+
+// ─────────────────────────────────────────────
+//  THEME NOTIFIER — يدير الثيم مع SharedPreferences
+// ─────────────────────────────────────────────
+class ThemeNotifier extends ValueNotifier<ThemeMode> {
+  ThemeNotifier() : super(ThemeMode.light);
+
+  static ThemeNotifier? _instance;
+  static ThemeNotifier get instance {
+    _instance ??= ThemeNotifier();
+    return _instance!;
+  }
+
+  bool get isDark => value == ThemeMode.dark;
+
+  Future<void> loadFromPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final isDark = prefs.getBool('darkMode') ?? false;
+    value = isDark ? ThemeMode.dark : ThemeMode.light;
+  }
+
+  Future<void> setDark(bool dark) async {
+    value = dark ? ThemeMode.dark : ThemeMode.light;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('darkMode', dark);
+  }
+}
+
+// Helper to get colors based on current theme
+class AppTheme {
+  static bool isDark(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark;
+
+  static Color bg(BuildContext context) =>
+      isDark(context) ? AppColors.darkBackground : AppColors.background;
+
+  static Color surface(BuildContext context) =>
+      isDark(context) ? AppColors.darkSurface : AppColors.surface;
+
+  static Color surfaceAlt(BuildContext context) =>
+      isDark(context) ? AppColors.darkSurfaceAlt : AppColors.surfaceAlt;
+
+  static Color textPrimary(BuildContext context) =>
+      isDark(context) ? AppColors.darkTextPrimary : AppColors.textPrimary;
+
+  static Color textSecondary(BuildContext context) =>
+      isDark(context) ? AppColors.darkTextSecondary : AppColors.textSecondary;
+
+  static Color divider(BuildContext context) =>
+      isDark(context) ? AppColors.darkDivider : AppColors.divider;
+
+  static Color redLight(BuildContext context) =>
+      isDark(context) ? AppColors.darkRedLight : AppColors.redLight;
 }
 
 // ─────────────────────────────────────────────
@@ -275,18 +342,54 @@ class AudioPlayerService {
     return ConcatenatingAudioSource(
       useLazyPreparation: true, // يحمّل الملف فقط عند الحاجة — مهم للقوائم الطويلة
       children: items.map((item) {
-        final thumb = item.thumbnailUrl;
+        // استخدم الصورة المحلية أولاً (artUri يدعم file:// فقط في iOS lock screen)
+        final localThumbPath = item.thumbnailCachePath;
+        Uri? artUri;
+        if (File(localThumbPath).existsSync()) {
+          artUri = Uri.file(localThumbPath);
+        } else if (item.thumbnailUrl != null) {
+          artUri = Uri.parse(item.thumbnailUrl!);
+        }
         return AudioSource.file(
           item.path,
           tag: MediaItem(
             id: item.path,
             title: item.title.replaceAll(RegExp(r'\.\w+$'), ''),
             artist: 'مستمع',
-            artUri: thumb != null ? Uri.parse(thumb) : null,
+            artUri: artUri,
           ),
         );
       }).toList(),
     );
+  }
+
+  /// تحديث MediaItem للعنصر الحالي بعد حفظ الصورة المحلية
+  Future<void> updateCurrentArtwork() async {
+    final idx = currentIndex.value;
+    final list = playlist.value;
+    if (idx < 0 || idx >= list.length || _concatenating == null) return;
+    final item = list[idx];
+    final localThumbPath = await ThumbnailManager.getLocalThumbnail(item.path);
+    Uri? artUri;
+    if (localThumbPath != null) {
+      artUri = Uri.file(localThumbPath);
+    } else if (item.thumbnailUrl != null) {
+      artUri = Uri.parse(item.thumbnailUrl!);
+    }
+    try {
+      // إعادة بناء المصدر الحالي مع artUri محدّثة
+      final newTag = MediaItem(
+        id: item.path,
+        title: item.title.replaceAll(RegExp(r'\.\w+$'), ''),
+        artist: 'مستمع',
+        artUri: artUri,
+      );
+      await _concatenating!.removeAt(idx);
+      await _concatenating!.insert(
+        idx,
+        AudioSource.file(item.path, tag: newTag),
+      );
+    } catch (_) {}
   }
 
   /// تشغيل قائمة كاملة ابتداءً من index معيّن
@@ -304,6 +407,8 @@ class AudioPlayerService {
       );
       await player.play();
       isVisible.value = true;
+      // تحديث الصورة المحلية في MediaItem بعد التشغيل
+      updateCurrentArtwork();
     } catch (e) {
       debugPrint('Error playList: $e');
     }
@@ -322,6 +427,7 @@ class AudioPlayerService {
         await player.play();
         currentIndex.value = index;
         isVisible.value = true;
+        updateCurrentArtwork();
         return;
       } catch (_) {}
     }
@@ -468,20 +574,39 @@ class Mustami3App extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'مستمع',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: AppColors.primary),
-        scaffoldBackgroundColor: AppColors.background,
-        fontFamily: 'SF Pro Display',
-        useMaterial3: true,
-      ),
-      home: const MainShell(),
-      builder: (context, child) {
-        return Directionality(
-          textDirection: TextDirection.rtl,
-          child: child!,
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: ThemeNotifier.instance,
+      builder: (context, themeMode, _) {
+        return MaterialApp(
+          title: 'مستمع',
+          debugShowCheckedModeBanner: false,
+          themeMode: themeMode,
+          theme: ThemeData(
+            colorScheme: ColorScheme.fromSeed(seedColor: AppColors.primary),
+            scaffoldBackgroundColor: AppColors.background,
+            fontFamily: 'Tajawal',
+            useMaterial3: true,
+            brightness: Brightness.light,
+          ),
+          darkTheme: ThemeData(
+            colorScheme: ColorScheme.fromSeed(
+              seedColor: AppColors.primary,
+              brightness: Brightness.dark,
+            ),
+            scaffoldBackgroundColor: AppColors.darkBackground,
+            fontFamily: 'Tajawal',
+            useMaterial3: true,
+            brightness: Brightness.dark,
+            cardColor: AppColors.darkSurface,
+            dividerColor: AppColors.darkDivider,
+          ),
+          home: const MainShell(),
+          builder: (context, child) {
+            return Directionality(
+              textDirection: TextDirection.rtl,
+              child: child!,
+            );
+          },
         );
       },
     );
@@ -501,47 +626,115 @@ class MainShell extends StatefulWidget {
   State<MainShell> createState() => _MainShellState();
 }
 
-class _MainShellState extends State<MainShell> {
+class _MainShellState extends State<MainShell>
+    with SingleTickerProviderStateMixin {
   final List<Widget> _pages = const [ListenPage(), BrowsePage(), SettingsPage()];
+  late AnimationController _pageCtrl;
+  late Animation<double> _pageAnim;
+  int _prevIndex = 0;
+  bool _swipeLeft = false; // اتجاه السحب
 
   @override
   void initState() {
     super.initState();
     audioService.init();
+    _pageCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 380),
+    );
+    _pageAnim = CurvedAnimation(parent: _pageCtrl, curve: Curves.easeOutCubic);
     _navIndexNotifier.addListener(_onNavChange);
   }
 
   @override
   void dispose() {
     _navIndexNotifier.removeListener(_onNavChange);
+    _pageCtrl.dispose();
     super.dispose();
   }
 
-  void _onNavChange() => setState(() {});
+  void _onNavChange() {
+    final newIdx = _navIndexNotifier.value;
+    _swipeLeft = newIdx > _prevIndex;
+    _prevIndex = newIdx;
+    _pageCtrl.forward(from: 0.0);
+    setState(() {});
+  }
+
+  void _onHorizontalSwipe(DragEndDetails details) {
+    final velocity = details.primaryVelocity ?? 0;
+    final current = _navIndexNotifier.value;
+    // في RTL: سحب يسار (velocity سالب) → تبويب تالٍ (index أكبر)
+    //         سحب يمين (velocity موجب) → تبويب سابق (index أصغر)
+    if (velocity < -300 && current < 2) {
+      _navIndexNotifier.value = current + 1;
+    } else if (velocity > 300 && current > 0) {
+      _navIndexNotifier.value = current - 1;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final navIndex = _navIndexNotifier.value;
     return Scaffold(
-      body: Stack(
-        children: [
-          // ★ IndexedStack يحافظ على state كل صفحة
-          IndexedStack(index: navIndex, children: _pages),
-          // ★ Mini Player + Bottom Nav فوق كل شيء
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: _BottomArea(),
-          ),
-        ],
+      body: GestureDetector(
+        onHorizontalDragEnd: _onHorizontalSwipe,
+        child: Stack(
+          children: [
+            // ★ تأثير انتقال رائع بين الصفحات
+            AnimatedBuilder(
+              animation: _pageAnim,
+              builder: (context, _) {
+                return Stack(
+                  children: List.generate(_pages.length, (i) {
+                    final isActive = i == navIndex;
+                    if (!isActive && i != _prevIndex) return const SizedBox.shrink();
+
+                    double dx = 0;
+                    double opacity = 1;
+
+                    if (isActive) {
+                      // الصفحة الداخلة: تدخل من الجانب مع fade
+                      final enter = _pageAnim.value;
+                      dx = _swipeLeft
+                          ? (1.0 - enter) * 0.25
+                          : -(1.0 - enter) * 0.25;
+                      opacity = enter;
+                    } else {
+                      // الصفحة الخارجة: تخرج للجانب مع fade
+                      final exit = _pageAnim.value;
+                      dx = _swipeLeft ? -exit * 0.12 : exit * 0.12;
+                      opacity = 1.0 - exit * 0.6;
+                    }
+
+                    return Opacity(
+                      opacity: opacity.clamp(0.0, 1.0),
+                      child: Transform.translate(
+                        offset: Offset(
+                            MediaQuery.of(context).size.width * dx, 0),
+                        child: _pages[i],
+                      ),
+                    );
+                  }),
+                );
+              },
+            ),
+            // ★ Mini Player + Bottom Nav فوق كل شيء
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: _BottomArea(),
+            ),
+          ],
+        ),
       ),
     );
   }
 }
 
 // ─────────────────────────────────────────────
-//  BOTTOM AREA: Mini Player + Nav Bar
+//  BOTTOM AREA: Mini Player + Glass Nav Bar
 // ─────────────────────────────────────────────
 class _BottomArea extends StatelessWidget {
   @override
@@ -557,76 +750,212 @@ class _BottomArea extends StatelessWidget {
             return _MiniPlayer();
           },
         ),
-        // Bottom Nav
-        Container(
-          decoration: const BoxDecoration(
-            color: AppColors.background,
-            border: Border(top: BorderSide(color: AppColors.divider, width: 0.5)),
-          ),
-          child: SafeArea(
-            top: false,
-            child: ValueListenableBuilder<int>(
-              valueListenable: _navIndexNotifier,
-              builder: (_, idx, __) {
-                return Row(
+        // Glass Nav Bar
+        const _GlassNavBar(),
+      ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────────
+//  GLASS NAV BAR — iOS Floating Glass Style
+// ─────────────────────────────────────────────
+class _GlassNavBar extends StatefulWidget {
+  const _GlassNavBar();
+
+  @override
+  State<_GlassNavBar> createState() => _GlassNavBarState();
+}
+
+class _GlassNavBarState extends State<_GlassNavBar>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _indicatorCtrl;
+  int _prevIndex = 0;
+
+  static const List<_NavTabData> _tabs = [
+    _NavTabData(icon: CupertinoIcons.music_note_2, label: 'استمع'),
+    _NavTabData(icon: CupertinoIcons.search, label: 'تصفح'),
+    _NavTabData(icon: CupertinoIcons.settings, label: 'الإعدادات'),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _indicatorCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+      value: 1.0,
+    );
+    _navIndexNotifier.addListener(_onNavChange);
+  }
+
+  @override
+  void dispose() {
+    _navIndexNotifier.removeListener(_onNavChange);
+    _indicatorCtrl.dispose();
+    super.dispose();
+  }
+
+  void _onNavChange() {
+    if (_prevIndex != _navIndexNotifier.value) {
+      _indicatorCtrl.forward(from: 0.0);
+      _prevIndex = _navIndexNotifier.value;
+    }
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bottomPadding = MediaQuery.of(context).padding.bottom;
+    final idx = _navIndexNotifier.value;
+
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 20,
+        right: 20,
+        bottom: bottomPadding > 0 ? bottomPadding + 8 : 16,
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(40),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+          child: Container(
+            foregroundDecoration: BoxDecoration(
+  borderRadius: BorderRadius.circular(40),
+  gradient: LinearGradient(
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
+    colors: [
+      const Color.fromARGB(255, 255, 0, 0).withOpacity(0.06),
+      const Color.fromARGB(6, 212, 40, 40).withOpacity(0.06),
+    ],
+  ),
+),
+            height: 64,
+            decoration: BoxDecoration(
+              color: isDark
+                  ? const Color(0xFF1C1C1E).withOpacity(0.92)
+                  : const Color.fromARGB(255, 255, 255, 255).withOpacity(0.72),
+              borderRadius: BorderRadius.circular(40),
+              border: Border.all(
+                color: isDark
+                    ? Colors.white.withOpacity(0.08)
+                    : const Color.fromARGB(71, 197, 149, 149).withOpacity(0.9),
+                width: 1.0,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: isDark
+                      ? Colors.black.withOpacity(0.4)
+                      : Colors.black.withOpacity(0.12),
+                  blurRadius: 32,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final tabWidth = constraints.maxWidth / _tabs.length;
+                return Stack(
+                  alignment: Alignment.center,
                   children: [
-                    _NavItem(index: 0, icon: CupertinoIcons.music_note_2, label: 'استمع', current: idx),
-                    _NavItem(index: 1, icon: CupertinoIcons.search, label: 'تصفح', current: idx),
-                    _NavItem(index: 2, icon: CupertinoIcons.settings, label: 'الإعدادات', current: idx),
+                    // ── Animated Indicator ──
+                    AnimatedPositioned(
+                      duration: const Duration(milliseconds: 300),
+                      curve: Curves.easeOutCubic,
+                      // RTL: tab 0 (استمع) في أقصى اليمين → right = 0
+                      // tab 1 (تصفح) → right = tabWidth
+                      // tab 2 (إعدادات) → right = 2*tabWidth (أقصى اليسار)
+                      right: idx * tabWidth + tabWidth * 0.15,
+                      top: 10,
+                      bottom: 10,
+                      width: tabWidth * 0.7,
+                      child: AnimatedBuilder(
+                        animation: _indicatorCtrl,
+                        builder: (_, __) {
+                          final scale = Tween<double>(begin: 0.85, end: 1.0)
+                              .animate(CurvedAnimation(
+                                  parent: _indicatorCtrl,
+                                  curve: Curves.easeOutBack))
+                              .value;
+                          return Transform.scale(
+                            scale: scale,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: AppColors.primary.withOpacity(0.14),
+                                borderRadius: BorderRadius.circular(28),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+
+                    // ── Tab Buttons ──
+                    Row(
+                      children: List.generate(_tabs.length, (i) {
+                        final tab = _tabs[i];
+                        final isSelected = i == idx;
+                        return Expanded(
+                          child: GestureDetector(
+                            onTap: () => _navIndexNotifier.value = i,
+                            behavior: HitTestBehavior.opaque,
+                            child: AnimatedDefaultTextStyle(
+                              duration: const Duration(milliseconds: 200),
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: isSelected
+                                    ? FontWeight.w700
+                                    : FontWeight.w400,
+                                color: isSelected
+                                    ? AppColors.primary
+                                    : (isDark
+                                        ? Colors.white54
+                                        : AppColors.textSecondary),
+                              ),
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  AnimatedScale(
+                                    scale: isSelected ? 1.18 : 1.0,
+                                    duration:
+                                        const Duration(milliseconds: 250),
+                                    curve: Curves.easeOutBack,
+                                    child: Icon(
+                                      tab.icon,
+                                      size: 22,
+                                      color: isSelected
+                                          ? AppColors.primary
+                                          : (isDark
+                                              ? Colors.white54
+                                              : AppColors.textSecondary),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 3),
+                                  Text(tab.label),
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
+                      }),
+                    ),
                   ],
                 );
               },
             ),
           ),
         ),
-      ],
+      ),
     );
   }
 }
 
-class _NavItem extends StatelessWidget {
-  final int index;
+class _NavTabData {
   final IconData icon;
   final String label;
-  final int current;
-
-  const _NavItem({
-    required this.index,
-    required this.icon,
-    required this.label,
-    required this.current,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final isSelected = index == current;
-    return Expanded(
-      child: GestureDetector(
-        onTap: () => _navIndexNotifier.value = index,
-        behavior: HitTestBehavior.opaque,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 10),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon,
-                  size: 22,
-                  color: isSelected ? AppColors.primary : AppColors.textSecondary),
-              const SizedBox(height: 2),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
-                  color: isSelected ? AppColors.primary : AppColors.textSecondary,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+  const _NavTabData({required this.icon, required this.label});
 }
 
 // ─────────────────────────────────────────────
@@ -3626,8 +3955,9 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = AppTheme.isDark(context);
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: AppTheme.bg(context),
       body: CustomScrollView(
         slivers: [
           SliverToBoxAdapter(
@@ -3641,12 +3971,12 @@ class _SettingsPageState extends State<SettingsPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                      const Text(
+                      Text(
                         'الإعدادات',
                         style: TextStyle(
                           fontSize: 28,
                           fontWeight: FontWeight.w700,
-                          color: AppColors.textPrimary,
+                          color: AppTheme.textPrimary(context),
                           letterSpacing: -0.5,
                         ),
                       ),
@@ -3699,6 +4029,18 @@ class _SettingsPageState extends State<SettingsPage> {
               padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Column(
                     children: [
+                      _settingsSection('المظهر', [
+                        _switchTile(
+                          'الوضع الداكن',
+                          'تغيير مظهر التطبيق إلى الداكن',
+                          CupertinoIcons.moon_fill,
+                          isDark,
+                          (v) {
+                            ThemeNotifier.instance.setDark(v);
+                          },
+                        ),
+                      ]),
+                      const SizedBox(height: 16),
                       _settingsSection('التشغيل', [
                         _switchTile(
                           'التشغيل في الخلفية',
@@ -3757,18 +4099,18 @@ class _SettingsPageState extends State<SettingsPage> {
           padding: const EdgeInsets.only(right: 4, bottom: 8),
           child: Text(
             title,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
-              color: AppColors.textSecondary,
+              color: AppTheme.textSecondary(context),
             ),
           ),
         ),
         Container(
           decoration: BoxDecoration(
-            color: AppColors.surface,
+            color: AppTheme.surface(context),
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: AppColors.divider, width: 0.5),
+            border: Border.all(color: AppTheme.divider(context), width: 0.5),
           ),
           child: Column(
             children: children.map((child) {
@@ -3777,9 +4119,9 @@ class _SettingsPageState extends State<SettingsPage> {
                 children: [
                   child,
                   if (index < children.length - 1)
-                    const Divider(
+                    Divider(
                         height: 1,
-                        color: AppColors.divider,
+                        color: AppTheme.divider(context),
                         indent: 16,
                         endIndent: 16),
                 ],
@@ -3800,18 +4142,18 @@ class _SettingsPageState extends State<SettingsPage> {
         width: 36,
         height: 36,
         decoration: BoxDecoration(
-          color: AppColors.redLight,
+          color: AppTheme.redLight(context),
           borderRadius: BorderRadius.circular(10),
         ),
         child: Icon(icon, color: AppColors.primary, size: 18),
       ),
       title: Text(title,
-          style: const TextStyle(
+          style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w500,
-              color: AppColors.textPrimary)),
+              color: AppTheme.textPrimary(context))),
       subtitle: Text(subtitle,
-          style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+          style: TextStyle(fontSize: 12, color: AppTheme.textSecondary(context))),
       trailing:
           CupertinoSwitch(value: value, onChanged: onChanged, activeColor: AppColors.primary),
     );
@@ -3825,18 +4167,18 @@ class _SettingsPageState extends State<SettingsPage> {
         width: 36,
         height: 36,
         decoration: BoxDecoration(
-          color: AppColors.redLight,
+          color: AppTheme.redLight(context),
           borderRadius: BorderRadius.circular(10),
         ),
         child: Icon(icon, color: AppColors.primary, size: 18),
       ),
       title: Text(title,
-          style: const TextStyle(
+          style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w500,
-              color: AppColors.textPrimary)),
+              color: AppTheme.textPrimary(context))),
       trailing: Text(value,
-          style: const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+          style: TextStyle(fontSize: 13, color: AppTheme.textSecondary(context))),
     );
   }
 
@@ -3848,17 +4190,17 @@ class _SettingsPageState extends State<SettingsPage> {
         width: 36,
         height: 36,
         decoration: BoxDecoration(
-          color: AppColors.redLight,
+          color: AppTheme.redLight(context),
           borderRadius: BorderRadius.circular(10),
         ),
         child: const Icon(CupertinoIcons.dial_fill,
             color: AppColors.primary, size: 18),
       ),
-      title: const Text('جودة التحميل',
+      title: Text('جودة التحميل',
           style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w500,
-              color: AppColors.textPrimary)),
+              color: AppTheme.textPrimary(context))),
       trailing: CupertinoSlidingSegmentedControl<String>(
         groupValue: _downloadQuality,
         thumbColor: AppColors.primary,
@@ -3898,7 +4240,7 @@ class _SettingsPageState extends State<SettingsPage> {
           style: TextStyle(
               fontSize: 14, fontWeight: FontWeight.w500, color: color)),
       subtitle: Text(subtitle,
-          style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+          style: TextStyle(fontSize: 12, color: AppTheme.textSecondary(context))),
       onTap: onTap,
     );
   }

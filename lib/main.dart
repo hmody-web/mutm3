@@ -286,42 +286,51 @@ class ThumbnailManager {
 }
 
 // ─────────────────────────────────────────────
-//  AUDIO PLAYER SERVICE — Singleton
+//  AUDIO PLAYER SERVICE — Singleton (Rebuilt)
 // ─────────────────────────────────────────────
 class AudioPlayerService {
   static final AudioPlayerService _instance = AudioPlayerService._internal();
   factory AudioPlayerService() => _instance;
   AudioPlayerService._internal();
 
-  final AudioPlayer player = AudioPlayer();
+  // ── المشغل مع pipeline لتضخيم الصوت الحقيقي ──
+  late final AudioPlayer player = AudioPlayer(
+    audioPipeline: AudioPipeline(
+      androidAudioEffects: [
+        _loudnessEnhancer = AndroidLoudnessEnhancer(),
+      ],
+    ),
+  );
+  late final AndroidLoudnessEnhancer _loudnessEnhancer;
+
   final ValueNotifier<List<LocalMediaItem>> playlist = ValueNotifier([]);
   final ValueNotifier<int> currentIndex = ValueNotifier(-1);
   final ValueNotifier<bool> isVisible = ValueNotifier(false);
 
-  // القائمة المتسلسلة التي يفهمها iOS Control Center و lock screen
   ConcatenatingAudioSource? _concatenating;
+
+  // ── مفتاح تجاهل تحديثات الـ stream أثناء العمليات اليدوية ──
+  bool _ignoreStreamUpdates = false;
+  Timer? _ignoreTimer;
 
   Future<void> init() async {
     final session = await AudioSession.instance;
     await session.configure(const AudioSessionConfiguration.music());
 
-    // تحديث currentIndex عند تغيّر المسار الحالي (next/prev من شاشة القفل فقط)
-    // نستخدم تأخيراً قصيراً حتى لا يتداخل مع القيم التي نضبطها يدوياً
-    player.currentIndexStream.listen((index) {
-      if (index != null) {
-        final list = playlist.value;
-        if (index < list.length && index != currentIndex.value) {
-          Future.microtask(() {
-            if (index != currentIndex.value) {
-              currentIndex.value = index;
-              isVisible.value = true;
-            }
-          });
+    // نتابع currentIndexStream فقط لتحديثات شاشة القفل / سماعات البلوتوث
+    // ونتجاهل التحديثات أثناء عمليات seek/setAudioSource اليدوية
+    player.currentIndexStream.listen((streamIndex) {
+      if (_ignoreStreamUpdates) return;
+      if (streamIndex == null) return;
+      final list = playlist.value;
+      if (streamIndex >= 0 && streamIndex < list.length) {
+        if (streamIndex != currentIndex.value) {
+          currentIndex.value = streamIndex;
+          isVisible.value = true;
         }
       }
     });
 
-    // إعادة تهيئة الجلسة عند انقطاع الصوت (مكالمة واردة مثلاً)
     session.interruptionEventStream.listen((event) {
       if (event.begin) {
         player.pause();
@@ -334,12 +343,20 @@ class AudioPlayerService {
     });
   }
 
+  /// يمنع stream من التدخل لمدة [ms] ميلي ثانية
+  void _lockStream([int ms = 800]) {
+    _ignoreStreamUpdates = true;
+    _ignoreTimer?.cancel();
+    _ignoreTimer = Timer(Duration(milliseconds: ms), () {
+      _ignoreStreamUpdates = false;
+    });
+  }
+
   /// يبني ConcatenatingAudioSource من قائمة الملفات المحلية
   ConcatenatingAudioSource _buildSource(List<LocalMediaItem> items) {
     return ConcatenatingAudioSource(
-      useLazyPreparation: true, // يحمّل الملف فقط عند الحاجة — مهم للقوائم الطويلة
+      useLazyPreparation: true,
       children: items.map((item) {
-        // استخدم الصورة المحلية أولاً (artUri يدعم file:// فقط في iOS lock screen)
         final localThumbPath = item.thumbnailCachePath;
         Uri? artUri;
         if (File(localThumbPath).existsSync()) {
@@ -374,7 +391,6 @@ class AudioPlayerService {
       artUri = Uri.parse(item.thumbnailUrl!);
     }
     try {
-      // إعادة بناء المصدر الحالي مع artUri محدّثة
       final newTag = MediaItem(
         id: item.path,
         title: item.title.replaceAll(RegExp(r'\.\w+$'), ''),
@@ -382,50 +398,65 @@ class AudioPlayerService {
         artUri: artUri,
       );
       await _concatenating!.removeAt(idx);
-      await _concatenating!.insert(
-        idx,
-        AudioSource.file(item.path, tag: newTag),
-      );
+      await _concatenating!.insert(idx, AudioSource.file(item.path, tag: newTag));
     } catch (_) {}
   }
 
-  /// تشغيل قائمة كاملة ابتداءً من index معيّن
+  /// تشغيل قائمة كاملة ابتداءً من index معيّن — الدالة الأساسية
   Future<void> playList(List<LocalMediaItem> items, int startIndex) async {
     if (items.isEmpty) return;
-    final clampedIndex = startIndex.clamp(0, items.length - 1);
-    // نضبط القيم فوراً قبل أي عملية غير متزامنة لتجنب التحديث المتأخر من الـ stream
-    playlist.value = items;
-    currentIndex.value = clampedIndex;
+    final targetIndex = startIndex.clamp(0, items.length - 1);
+
+    // ① احجب الـ stream فوراً قبل أي عملية
+    _lockStream(1200);
+
+    // ② اضبط القيم المحلية بشكل نهائي
+    playlist.value = List.unmodifiable(items);
+    currentIndex.value = targetIndex;
     isVisible.value = true;
 
+    // ③ ابنِ المصدر الجديد
     _concatenating = _buildSource(items);
+
     try {
-      // نُوقف الـ stream مؤقتاً حتى لا يتداخل مع القيمة التي ضبطناها
       await player.setAudioSource(
         _concatenating!,
-        initialIndex: clampedIndex,
+        initialIndex: targetIndex,
         initialPosition: Duration.zero,
         preload: false,
       );
-      currentIndex.value = clampedIndex; // نُعيد الضبط بعد setAudioSource
+
+      // ④ أعد الضبط بعد setAudioSource (قد يُعيد الـ stream تغييره)
+      _lockStream(800);
+      currentIndex.value = targetIndex;
+
       await player.play();
       updateCurrentArtwork();
     } catch (e) {
-      debugPrint('Error playList: $e');
+      debugPrint('AudioPlayerService.playList error: $e');
     }
   }
 
-  /// تشغيل عنصر واحد بالـ index بدون إعادة بناء القائمة (للنقر على عنصر في القائمة)
+  /// الانتقال إلى index في القائمة الحالية (للنقر من داخل المشغل أو القائمة)
   Future<void> playAtIndex(int index) async {
     final list = playlist.value;
     if (index < 0 || index >= list.length) return;
 
-    // إن كانت القائمة ذاتها لا زالت محمّلة، انتقل فقط
-    if (_concatenating != null &&
-        _concatenating!.length == list.length) {
+    if (_concatenating != null && _concatenating!.length == list.length) {
+      // ① احجب الـ stream
+      _lockStream(1000);
+
+      // ② اضبط currentIndex فوراً — هذا يُحدّث UI على الفور
+      currentIndex.value = index;
+
       try {
-        currentIndex.value = index; // فوري قبل seek
+        // ③ انتقل للمسار المطلوب
         await player.seek(Duration.zero, index: index);
+
+        // ④ أعد التأكيد بعد seek
+        _lockStream(600);
+        currentIndex.value = index;
+
         await player.play();
         isVisible.value = true;
         updateCurrentArtwork();
@@ -433,7 +464,7 @@ class AudioPlayerService {
       } catch (_) {}
     }
 
-    // وإلا أعد البناء
+    // إعادة البناء الكامل إن لزم
     await playList(list, index);
   }
 
@@ -441,17 +472,42 @@ class AudioPlayerService {
     final idx = currentIndex.value;
     final list = playlist.value;
     if (idx < list.length - 1) {
+      _lockStream(800);
+      currentIndex.value = idx + 1;
       await player.seekToNext();
     }
   }
 
   Future<void> playPrevious() async {
-    // إذا مضى أكثر من 3 ثوانٍ، ارجع لبداية الأغنية الحالية
     final pos = player.position;
     if (pos.inSeconds > 3) {
       await player.seek(Duration.zero);
     } else {
+      final idx = currentIndex.value;
+      if (idx > 0) {
+        _lockStream(800);
+        currentIndex.value = idx - 1;
+      }
       await player.seekToPrevious();
+    }
+  }
+
+  /// ضبط مستوى الصوت — يدعم 0% إلى 300% بتضخيم حقيقي
+  /// 0-100% → setVolume(0.0-1.0) فقط
+  /// 101-300% → setVolume(1.0) + LoudnessEnhancer
+  void setVolumeBoost(double normalizedValue) {
+    // normalizedValue: 0.0 إلى 3.0 (يمثل 0% إلى 300%)
+    final v = normalizedValue.clamp(0.0, 3.0);
+    if (v <= 1.0) {
+      player.setVolume(v);
+      try { _loudnessEnhancer.setTargetGain(0); } catch (_) {}
+    } else {
+      player.setVolume(1.0);
+      // LoudnessEnhancer: targetGain بالـ mB (milli-Bels)
+      // كل 100mB ≈ رفع ملحوظ في الصوت
+      // v=2.0 → gain=800mB, v=3.0 → gain=1600mB
+      final gainMB = ((v - 1.0) * 800.0);
+      try { _loudnessEnhancer.setTargetGain(gainMB); } catch (_) {}
     }
   }
 
@@ -462,7 +518,10 @@ class AudioPlayerService {
     return list[idx];
   }
 
-  void dispose() => player.dispose();
+  void dispose() {
+    _ignoreTimer?.cancel();
+    player.dispose();
+  }
 }
 
 final audioService = AudioPlayerService();
@@ -1334,9 +1393,9 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
   }
 
   void _setVolume(double v) {
-    setState(() => _volume = v.clamp(0.0, 3.0));
-    audioService.player.setVolume(_volume.clamp(0.0, 1.0));
-    // video_player يظل صامتاً دائماً
+    final clamped = v.clamp(0.0, 3.0);
+    setState(() => _volume = clamped);
+    audioService.setVolumeBoost(clamped);
   }
 
   void _setSpeed(double s) {
@@ -2447,7 +2506,10 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
 
   @override
   Widget build(BuildContext context) {
-    final isActive = audioService.currentItem?.path == widget.item.path;
+    // نستخدم المقارنة بالمسار لأنها أكثر دقة من المقارنة بالـ index
+    // (الـ index قد يتغير إذا حُذف عنصر من القائمة)
+    final currentPath = audioService.currentItem?.path;
+    final isActive = currentPath == widget.item.path;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -2499,22 +2561,24 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
             onHorizontalDragUpdate: _onHorizontalDrag,
             onHorizontalDragEnd: _onDragEnd,
             onTap: () {
-              // نحفظ الـ index محلياً لمنع أي تغيير خارجي أثناء المعالجة
-              final int localIndex = widget.index;
-              final List<LocalMediaItem> localAllItems = widget.allItems;
               if (_revealed) {
                 _closeSwipe();
                 return;
               }
-              final currentList = audioService.playlist.value;
-              final sameList = currentList.length == localAllItems.length &&
-                  currentList.isNotEmpty &&
-                  currentList.first.path == localAllItems.first.path;
-              if (sameList) {
-                audioService.playAtIndex(localIndex);
-              } else {
-                audioService.playList(localAllItems, localIndex);
-              }
+              // ① نحفظ القيم محلياً بشكل غير قابل للتغيير
+              final int targetIndex = widget.index;
+              final List<LocalMediaItem> targetList =
+                  List<LocalMediaItem>.unmodifiable(widget.allItems);
+
+              // ② نحدد currentIndex مباشرة قبل أي عملية async
+              //    هذا يمنع الـ stream من تغييره
+              audioService.currentIndex.value = targetIndex;
+
+              // ③ نشغّل القائمة دائماً بـ playList لضمان الـ index الصحيح
+              //    حتى لو القائمة نفسها، نُعيد بناء المصدر مع الـ index المحدد
+              audioService.playList(targetList, targetIndex);
+
+              // ④ نفتح المشغل — currentIndex محدد مسبقاً، لا يوجد تعارض
               Navigator.of(context).push(
                 PageRouteBuilder(
                   pageBuilder: (_, __, ___) => const FullScreenPlayer(),

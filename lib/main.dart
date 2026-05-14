@@ -19,6 +19,7 @@ import 'package:dio/dio.dart';
 import 'package:video_player/video_player.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'app_icon_service.dart';
 
 // ─────────────────────────────────────────────
 //  ENTRY POINT
@@ -91,15 +92,18 @@ class ThemeNotifier extends ValueNotifier<ThemeMode> {
 
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
-    value = (prefs.getBool('darkMode') ?? false)
-        ? ThemeMode.dark
-        : ThemeMode.light;
+    final isDarkMode = prefs.getBool('darkMode') ?? false;
+    value = isDarkMode ? ThemeMode.dark : ThemeMode.light;
+    // مزامنة الأيقونة مع الثيم المحفوظ عند بدء التطبيق
+    await AppIconService.instance.updateIcon(isDark: isDarkMode);
   }
 
   Future<void> toggle(bool dark) async {
     value = dark ? ThemeMode.dark : ThemeMode.light;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('darkMode', dark);
+    // تغيير أيقونة التطبيق حسب الثيم الجديد
+    await AppIconService.instance.updateIcon(isDark: dark);
   }
 }
 

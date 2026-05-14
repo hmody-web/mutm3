@@ -39,16 +39,17 @@
 	<array>
 		<string>audio</string>
 	</array>
-
+    <key>NSAppleMusicUsageDescription</key>
+    <string>لعرض الصور المصغرة للأغاني</string>
 	<!-- صلاحيات -->
 	<key>NSDocumentsFolderUsageDescription</key>
-	<string>مستمع يحتاج إلى الوصول للملفات لتشغيلها</string>
+	<string>دندن يحتاج إلى الوصول للملفات لتشغيلها</string>
 
 	<key>NSMicrophoneUsageDescription</key>
-	<string>مستمع يحتاج صلاحية الميكروفون لدعم الصوت</string>
+	<string>دندن يحتاج صلاحية الميكروفون لدعم الصوت</string>
 
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>مستمع يستخدم الشبكة للتحميل من يوتيوب</string>
+	<string>دندن يستخدم الشبكة للتحميل من يوتيوب</string>
 
 	<!-- السماح بمحتوى HTTP -->
 	<key>NSAppTransportSecurity</key>

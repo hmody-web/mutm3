@@ -19,6 +19,8 @@ import 'package:dio/dio.dart';
 import 'package:video_player/video_player.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:video_thumbnail/video_thumbnail.dart';
+import 'package:on_audio_query/on_audio_query.dart';
 import 'app_icon_service.dart';
 
 // ─────────────────────────────────────────────
@@ -241,60 +243,127 @@ class LocalMediaItem {
 
 // ─────────────────────────────────────────────
 //  THUMBNAIL CACHE MANAGER
+//  يدعم: YouTube URLs + فيديو محلي + Album Art
 // ─────────────────────────────────────────────
 class ThumbnailManager {
   static final Map<String, String?> _memCache = {};
 
-  /// يُرجع مسار صورة مخزّنة محلياً إن وُجدت
-  static Future<String?> getLocalThumbnail(String mediaPath) async {
-    if (_memCache.containsKey(mediaPath)) return _memCache[mediaPath];
+  // ── مسار ملف الصورة المخزّنة بجانب الملف الأصلي ──
+  static String _thumbPath(String mediaPath) {
     final name = mediaPath.split('/').last.replaceAll(RegExp(r'\.\w+$'), '');
     final dir = mediaPath.substring(0, mediaPath.lastIndexOf('/'));
-    final thumbPath = '$dir/.thumb_$name.jpg';
-    if (File(thumbPath).existsSync()) {
-      _memCache[mediaPath] = thumbPath;
-      return thumbPath;
+    return '$dir/.thumb_$name.jpg';
+  }
+
+  /// يُرجع مسار صورة مصغرة جاهزة (من الكاش أو من الملف) أو null
+  static Future<String?> getLocalThumbnail(String mediaPath) async {
+    if (_memCache.containsKey(mediaPath)) return _memCache[mediaPath];
+    final tp = _thumbPath(mediaPath);
+    if (File(tp).existsSync()) {
+      _memCache[mediaPath] = tp;
+      return tp;
     }
     _memCache[mediaPath] = null;
     return null;
   }
 
-  /// يحفظ صورة من URL إلى ملف محلي بجانب الفيديو
+  /// يحفظ صورة من URL (يوتيوب) إلى ملف محلي بجانب الملف
   static Future<void> saveThumbnail(String mediaPath, String thumbnailUrl) async {
     try {
-      final name = mediaPath.split('/').last.replaceAll(RegExp(r'\.\w+$'), '');
-      final dir = mediaPath.substring(0, mediaPath.lastIndexOf('/'));
-      final thumbPath = '$dir/.thumb_$name.jpg';
-      if (File(thumbPath).existsSync()) return; // موجود مسبقاً
+      final tp = _thumbPath(mediaPath);
+      if (File(tp).existsSync()) return;
       final response = await dio.get<List<int>>(
         thumbnailUrl,
         options: Options(responseType: ResponseType.bytes),
       );
       if (response.data != null) {
-        await File(thumbPath).writeAsBytes(response.data!);
-        _memCache[mediaPath] = thumbPath;
+        await File(tp).writeAsBytes(response.data!);
+        _memCache[mediaPath] = tp;
       }
     } catch (_) {}
+  }
+
+  /// ★ استخراج Frame حقيقي من فيديو محلي باستخدام video_thumbnail
+  static Future<String?> generateVideoThumbnail(String videoPath) async {
+    try {
+      final tp = _thumbPath(videoPath);
+      if (File(tp).existsSync()) {
+        _memCache[videoPath] = tp;
+        return tp;
+      }
+      final result = await VideoThumbnail.thumbnailFile(
+        video: videoPath,
+        thumbnailPath: tp,
+        imageFormat: ImageFormat.JPEG,
+        maxWidth: 400,
+        quality: 85,
+        timeMs: 1000,
+      );
+      if (result != null && File(result).existsSync()) {
+        _memCache[videoPath] = result;
+        return result;
+      }
+    } catch (_) {}
+    _memCache[videoPath] = null;
+    return null;
+  }
+
+  /// ★ استخراج Album Art من ملف صوتي محلي باستخدام on_audio_query
+  static Future<String?> generateAudioThumbnail(String audioPath) async {
+    try {
+      final tp = _thumbPath(audioPath);
+      if (File(tp).existsSync()) {
+        _memCache[audioPath] = tp;
+        return tp;
+      }
+      final OnAudioQuery audioQuery = OnAudioQuery();
+      final artworkData = await audioQuery.queryArtwork(
+        audioPath.hashCode,
+        ArtworkType.AUDIO,
+        format: ArtworkFormat.JPEG,
+        size: 400,
+        quality: 85,
+      );
+      if (artworkData != null && artworkData.isNotEmpty) {
+        await File(tp).writeAsBytes(artworkData);
+        _memCache[audioPath] = tp;
+        return tp;
+      }
+    } catch (_) {}
+    _memCache[audioPath] = null;
+    return null;
+  }
+
+  /// ★ الدالة الشاملة: تولّد thumbnail تلقائياً حسب نوع الملف
+  static Future<String?> generateLocalThumbnail(String mediaPath) async {
+    final cached = await getLocalThumbnail(mediaPath);
+    if (cached != null) return cached;
+
+    final ext = mediaPath.split('.').last.toLowerCase();
+    final isVideo = ['mp4', 'mkv', 'webm', 'mov'].contains(ext);
+    final isAudio = ['mp3', 'm4a', 'aac', 'opus', 'flac', 'wav'].contains(ext);
+
+    if (isVideo) {
+      return await generateVideoThumbnail(mediaPath);
+    } else if (isAudio) {
+      return await generateAudioThumbnail(mediaPath);
+    }
+    return null;
   }
 
   static void invalidate(String mediaPath) {
     _memCache.remove(mediaPath);
   }
 
-  /// تحقق مباشر من ملف الصورة بدون cache
   static String? getThumbPathDirect(String mediaPath) {
-    final name = mediaPath.split('/').last.replaceAll(RegExp(r'\.\w+$'), '');
-    final dir = mediaPath.substring(0, mediaPath.lastIndexOf('/'));
-    final thumbPath = '$dir/.thumb_$name.jpg';
-    return File(thumbPath).existsSync() ? thumbPath : null;
+    final tp = _thumbPath(mediaPath);
+    return File(tp).existsSync() ? tp : null;
   }
 
   static void clearCache(String mediaPath) {
     _memCache.remove(mediaPath);
-    final name = mediaPath.split('/').last.replaceAll(RegExp(r'\.\w+$'), '');
-    final dir = mediaPath.substring(0, mediaPath.lastIndexOf('/'));
-    final thumbPath = '$dir/.thumb_$name.jpg';
-    try { File(thumbPath).deleteSync(); } catch (_) {}
+    final tp = _thumbPath(mediaPath);
+    try { File(tp).deleteSync(); } catch (_) {}
   }
 }
 
@@ -1367,9 +1436,12 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
   @override
   void dispose() {
     _hideTimer?.cancel();
-    // دائماً أعد Portrait عند تدمير الـ widget (حتى لو خرج المستخدم بطريقة أخرى)
+    // دائماً أعد Portrait + System UI عند تدمير الـ widget
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    SystemChrome.setEnabledSystemUIMode(
+      SystemUiMode.manual,
+      overlays: SystemUiOverlay.values,
+    );
     super.dispose();
   }
 
@@ -1402,17 +1474,21 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
 
   void _toggleFullScreen() {
     if (!_isFullScreen) {
-      // دخول ملء الشاشة — Landscape حقيقي مع إخفاء status + navigation bars
+      // ① إخفاء كل شيء — Status Bar + Navigation Bar + System UI
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+      // ② دوران Landscape إجباري
       SystemChrome.setPreferredOrientations([
         DeviceOrientation.landscapeLeft,
         DeviceOrientation.landscapeRight,
       ]);
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
       setState(() => _isFullScreen = true);
     } else {
-      // خروج من ملء الشاشة — عودة Portrait
+      // خروج: إعادة Portrait + System UI
+      SystemChrome.setEnabledSystemUIMode(
+        SystemUiMode.manual,
+        overlays: SystemUiOverlay.values,
+      );
       SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
       setState(() => _isFullScreen = false);
     }
   }
@@ -1977,15 +2053,19 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
       ),
     );
 
-    // ── وضع ملء الشاشة: Landscape حقيقي يملأ كامل الشاشة ──
+    // ── وضع ملء الشاشة: Edge-to-Edge حقيقي بدون أي فراغات ──
     if (_isFullScreen) {
-      return Scaffold(
-        backgroundColor: Colors.black,
-        body: Container(
-          width: double.infinity,
-          height: double.infinity,
-          color: Colors.black,
-          child: videoContent,
+      return MediaQuery.removePadding(
+        context: context,
+        removeTop: true,
+        removeBottom: true,
+        removeLeft: true,
+        removeRight: true,
+        child: Scaffold(
+          backgroundColor: Colors.black,
+          body: SizedBox.expand(
+            child: videoContent,
+          ),
         ),
       );
     }
@@ -2021,10 +2101,6 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
   double _volume = 1.0;
   double _speed = 1.0;
 
-  // For smooth slider dragging
-  bool _dragging = false;
-  double _dragValue = 0.0;
-
   // نتابع الـ streams حتى نُلغيها عند dispose
   StreamSubscription? _positionSub;
   StreamSubscription? _playingSub;
@@ -2032,7 +2108,9 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
   @override
   void initState() {
     super.initState();
-    _loadThumb();
+    // للأغاني فقط نُحمّل الـ thumbnail — للفيديوهات نبدأ بأسود مباشرة
+    final item = audioService.currentItem;
+    if (item != null && !item.isVideo) _loadThumb();
     _initVideoIfNeeded();
     audioService.currentIndex.addListener(_onTrackChange);
   }
@@ -2049,13 +2127,18 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
   }
 
   void _onTrackChange() {
-    _loadThumb();
     _positionSub?.cancel();
     _playingSub?.cancel();
     _videoCtrl?.pause();
     _videoCtrl?.dispose();
     _videoCtrl = null;
-    if (mounted) setState(() { _videoInitialized = false; });
+    // لا نُحمّل الـ thumbnail للفيديوهات — نبقى على أسود 16:9 حتى يجهز الفيديو
+    final item = audioService.currentItem;
+    if (item != null && !item.isVideo) {
+      _loadThumb();
+    } else {
+      if (mounted) setState(() { _thumbPath = null; _videoInitialized = false; });
+    }
     _initVideoIfNeeded();
   }
 
@@ -2082,7 +2165,7 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
       }
       // مزامنة الموقف مستمرة
       _positionSub = audioService.player.positionStream.listen((pos) {
-        if (_videoCtrl != null && _videoInitialized && !_dragging) {
+        if (_videoCtrl != null && _videoInitialized) {
           final diff = (ctrl.value.position - pos).abs();
           if (diff.inMilliseconds > 500) {
             ctrl.seekTo(pos);
@@ -2182,42 +2265,61 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
             ),
 
             // ── Video / Artwork ──
-            // الفيديو: نسبة 16:9 بدون سواد، الصوت: صورة مربعة
+            // الفيديو: دائماً 16:9 أسود أثناء التحميل → فيديو بعد الجهوزية
+            // الصوت:  صورة مربعة مع thumbnail أو أيقونة
             ValueListenableBuilder<int>(
               valueListenable: audioService.currentIndex,
               builder: (_, idx, __) {
                 final item = audioService.currentItem;
-                if (item != null && item.isVideo && _videoInitialized && _videoCtrl != null) {
-                  // ── مشغل الفيديو بنسبة 16:9 حقيقية ──
-                  final aspectRatio = _videoCtrl!.value.aspectRatio > 0
-                      ? _videoCtrl!.value.aspectRatio
-                      : 16 / 9;
+                final isVideo = item?.isVideo == true;
+
+                if (isVideo) {
+                  // ── وضع الفيديو: نسبة 16:9 ثابتة دائماً، لا thumbnail إطلاقاً ──
                   return AspectRatio(
-                    aspectRatio: aspectRatio,
-                    child: _VideoPlayerWidget(
-                      ctrl: _videoCtrl!,
-                      audioPlayer: audioService.player,
-                      onSeek: (pos) {
-                        audioService.player.seek(pos);
-                        _videoCtrl?.seekTo(pos);
-                      },
-                      onPlayPause: () {
-                        if (audioService.player.playing) {
-                          audioService.player.pause();
-                        } else {
-                          audioService.player.play();
-                        }
-                      },
-                      onNext: () => audioService.playNext(),
-                      onPrev: () => audioService.playPrevious(),
-                      speed: _speed,
-                      volume: _volume,
-                      onSpeedChange: _setSpeed,
-                      onVolumeChange: _setVolume,
+                    aspectRatio: (_videoInitialized && _videoCtrl != null &&
+                            _videoCtrl!.value.aspectRatio > 0)
+                        ? _videoCtrl!.value.aspectRatio
+                        : 16 / 9,
+                    child: Container(
+                      color: Colors.black,
+                      child: _videoInitialized && _videoCtrl != null
+                          ? _VideoPlayerWidget(
+                              ctrl: _videoCtrl!,
+                              audioPlayer: audioService.player,
+                              onSeek: (pos) {
+                                audioService.player.seek(pos);
+                                _videoCtrl?.seekTo(pos);
+                              },
+                              onPlayPause: () {
+                                if (audioService.player.playing) {
+                                  audioService.player.pause();
+                                } else {
+                                  audioService.player.play();
+                                }
+                              },
+                              onNext: () => audioService.playNext(),
+                              onPrev: () => audioService.playPrevious(),
+                              speed: _speed,
+                              volume: _volume,
+                              onSpeedChange: _setSpeed,
+                              onVolumeChange: _setVolume,
+                            )
+                          // أثناء التحميل: مؤشر دوران فقط على خلفية سوداء 16:9
+                          : const Center(
+                              child: SizedBox(
+                                width: 36,
+                                height: 36,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.5,
+                                  valueColor: AlwaysStoppedAnimation(Colors.white38),
+                                ),
+                              ),
+                            ),
                     ),
                   );
                 }
-                // صوت أو فيديو بدون تهيئة — صورة مربعة
+
+                // ── وضع الصوت: صورة مربعة مع thumbnail أو أيقونة ──
                 return Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 8),
                   child: AspectRatio(
@@ -2243,9 +2345,7 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                                 ),
                               ),
                               child: Icon(
-                                item?.isVideo == true
-                                    ? CupertinoIcons.play_rectangle_fill
-                                    : CupertinoIcons.music_note_2,
+                                CupertinoIcons.music_note_2,
                                 color: Colors.white.withOpacity(0.5),
                                 size: 80,
                               ),
@@ -2285,76 +2385,6 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                             color: subColor, fontSize: 14, fontFamily: 'Tajawal'),
                       ),
                     ],
-                  );
-                },
-              ),
-            ),
-
-            // ── Progress Slider ──
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 28),
-              child: StreamBuilder<Duration?>(
-                stream: audioService.player.durationStream,
-                builder: (_, durSnap) {
-                  return StreamBuilder<Duration>(
-                    stream: audioService.player.positionStream,
-                    builder: (_, posSnap) {
-                      final duration = durSnap.data ?? Duration.zero;
-                      final position = posSnap.data ?? Duration.zero;
-                      final progress = duration.inMilliseconds > 0
-                          ? position.inMilliseconds / duration.inMilliseconds
-                          : 0.0;
-                      final displayProgress = _dragging ? _dragValue : progress;
-                      return Column(
-                        children: [
-                          SliderTheme(
-                            data: SliderThemeData(
-                              trackHeight: 5,
-                              thumbShape: const RoundSliderThumbShape(
-                                  enabledThumbRadius: 10),
-                              overlayShape: const RoundSliderOverlayShape(
-                                  overlayRadius: 20),
-                              activeTrackColor: AppColors.primary,
-                              inactiveTrackColor: isDark ? Colors.white24 : Colors.black12,
-                              thumbColor: AppColors.primary,
-                              overlayColor: AppColors.primary.withOpacity(0.2),
-                            ),
-                            child: Slider(
-                              value: displayProgress.clamp(0.0, 1.0),
-                              onChangeStart: (val) {
-                                setState(() {
-                                  _dragging = true;
-                                  _dragValue = val;
-                                });
-                              },
-                              onChanged: (val) {
-                                setState(() => _dragValue = val);
-                              },
-                              onChangeEnd: (val) {
-                                setState(() => _dragging = false);
-                                final ms = (val * duration.inMilliseconds).toInt();
-                                audioService.player.seek(Duration(milliseconds: ms));
-                                _videoCtrl?.seekTo(Duration(milliseconds: ms));
-                              },
-                            ),
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 4),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(_fmt(_dragging
-                                    ? Duration(milliseconds: (_dragValue * duration.inMilliseconds).toInt())
-                                    : position),
-                                    style: TextStyle(color: subColor, fontSize: 12)),
-                                Text(_fmt(duration),
-                                    style: TextStyle(color: subColor, fontSize: 12)),
-                              ],
-                            ),
-                          ),
-                        ],
-                      );
-                    },
                   );
                 },
               ),
@@ -2792,29 +2822,19 @@ class _ListenPageState extends State<ListenPage> {
       });
     }
 
-    // توليد صور مصغرة للفيديوات التي ليس لها صورة بعد
+    // توليد صور مصغرة للملفات التي ليس لها صورة بعد (فيديو + صوت)
     for (final item in items) {
-      if (!item.isVideo) continue;
       final existing = await ThumbnailManager.getLocalThumbnail(item.path);
       if (existing != null) continue;
-      _generateVideoThumbnail(item.path);
+      ThumbnailManager.generateLocalThumbnail(item.path).then((result) {
+        if (result != null && mounted) setState(() {});
+      });
     }
   }
 
   Future<void> _generateVideoThumbnail(String videoPath) async {
-    // تحقق من وجود صورة مصغرة محفوظة مسبقاً
-    final existing = await ThumbnailManager.getLocalThumbnail(videoPath);
-    if (existing != null && mounted) {
-      setState(() {}); // أعد البناء لعرض الصورة
-      return;
-    }
-    // تحقق مباشر من الملف
-    final direct = ThumbnailManager.getThumbPathDirect(videoPath);
-    if (direct != null) {
-      ThumbnailManager.invalidate(videoPath); // أعد التهيئة
-      final refreshed = await ThumbnailManager.getLocalThumbnail(videoPath);
-      if (refreshed != null && mounted) setState(() {});
-    }
+    final result = await ThumbnailManager.generateLocalThumbnail(videoPath);
+    if (result != null && mounted) setState(() {});
   }
 
   Future<void> _deleteItem(LocalMediaItem item) async {
@@ -3632,12 +3652,8 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
           await src.copy(dest.path);
         }
         copied++;
-        // توليد صورة مصغرة للفيديو عبر قراءة أول فريم
-        final ext = name.split('.').last.toLowerCase();
-        final isVideo = ['mp4', 'mkv', 'webm', 'mov'].contains(ext);
-        if (isVideo) {
-          _generateAndSaveVideoThumbnail(dest.path);
-        }
+        // ★ توليد صورة مصغرة حقيقية مباشرة بعد النسخ (فيديو + صوت)
+        ThumbnailManager.generateLocalThumbnail(dest.path).catchError((_) {});
       } catch (_) {}
     }
 
@@ -3656,46 +3672,6 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
       );
       Navigator.pop(context);
     }
-  }
-
-  /// توليد وحفظ صورة مصغرة من الفيديو باستخدام VideoPlayerController
-  Future<void> _generateAndSaveVideoThumbnail(String videoPath) async {
-    try {
-      // نستخدم نفس آلية ThumbnailManager مع حفظ placeholder مرئي
-      final name = videoPath.split('/').last.replaceAll(RegExp(r'\.\w+$'), '');
-      final dir = videoPath.substring(0, videoPath.lastIndexOf('/'));
-      final thumbPath = '$dir/.thumb_$name.jpg';
-      if (File(thumbPath).existsSync()) {
-        ThumbnailManager.invalidate(videoPath);
-        if (mounted) setState(() {});
-        return;
-      }
-      // إنشاء صورة مصغرة بسيطة: نستخدم VideoPlayerController مع renderTexture
-      // ونحفظ أول فريم كـ PNG/JPG — هذا يعتمد على نظام التشغيل
-      // على Android/iOS يمكن استخدام video_thumbnail، لكن بدونه نحفظ مؤشر
-      // نُولّد صورة SVG بسيطة كـ placeholder مرئي
-      final svgContent = '''<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">
-<rect width="200" height="200" fill="#1C1C1E" rx="12"/>
-<circle cx="100" cy="100" r="40" fill="#E8272A" opacity="0.9"/>
-<polygon points="85,75 85,125 130,100" fill="white"/>
-</svg>''';
-      // محاولة استخدام VideoPlayerController لتوليد أول فريم
-      try {
-        final ctrl = VideoPlayerController.file(File(videoPath));
-        await ctrl.initialize();
-        await ctrl.seekTo(const Duration(seconds: 1));
-        await Future.delayed(const Duration(milliseconds: 500));
-        // video_player لا يدعم screenshot مباشرة، لكن نتحقق من الـ duration
-        final duration = ctrl.value.duration;
-        await ctrl.dispose();
-        if (duration > Duration.zero) {
-          // الفيديو صالح — نحفظ placeholder ليظهر الأيقونة المميزة
-          // في حالة توفر video_thumbnail يمكن استخدامه هنا
-          ThumbnailManager.invalidate(videoPath);
-        }
-      } catch (_) {}
-      if (mounted) setState(() {});
-    } catch (_) {}
   }
 
   @override

@@ -286,8 +286,16 @@ class ThumbnailManager {
 }
 
 // ─────────────────────────────────────────────
-//  AUDIO PLAYER SERVICE — Singleton (Rebuilt)
+//  AUDIO PLAYER SERVICE — Singleton (v3 — Single File, No ConcatenatingAudioSource)
 // ─────────────────────────────────────────────
+//
+//  السبب الجذري لمشكلة الأغنية الخاطئة:
+//  ConcatenatingAudioSource يُشغّل index=0 أولاً ثم يقفز لـ initialIndex
+//  مما يُسبّب سماع صوت الأغنية الأولى أو الأغنية التالية.
+//
+//  الحل: نشغّل ملفاً واحداً فقط في كل مرة عبر AudioSource.file
+//  ونتحكم بالتنقل (next/prev) يدوياً بـ setAudioSource جديد.
+//
 class AudioPlayerService {
   static final AudioPlayerService _instance = AudioPlayerService._internal();
   factory AudioPlayerService() => _instance;
@@ -307,27 +315,17 @@ class AudioPlayerService {
   final ValueNotifier<int> currentIndex = ValueNotifier(-1);
   final ValueNotifier<bool> isVisible = ValueNotifier(false);
 
-  ConcatenatingAudioSource? _concatenating;
-
-  // ── مفتاح تجاهل تحديثات الـ stream أثناء العمليات اليدوية ──
-  bool _ignoreStreamUpdates = false;
-  Timer? _ignoreTimer;
+  // نتابع انتهاء الأغنية للانتقال للتالية تلقائياً
+  StreamSubscription? _completionSub;
 
   Future<void> init() async {
     final session = await AudioSession.instance;
     await session.configure(const AudioSessionConfiguration.music());
 
-    // نتابع currentIndexStream فقط لتحديثات شاشة القفل / سماعات البلوتوث
-    // ونتجاهل التحديثات أثناء عمليات seek/setAudioSource اليدوية
-    player.currentIndexStream.listen((streamIndex) {
-      if (_ignoreStreamUpdates) return;
-      if (streamIndex == null) return;
-      final list = playlist.value;
-      if (streamIndex >= 0 && streamIndex < list.length) {
-        if (streamIndex != currentIndex.value) {
-          currentIndex.value = streamIndex;
-          isVisible.value = true;
-        }
+    // عند انتهاء الأغنية الحالية → شغّل التالية
+    _completionSub = player.processingStateStream.listen((state) {
+      if (state == ProcessingState.completed) {
+        _autoNext();
       }
     });
 
@@ -343,138 +341,105 @@ class AudioPlayerService {
     });
   }
 
-  /// يمنع stream من التدخل لمدة [ms] ميلي ثانية
-  void _lockStream([int ms = 800]) {
-    _ignoreStreamUpdates = true;
-    _ignoreTimer?.cancel();
-    _ignoreTimer = Timer(Duration(milliseconds: ms), () {
-      _ignoreStreamUpdates = false;
-    });
-  }
-
-  /// يبني ConcatenatingAudioSource من قائمة الملفات المحلية
-  ConcatenatingAudioSource _buildSource(List<LocalMediaItem> items) {
-    return ConcatenatingAudioSource(
-      useLazyPreparation: true,
-      children: items.map((item) {
-        final localThumbPath = item.thumbnailCachePath;
-        Uri? artUri;
-        if (File(localThumbPath).existsSync()) {
-          artUri = Uri.file(localThumbPath);
-        } else if (item.thumbnailUrl != null) {
-          artUri = Uri.parse(item.thumbnailUrl!);
-        }
-        return AudioSource.file(
-          item.path,
-          tag: MediaItem(
-            id: item.path,
-            title: item.title.replaceAll(RegExp(r'\.\w+$'), ''),
-            artist: 'دندن',
-            artUri: artUri,
-          ),
-        );
-      }).toList(),
-    );
-  }
-
-  /// تحديث MediaItem للعنصر الحالي بعد حفظ الصورة المحلية
-  Future<void> updateCurrentArtwork() async {
+  void _autoNext() {
     final idx = currentIndex.value;
     final list = playlist.value;
-    if (idx < 0 || idx >= list.length || _concatenating == null) return;
-    final item = list[idx];
-    final localThumbPath = await ThumbnailManager.getLocalThumbnail(item.path);
+    if (player.loopMode == LoopMode.one) {
+      player.seek(Duration.zero);
+      player.play();
+      return;
+    }
+    if (idx < list.length - 1) {
+      _playSingleFile(list, idx + 1);
+    }
+  }
+
+  /// يبني MediaItem مع artUri محلي
+  Future<MediaItem> _buildTag(LocalMediaItem item) async {
     Uri? artUri;
-    if (localThumbPath != null) {
-      artUri = Uri.file(localThumbPath);
+    final localThumb = await ThumbnailManager.getLocalThumbnail(item.path);
+    if (localThumb != null) {
+      artUri = Uri.file(localThumb);
     } else if (item.thumbnailUrl != null) {
       artUri = Uri.parse(item.thumbnailUrl!);
     }
-    try {
-      final newTag = MediaItem(
-        id: item.path,
-        title: item.title.replaceAll(RegExp(r'\.\w+$'), ''),
-        artist: 'دندن',
-        artUri: artUri,
-      );
-      await _concatenating!.removeAt(idx);
-      await _concatenating!.insert(idx, AudioSource.file(item.path, tag: newTag));
-    } catch (_) {}
+    return MediaItem(
+      id: item.path,
+      title: item.title.replaceAll(RegExp(r'\.\w+$'), ''),
+      artist: 'دندن',
+      artUri: artUri,
+    );
   }
 
-  /// تشغيل قائمة كاملة ابتداءً من index معيّن — الدالة الأساسية
-  Future<void> playList(List<LocalMediaItem> items, int startIndex) async {
-    if (items.isEmpty) return;
-    final targetIndex = startIndex.clamp(0, items.length - 1);
+  /// ─── الدالة المحورية: تشغيل ملف واحد بـ index محدد ───
+  Future<void> _playSingleFile(List<LocalMediaItem> list, int index) async {
+    if (list.isEmpty || index < 0 || index >= list.length) return;
+    final item = list[index];
 
-    // ① احجب الـ stream فوراً قبل أي عملية
-    _lockStream(1200);
-
-    // ② اضبط القيم المحلية بشكل نهائي
-    playlist.value = List.unmodifiable(items);
-    currentIndex.value = targetIndex;
+    // ① حدّث القيم المرئية فوراً — قبل أي async
+    playlist.value = list;
+    currentIndex.value = index;
     isVisible.value = true;
 
-    // ③ ابنِ المصدر الجديد
-    _concatenating = _buildSource(items);
+    // ② ابنِ الـ tag (async لكن نُشغّل أولاً بدون صورة ثم نُحدّثها)
+    final quickTag = MediaItem(
+      id: item.path,
+      title: item.title.replaceAll(RegExp(r'\.\w+$'), ''),
+      artist: 'دندن',
+    );
 
     try {
+      // ③ أوقف المشغل أولاً ثم غيّر المصدر
+      await player.stop();
+
       await player.setAudioSource(
-        _concatenating!,
-        initialIndex: targetIndex,
+        AudioSource.file(item.path, tag: quickTag),
         initialPosition: Duration.zero,
-        preload: false,
+        preload: true,
       );
 
-      // ④ أعد الضبط بعد setAudioSource (قد يُعيد الـ stream تغييره)
-      _lockStream(800);
-      currentIndex.value = targetIndex;
-
       await player.play();
-      updateCurrentArtwork();
+
+      // ④ بعد التشغيل، حدّث الـ artwork بشكل غير متزامن
+      _buildTag(item).then((tag) async {
+        try {
+          // إعادة ضبط الـ tag بدون إيقاف التشغيل
+          final pos = player.position;
+          final playing = player.playing;
+          // تحقق أن المستخدم لم ينتقل لأغنية أخرى
+          if (currentIndex.value == index) {
+            await player.setAudioSource(
+              AudioSource.file(item.path, tag: tag),
+              initialPosition: pos,
+              preload: false,
+            );
+            if (playing) player.play();
+          }
+        } catch (_) {}
+      });
     } catch (e) {
-      debugPrint('AudioPlayerService.playList error: $e');
+      debugPrint('AudioPlayerService._playSingleFile error: $e');
     }
   }
 
-  /// الانتقال إلى index في القائمة الحالية (للنقر من داخل المشغل أو القائمة)
+  /// تشغيل قائمة ابتداءً من index — الدالة العامة
+  Future<void> playList(List<LocalMediaItem> items, int startIndex) async {
+    final idx = startIndex.clamp(0, items.length - 1);
+    await _playSingleFile(List.unmodifiable(items), idx);
+  }
+
+  /// الانتقال لـ index في القائمة الحالية
   Future<void> playAtIndex(int index) async {
     final list = playlist.value;
-    if (index < 0 || index >= list.length) return;
-
-    if (_concatenating != null && _concatenating!.length == list.length) {
-      // ① احجب الـ stream
-      _lockStream(1000);
-
-      // ② اضبط currentIndex فوراً — هذا يُحدّث UI على الفور
-      currentIndex.value = index;
-
-      try {
-        // ③ انتقل للمسار المطلوب
-        await player.seek(Duration.zero, index: index);
-
-        // ④ أعد التأكيد بعد seek
-        _lockStream(600);
-        currentIndex.value = index;
-
-        await player.play();
-        isVisible.value = true;
-        updateCurrentArtwork();
-        return;
-      } catch (_) {}
-    }
-
-    // إعادة البناء الكامل إن لزم
-    await playList(list, index);
+    if (list.isEmpty) return;
+    await _playSingleFile(list, index);
   }
 
   Future<void> playNext() async {
     final idx = currentIndex.value;
     final list = playlist.value;
     if (idx < list.length - 1) {
-      _lockStream(800);
-      currentIndex.value = idx + 1;
-      await player.seekToNext();
+      await _playSingleFile(list, idx + 1);
     }
   }
 
@@ -484,29 +449,24 @@ class AudioPlayerService {
       await player.seek(Duration.zero);
     } else {
       final idx = currentIndex.value;
+      final list = playlist.value;
       if (idx > 0) {
-        _lockStream(800);
-        currentIndex.value = idx - 1;
+        await _playSingleFile(list, idx - 1);
+      } else {
+        await player.seek(Duration.zero);
       }
-      await player.seekToPrevious();
     }
   }
 
   /// ضبط مستوى الصوت — يدعم 0% إلى 300% بتضخيم حقيقي
-  /// 0-100% → setVolume(0.0-1.0) فقط
-  /// 101-300% → setVolume(1.0) + LoudnessEnhancer
   void setVolumeBoost(double normalizedValue) {
-    // normalizedValue: 0.0 إلى 3.0 (يمثل 0% إلى 300%)
     final v = normalizedValue.clamp(0.0, 3.0);
     if (v <= 1.0) {
       player.setVolume(v);
-      try { _loudnessEnhancer.setTargetGain(0); } catch (_) {}
+      try { _loudnessEnhancer.setTargetGain(0.0); } catch (_) {}
     } else {
       player.setVolume(1.0);
-      // LoudnessEnhancer: targetGain بالـ mB (milli-Bels)
-      // كل 100mB ≈ رفع ملحوظ في الصوت
-      // v=2.0 → gain=800mB, v=3.0 → gain=1600mB
-      final gainMB = ((v - 1.0) * 800.0);
+      final gainMB = (v - 1.0) * 800.0;
       try { _loudnessEnhancer.setTargetGain(gainMB); } catch (_) {}
     }
   }
@@ -519,7 +479,7 @@ class AudioPlayerService {
   }
 
   void dispose() {
-    _ignoreTimer?.cancel();
+    _completionSub?.cancel();
     player.dispose();
   }
 }
@@ -1273,6 +1233,419 @@ class _MiniBtn extends StatelessWidget {
   }
 }
 
+// ═══════════════════════════════════════════════════════════
+//  VIDEO PLAYER WIDGET — مشغل فيديو متكامل مع ملء الشاشة
+// ═══════════════════════════════════════════════════════════
+class _VideoPlayerWidget extends StatefulWidget {
+  final VideoPlayerController ctrl;
+  final AudioPlayer audioPlayer;
+  final void Function(Duration) onSeek;
+  final VoidCallback onPlayPause;
+  final VoidCallback onNext;
+  final VoidCallback onPrev;
+  final double speed;
+  final double volume;
+  final void Function(double) onSpeedChange;
+  final void Function(double) onVolumeChange;
+
+  const _VideoPlayerWidget({
+    required this.ctrl,
+    required this.audioPlayer,
+    required this.onSeek,
+    required this.onPlayPause,
+    required this.onNext,
+    required this.onPrev,
+    required this.speed,
+    required this.volume,
+    required this.onSpeedChange,
+    required this.onVolumeChange,
+  });
+
+  @override
+  State<_VideoPlayerWidget> createState() => _VideoPlayerWidgetState();
+}
+
+class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
+  bool _showControls = true;
+  Timer? _hideTimer;
+  bool _dragging = false;
+  double _dragValue = 0.0;
+  bool _isFullScreen = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _startHideTimer();
+  }
+
+  @override
+  void dispose() {
+    _hideTimer?.cancel();
+    if (_isFullScreen) {
+      SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    }
+    super.dispose();
+  }
+
+  void _toggleControls() {
+    setState(() => _showControls = !_showControls);
+    if (_showControls) _startHideTimer();
+  }
+
+  void _startHideTimer() {
+    _hideTimer?.cancel();
+    _hideTimer = Timer(const Duration(seconds: 4), () {
+      if (mounted) setState(() => _showControls = false);
+    });
+  }
+
+  void _resetTimer() {
+    _hideTimer?.cancel();
+    _startHideTimer();
+  }
+
+  void _toggleFullScreen() {
+    if (!_isFullScreen) {
+      // دخول ملء الشاشة
+      SystemChrome.setPreferredOrientations([
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+      setState(() => _isFullScreen = true);
+    } else {
+      // خروج من ملء الشاشة
+      SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      setState(() => _isFullScreen = false);
+    }
+  }
+
+  String _fmt(Duration d) {
+    final h = d.inHours;
+    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    if (h > 0) return '$h:$m:$s';
+    return '$m:$s';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final videoWidget = GestureDetector(
+      onTap: _toggleControls,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        color: Colors.black,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            // ── الفيديو ──
+            Center(
+              child: AspectRatio(
+                aspectRatio: widget.ctrl.value.aspectRatio,
+                child: VideoPlayer(widget.ctrl),
+              ),
+            ),
+
+            // ── طبقة التحكم ──
+            AnimatedOpacity(
+              opacity: _showControls ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 200),
+              child: IgnorePointer(
+                ignoring: !_showControls,
+                child: Container(
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Color(0x88000000),
+                        Color(0x00000000),
+                        Color(0x00000000),
+                        Color(0xCC000000),
+                      ],
+                      stops: [0.0, 0.25, 0.55, 1.0],
+                    ),
+                  ),
+                  child: Column(
+                    children: [
+                      // ── الشريط العلوي: السرعة + ملء الشاشة ──
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        child: Row(
+                          children: [
+                            // أزرار السرعة
+                            for (final s in [0.5, 1.0, 1.25, 1.5, 2.0])
+                              GestureDetector(
+                                onTap: () { widget.onSpeedChange(s); _resetTimer(); },
+                                child: Container(
+                                  margin: const EdgeInsets.only(right: 5),
+                                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: widget.speed == s
+                                        ? AppColors.primary
+                                        : Colors.black45,
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Text(
+                                    s == 1.0 ? '1×' : '${s}×',
+                                    style: TextStyle(
+                                      color: widget.speed == s ? Colors.white : Colors.white70,
+                                      fontSize: 11, fontFamily: 'Tajawal', fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            const Spacer(),
+                            // زر ملء الشاشة
+                            GestureDetector(
+                              onTap: () { _toggleFullScreen(); _resetTimer(); },
+                              child: Container(
+                                padding: const EdgeInsets.all(7),
+                                decoration: BoxDecoration(
+                                  color: Colors.black45,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Icon(
+                                  _isFullScreen
+                                      ? CupertinoIcons.fullscreen_exit
+                                      : CupertinoIcons.fullscreen,
+                                  color: Colors.white, size: 18,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      const Spacer(),
+
+                      // ── الوسط: أزرار السابق / تشغيل / التالي ──
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          // +10 ثوانٍ للأمام (اليمين في RTL)
+                          GestureDetector(
+                            onTap: () {
+                              final pos = widget.audioPlayer.position;
+                              widget.onSeek(pos + const Duration(seconds: 10));
+                              _resetTimer();
+                            },
+                            child: Container(
+                              width: 44, height: 44,
+                              decoration: BoxDecoration(
+                                color: Colors.black38,
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(CupertinoIcons.goforward_10, color: Colors.white, size: 22),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          // السابق
+                          GestureDetector(
+                            onTap: () { widget.onPrev(); _resetTimer(); },
+                            child: Container(
+                              width: 48, height: 48,
+                              decoration: BoxDecoration(
+                                color: Colors.black45,
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(CupertinoIcons.backward_end_fill, color: Colors.white, size: 22),
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          // تشغيل / إيقاف
+                          StreamBuilder<bool>(
+                            stream: widget.audioPlayer.playingStream,
+                            builder: (_, snap) {
+                              final playing = snap.data ?? false;
+                              return GestureDetector(
+                                onTap: () { widget.onPlayPause(); _resetTimer(); },
+                                child: Container(
+                                  width: 68, height: 68,
+                                  decoration: BoxDecoration(
+                                    color: AppColors.primary,
+                                    shape: BoxShape.circle,
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: AppColors.primary.withOpacity(0.55),
+                                        blurRadius: 20, spreadRadius: 2,
+                                      ),
+                                    ],
+                                  ),
+                                  child: Icon(
+                                    playing ? CupertinoIcons.pause_fill : CupertinoIcons.play_fill,
+                                    color: Colors.white, size: 30,
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                          const SizedBox(width: 16),
+                          // التالي
+                          GestureDetector(
+                            onTap: () { widget.onNext(); _resetTimer(); },
+                            child: Container(
+                              width: 48, height: 48,
+                              decoration: BoxDecoration(
+                                color: Colors.black45,
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(CupertinoIcons.forward_end_fill, color: Colors.white, size: 22),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          // -10 ثوانٍ للخلف (اليسار في RTL)
+                          GestureDetector(
+                            onTap: () {
+                              final pos = widget.audioPlayer.position;
+                              final back = pos - const Duration(seconds: 10);
+                              widget.onSeek(back < Duration.zero ? Duration.zero : back);
+                              _resetTimer();
+                            },
+                            child: Container(
+                              width: 44, height: 44,
+                              decoration: BoxDecoration(
+                                color: Colors.black38,
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(CupertinoIcons.gobackward_10, color: Colors.white, size: 22),
+                            ),
+                          ),
+                        ],
+                      ),
+
+                      const Spacer(),
+
+                      // ── الجزء السفلي: شريط التقدم + الصوت ──
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+                        child: Column(
+                          children: [
+                            // شريط الصوت
+                            Row(
+                              children: [
+                                Icon(
+                                  widget.volume == 0 ? CupertinoIcons.speaker_slash_fill
+                                      : widget.volume < 1.0 ? CupertinoIcons.speaker_1_fill
+                                      : CupertinoIcons.speaker_3_fill,
+                                  color: Colors.white70, size: 15,
+                                ),
+                                Expanded(
+                                  child: SliderTheme(
+                                    data: const SliderThemeData(
+                                      trackHeight: 2,
+                                      thumbShape: RoundSliderThumbShape(enabledThumbRadius: 5),
+                                      overlayShape: RoundSliderOverlayShape(overlayRadius: 10),
+                                      activeTrackColor: Colors.white,
+                                      inactiveTrackColor: Colors.white30,
+                                      thumbColor: Colors.white,
+                                      overlayColor: Colors.white24,
+                                    ),
+                                    child: Slider(
+                                      value: widget.volume.clamp(0.0, 3.0),
+                                      min: 0, max: 3.0,
+                                      onChanged: (v) { widget.onVolumeChange(v); _resetTimer(); },
+                                    ),
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: 36,
+                                  child: Text(
+                                    '${(widget.volume * 100).toInt()}%',
+                                    style: const TextStyle(color: Colors.white70, fontSize: 10, fontFamily: 'Tajawal'),
+                                    textAlign: TextAlign.end,
+                                  ),
+                                ),
+                              ],
+                            ),
+
+                            // شريط التقدم مع الوقت
+                            StreamBuilder<Duration?>(
+                              stream: widget.audioPlayer.durationStream,
+                              builder: (_, durSnap) {
+                                return StreamBuilder<Duration>(
+                                  stream: widget.audioPlayer.positionStream,
+                                  builder: (_, posSnap) {
+                                    final dur = durSnap.data ?? Duration.zero;
+                                    final pos = posSnap.data ?? Duration.zero;
+                                    final progress = dur.inMilliseconds > 0
+                                        ? pos.inMilliseconds / dur.inMilliseconds
+                                        : 0.0;
+                                    final display = _dragging ? _dragValue : progress;
+                                    return Column(
+                                      children: [
+                                        SliderTheme(
+                                          data: SliderThemeData(
+                                            trackHeight: 3,
+                                            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
+                                            overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
+                                            activeTrackColor: AppColors.primary,
+                                            inactiveTrackColor: Colors.white30,
+                                            thumbColor: Colors.white,
+                                            overlayColor: AppColors.primary.withOpacity(0.3),
+                                          ),
+                                          child: Slider(
+                                            value: display.clamp(0.0, 1.0),
+                                            onChangeStart: (v) {
+                                              setState(() { _dragging = true; _dragValue = v; });
+                                              _hideTimer?.cancel();
+                                            },
+                                            onChanged: (v) => setState(() => _dragValue = v),
+                                            onChangeEnd: (v) {
+                                              setState(() => _dragging = false);
+                                              final ms = (v * dur.inMilliseconds).toInt();
+                                              widget.onSeek(Duration(milliseconds: ms));
+                                              _startHideTimer();
+                                            },
+                                          ),
+                                        ),
+                                        Padding(
+                                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                                          child: Row(
+                                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                            children: [
+                                              Text(
+                                                _fmt(_dragging
+                                                    ? Duration(milliseconds: (_dragValue * dur.inMilliseconds).toInt())
+                                                    : pos),
+                                                style: const TextStyle(color: Colors.white70, fontSize: 11),
+                                              ),
+                                              Text(
+                                                _fmt(dur),
+                                                style: const TextStyle(color: Colors.white70, fontSize: 11),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    );
+                                  },
+                                );
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (_isFullScreen) {
+      // في وضع ملء الشاشة نعيد الفيديو مباشرة بدون Padding
+      return videoWidget;
+    }
+    return videoWidget;
+  }
+}
+
 // ─────────────────────────────────────────────
 //  FULL SCREEN PLAYER
 // ─────────────────────────────────────────────
@@ -1290,10 +1663,6 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
   bool _videoInitialized = false;
   double _volume = 1.0;
   double _speed = 1.0;
-
-  // عناصر تحكم الفيديو — تظهر عند النقر وتختفي بعد 5 ثوانٍ
-  bool _showVideoControls = false;
-  Timer? _hideControlsTimer;
 
   // For smooth slider dragging
   bool _dragging = false;
@@ -1314,7 +1683,6 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
   @override
   void dispose() {
     audioService.currentIndex.removeListener(_onTrackChange);
-    _hideControlsTimer?.cancel();
     _positionSub?.cancel();
     _playingSub?.cancel();
     // نوقف الفيديو المرئي فقط — الصوت يستمر عبر just_audio في الخلفية
@@ -1330,7 +1698,7 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
     _videoCtrl?.pause();
     _videoCtrl?.dispose();
     _videoCtrl = null;
-    if (mounted) setState(() { _videoInitialized = false; _showVideoControls = false; });
+    if (mounted) setState(() { _videoInitialized = false; });
     _initVideoIfNeeded();
   }
 
@@ -1404,24 +1772,6 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
     _videoCtrl?.setPlaybackSpeed(s);
   }
 
-  // إظهار/إخفاء عناصر التحكم عند النقر على الفيديو
-  void _toggleVideoControls() {
-    setState(() => _showVideoControls = !_showVideoControls);
-    _hideControlsTimer?.cancel();
-    if (_showVideoControls) {
-      _hideControlsTimer = Timer(const Duration(seconds: 5), () {
-        if (mounted) setState(() => _showVideoControls = false);
-      });
-    }
-  }
-
-  void _resetHideTimer() {
-    _hideControlsTimer?.cancel();
-    _hideControlsTimer = Timer(const Duration(seconds: 5), () {
-      if (mounted) setState(() => _showVideoControls = false);
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     final isDark = context.isDark;
@@ -1485,169 +1835,29 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                   // إذا كان الملف فيديو وتم تهيئة المشغل
                   if (item != null && item.isVideo && _videoInitialized && _videoCtrl != null) {
                     return Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                       child: ClipRRect(
-                        borderRadius: BorderRadius.circular(16),
-                        child: GestureDetector(
-                          onTap: _toggleVideoControls,
-                          child: Stack(
-                            alignment: Alignment.center,
-                            children: [
-                              // الفيديو
-                              AspectRatio(
-                                aspectRatio: _videoCtrl!.value.aspectRatio,
-                                child: VideoPlayer(_videoCtrl!),
-                              ),
-                              // طبقة التحكم المتلاشية
-                              AnimatedOpacity(
-                                opacity: _showVideoControls ? 1.0 : 0.0,
-                                duration: const Duration(milliseconds: 250),
-                                child: IgnorePointer(
-                                  ignoring: !_showVideoControls,
-                                  child: Container(
-                                    decoration: BoxDecoration(
-                                      gradient: LinearGradient(
-                                        begin: Alignment.topCenter,
-                                        end: Alignment.bottomCenter,
-                                        colors: [
-                                          Colors.black.withOpacity(0.3),
-                                          Colors.black.withOpacity(0.7),
-                                        ],
-                                      ),
-                                    ),
-                                    child: Column(
-                                      mainAxisAlignment: MainAxisAlignment.end,
-                                      children: [
-                                        // أزرار السابق/تشغيل/التالي
-                                        Row(
-                                          mainAxisAlignment: MainAxisAlignment.center,
-                                          children: [
-                                            GestureDetector(
-                                              onTap: () { audioService.playNext(); _resetHideTimer(); },
-                                              child: Container(
-                                                width: 48, height: 48,
-                                                decoration: BoxDecoration(
-                                                  color: Colors.black45,
-                                                  shape: BoxShape.circle,
-                                                ),
-                                                child: const Icon(CupertinoIcons.forward_end_fill, color: Colors.white, size: 22),
-                                              ),
-                                            ),
-                                            const SizedBox(width: 16),
-                                            StreamBuilder<bool>(
-                                              stream: audioService.player.playingStream,
-                                              builder: (_, snap) {
-                                                final playing = snap.data ?? false;
-                                                return GestureDetector(
-                                                  onTap: () {
-                                                    playing ? audioService.player.pause() : audioService.player.play();
-                                                    _resetHideTimer();
-                                                  },
-                                                  child: Container(
-                                                    width: 64, height: 64,
-                                                    decoration: BoxDecoration(
-                                                      color: AppColors.primary,
-                                                      shape: BoxShape.circle,
-                                                      boxShadow: [BoxShadow(color: AppColors.primary.withOpacity(0.5), blurRadius: 16)],
-                                                    ),
-                                                    child: Icon(
-                                                      playing ? CupertinoIcons.pause_fill : CupertinoIcons.play_fill,
-                                                      color: Colors.white, size: 28,
-                                                    ),
-                                                  ),
-                                                );
-                                              },
-                                            ),
-                                            const SizedBox(width: 16),
-                                            GestureDetector(
-                                              onTap: () { audioService.playPrevious(); _resetHideTimer(); },
-                                              child: Container(
-                                                width: 48, height: 48,
-                                                decoration: BoxDecoration(
-                                                  color: Colors.black45,
-                                                  shape: BoxShape.circle,
-                                                ),
-                                                child: const Icon(CupertinoIcons.backward_end_fill, color: Colors.white, size: 22),
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                        const SizedBox(height: 12),
-                                        // التحكم بالصوت والسرعة
-                                        Padding(
-                                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                                          child: Column(
-                                            children: [
-                                              // الصوت
-                                              Row(
-                                                children: [
-                                                  Icon(
-                                                    _volume == 0 ? CupertinoIcons.speaker_slash_fill :
-                                                    _volume < 1.0 ? CupertinoIcons.speaker_1_fill :
-                                                    CupertinoIcons.speaker_3_fill,
-                                                    color: Colors.white70, size: 16,
-                                                  ),
-                                                  Expanded(
-                                                    child: SliderTheme(
-                                                      data: SliderThemeData(
-                                                        trackHeight: 2,
-                                                        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-                                                        overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
-                                                        activeTrackColor: AppColors.primary,
-                                                        inactiveTrackColor: Colors.white24,
-                                                        thumbColor: Colors.white,
-                                                        overlayColor: Colors.white24,
-                                                      ),
-                                                      child: Slider(
-                                                        value: _volume,
-                                                        min: 0, max: 3.0,
-                                                        onChanged: (v) { _setVolume(v); _resetHideTimer(); },
-                                                      ),
-                                                    ),
-                                                  ),
-                                                  Text('${(_volume * 100).toInt()}%',
-                                                    style: const TextStyle(color: Colors.white70, fontSize: 10, fontFamily: 'Tajawal'),
-                                                  ),
-                                                ],
-                                              ),
-                                              // السرعة
-                                              Row(
-                                                mainAxisAlignment: MainAxisAlignment.center,
-                                                children: [
-                                                  const Icon(CupertinoIcons.speedometer, color: Colors.white54, size: 13),
-                                                  const SizedBox(width: 6),
-                                                  for (final s in [0.5, 0.75, 1.0, 1.25, 1.5, 2.0])
-                                                    GestureDetector(
-                                                      onTap: () { _setSpeed(s); _resetHideTimer(); },
-                                                      child: Container(
-                                                        margin: const EdgeInsets.symmetric(horizontal: 2),
-                                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                                                        decoration: BoxDecoration(
-                                                          color: _speed == s ? AppColors.primary : Colors.black45,
-                                                          borderRadius: BorderRadius.circular(6),
-                                                        ),
-                                                        child: Text(
-                                                          s == 1.0 ? '1×' : '${s}×',
-                                                          style: TextStyle(
-                                                            color: _speed == s ? Colors.white : Colors.white70,
-                                                            fontSize: 10, fontFamily: 'Tajawal', fontWeight: FontWeight.w600,
-                                                          ),
-                                                        ),
-                                                      ),
-                                                    ),
-                                                ],
-                                              ),
-                                              const SizedBox(height: 8),
-                                            ],
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
+                        borderRadius: BorderRadius.circular(18),
+                        child: _VideoPlayerWidget(
+                          ctrl: _videoCtrl!,
+                          audioPlayer: audioService.player,
+                          onSeek: (pos) {
+                            audioService.player.seek(pos);
+                            _videoCtrl?.seekTo(pos);
+                          },
+                          onPlayPause: () {
+                            if (audioService.player.playing) {
+                              audioService.player.pause();
+                            } else {
+                              audioService.player.play();
+                            }
+                          },
+                          onNext: () => audioService.playNext(),
+                          onPrev: () => audioService.playPrevious(),
+                          speed: _speed,
+                          volume: _volume,
+                          onSpeedChange: _setSpeed,
+                          onVolumeChange: _setVolume,
                         ),
                       ),
                     );
@@ -2565,20 +2775,11 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
                 _closeSwipe();
                 return;
               }
-              // ① نحفظ القيم محلياً بشكل غير قابل للتغيير
-              final int targetIndex = widget.index;
-              final List<LocalMediaItem> targetList =
-                  List<LocalMediaItem>.unmodifiable(widget.allItems);
-
-              // ② نحدد currentIndex مباشرة قبل أي عملية async
-              //    هذا يمنع الـ stream من تغييره
-              audioService.currentIndex.value = targetIndex;
-
-              // ③ نشغّل القائمة دائماً بـ playList لضمان الـ index الصحيح
-              //    حتى لو القائمة نفسها، نُعيد بناء المصدر مع الـ index المحدد
-              audioService.playList(targetList, targetIndex);
-
-              // ④ نفتح المشغل — currentIndex محدد مسبقاً، لا يوجد تعارض
+              // نُمرر القائمة والـ index مباشرة — playList يضبط currentIndex قبل أي async
+              audioService.playList(
+                List<LocalMediaItem>.unmodifiable(widget.allItems),
+                widget.index,
+              );
               Navigator.of(context).push(
                 PageRouteBuilder(
                   pageBuilder: (_, __, ___) => const FullScreenPlayer(),
@@ -4758,6 +4959,73 @@ class _SettingsPageState extends State<SettingsPage> {
                           _clearDownloads,
                         ),
                       ]),
+                      const SizedBox(height: 16),
+
+Container(
+  width: double.infinity,
+  padding: const EdgeInsets.all(16),
+  decoration: BoxDecoration(
+    color: context.isDark
+        ? AppColors.darkSurface
+        : AppColors.surface,
+    borderRadius: BorderRadius.circular(20),
+    border: Border.all(
+      color: context.isDark
+          ? AppColors.darkDivider
+          : AppColors.divider,
+      width: 0.5,
+    ),
+  ),
+  child: Row(
+    children: [
+      ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: ColorFiltered(
+  colorFilter: const ColorFilter.mode(
+    Color(0xFFE53935),
+    BlendMode.srcIn,
+  ),
+  child: Image.asset(
+    'assets/images/scrptaty.lpng',
+    width: 58,
+    height: 58,
+    fit: BoxFit.cover,
+  ),
+),
+      ),
+
+      const SizedBox(width: 14),
+
+      Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'المطور سكربتاتي',
+              style: TextStyle(
+                color: context.appText,
+                fontFamily: 'Tajawal',
+                fontSize: 17,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+
+            const SizedBox(height: 4),
+
+            Text(
+              'لتطوير وتصميم التطبيقات',
+              style: TextStyle(
+                color: context.appTextSec,
+                fontFamily: 'Tajawal',
+                fontSize: 13,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ],
+  ),
+),
                       const SizedBox(height: 160),
                     ],
                   ),

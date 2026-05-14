@@ -33,7 +33,9 @@ Future<void> main() async {
     androidNotificationChannelId: 'com.mustami3.audio',
     androidNotificationChannelName: 'دندن',
     androidNotificationOngoing: true,
-    androidStopForegroundOnPause: true,
+    // false = يبقي الـ foreground service والإشعار حياً عند pause()
+    // بحيث يمكن استكمال التشغيل من شاشة القفل أو الخلفية
+    androidStopForegroundOnPause: false,
   );
 
   // تحميل الثيم المحفوظ أولاً
@@ -396,6 +398,7 @@ class AudioPlayerService {
 
   StreamSubscription? _completionSub;
   StreamSubscription? _indexSub;
+  StreamSubscription? _playingSub;
   bool _handlingIndexChange = false;
 
   Future<void> init() async {
@@ -438,6 +441,15 @@ class AudioPlayerService {
             event.type == AudioInterruptionType.unknown) {
           player.play();
         }
+      }
+    });
+
+    // ── إعادة إظهار المشغل المصغر عند استكمال التشغيل من الإشعار أو شاشة القفل ──
+    // عندما يضغط المستخدم على play في الإشعار بعد إخفاء المشغل بزر X،
+    // نُعيد isVisible=true حتى يظهر المشغل المصغر مجدداً في التطبيق.
+    _playingSub = player.playingStream.listen((playing) {
+      if (playing && !isVisible.value && currentIndex.value >= 0) {
+        isVisible.value = true;
       }
     });
   }
@@ -627,6 +639,8 @@ class AudioPlayerService {
 
   void dispose() {
     _completionSub?.cancel();
+    _indexSub?.cancel();
+    _playingSub?.cancel();
     player.dispose();
   }
 }
@@ -1279,11 +1293,13 @@ class _MiniPlayerState extends State<_MiniPlayer>
                       const SizedBox(width: 2),
 
                       // ── زر الإغلاق ──
+                      // pause() بدلاً من stop() للحفاظ على MediaSession والإشعار
+                      // حتى يمكن استكمال التشغيل من شاشة القفل أو الخلفية
                       _MiniBtn(
                         icon: CupertinoIcons.xmark,
                         isDark: context.isDark,
                         onTap: () {
-                          audioService.player.stop();
+                          audioService.player.pause();
                           audioService.isVisible.value = false;
                         },
                       ),
@@ -1474,23 +1490,57 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
 
   void _toggleFullScreen() {
     if (!_isFullScreen) {
-      // ① إخفاء كل شيء — Status Bar + Navigation Bar + System UI
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-      // ② دوران Landscape إجباري
-      SystemChrome.setPreferredOrientations([
-        DeviceOrientation.landscapeLeft,
-        DeviceOrientation.landscapeRight,
-      ]);
       setState(() => _isFullScreen = true);
+      _enterFullScreen();
     } else {
-      // خروج: إعادة Portrait + System UI
-      SystemChrome.setEnabledSystemUIMode(
-        SystemUiMode.manual,
-        overlays: SystemUiOverlay.values,
-      );
-      SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-      setState(() => _isFullScreen = false);
+      _exitFullScreen();
     }
+  }
+
+  Future<void> _enterFullScreen() async {
+    // ① إخفاء System UI كامل — immersive حقيقي مثل يوتيوب
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersive);
+    // ② دوران Landscape إجباري
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+
+    if (!mounted) return;
+
+    // ③ فتح صفحة fullscreen بدون أي Scaffold أو AppBar
+    await Navigator.of(context, rootNavigator: true).push(
+      PageRouteBuilder(
+        opaque: true,
+        barrierColor: Colors.black,
+        pageBuilder: (ctx, _, __) => _ImmersiveFullScreenPage(
+          ctrl: widget.ctrl,
+          audioPlayer: widget.audioPlayer,
+          onSeek: widget.onSeek,
+          onPlayPause: widget.onPlayPause,
+          onNext: widget.onNext,
+          onPrev: widget.onPrev,
+          speed: widget.speed,
+          volume: widget.volume,
+          onSpeedChange: widget.onSpeedChange,
+          onVolumeChange: widget.onVolumeChange,
+        ),
+        transitionDuration: Duration.zero,
+        reverseTransitionDuration: Duration.zero,
+      ),
+    );
+
+    // بعد العودة من fullscreen — أعد الإعدادات
+    _exitFullScreen();
+  }
+
+  void _exitFullScreen() {
+    SystemChrome.setEnabledSystemUIMode(
+      SystemUiMode.manual,
+      overlays: SystemUiOverlay.values,
+    );
+    SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+    if (mounted) setState(() => _isFullScreen = false);
   }
 
   String _fmt(Duration d) {
@@ -2053,23 +2103,6 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
       ),
     );
 
-    // ── وضع ملء الشاشة: Edge-to-Edge حقيقي بدون أي فراغات ──
-    if (_isFullScreen) {
-      return MediaQuery.removePadding(
-        context: context,
-        removeTop: true,
-        removeBottom: true,
-        removeLeft: true,
-        removeRight: true,
-        child: Scaffold(
-          backgroundColor: Colors.black,
-          body: SizedBox.expand(
-            child: videoContent,
-          ),
-        ),
-      );
-    }
-
     // ── وضع عادي: نسبة 16:9 بدون سواد ──
     return AspectRatio(
       aspectRatio: widget.ctrl.value.aspectRatio > 0
@@ -2078,6 +2111,506 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
       child: Container(
         color: Colors.black,
         child: videoContent,
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  IMMERSIVE FULLSCREEN PAGE — صفحة ملء الشاشة الحقيقية
+//  مثل يوتيوب تماماً: لا StatusBar، لا NavigationBar، لا فراغات
+// ═══════════════════════════════════════════════════════════
+class _ImmersiveFullScreenPage extends StatefulWidget {
+  final VideoPlayerController ctrl;
+  final AudioPlayer audioPlayer;
+  final void Function(Duration) onSeek;
+  final VoidCallback onPlayPause;
+  final VoidCallback onNext;
+  final VoidCallback onPrev;
+  final double speed;
+  final double volume;
+  final void Function(double) onSpeedChange;
+  final void Function(double) onVolumeChange;
+
+  const _ImmersiveFullScreenPage({
+    required this.ctrl,
+    required this.audioPlayer,
+    required this.onSeek,
+    required this.onPlayPause,
+    required this.onNext,
+    required this.onPrev,
+    required this.speed,
+    required this.volume,
+    required this.onSpeedChange,
+    required this.onVolumeChange,
+  });
+
+  @override
+  State<_ImmersiveFullScreenPage> createState() => _ImmersiveFullScreenPageState();
+}
+
+class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
+  bool _showControls = true;
+  Timer? _hideTimer;
+  bool _dragging = false;
+  double _dragValue = 0.0;
+  bool _showVolumeBar = false;
+  bool _showSpeedOptions = false;
+  bool _isShuffle = false;
+  bool _isRepeat = false;
+
+  static const List<double> _fastSpeeds = [1.25, 1.5, 1.75, 2.0];
+
+  @override
+  void initState() {
+    super.initState();
+    // تأكيد إخفاء System UI عند بناء الصفحة
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersive);
+    _startHideTimer();
+  }
+
+  @override
+  void dispose() {
+    _hideTimer?.cancel();
+    super.dispose();
+  }
+
+  void _toggleControls() {
+    setState(() {
+      _showControls = !_showControls;
+      if (!_showControls) {
+        _showVolumeBar = false;
+        _showSpeedOptions = false;
+      }
+    });
+    if (_showControls) _startHideTimer();
+  }
+
+  void _startHideTimer() {
+    _hideTimer?.cancel();
+    _hideTimer = Timer(const Duration(seconds: 4), () {
+      if (mounted) setState(() {
+        _showControls = false;
+        _showVolumeBar = false;
+        _showSpeedOptions = false;
+      });
+    });
+  }
+
+  void _resetTimer() {
+    _hideTimer?.cancel();
+    _startHideTimer();
+  }
+
+  String _fmt(Duration d) {
+    final h = d.inHours;
+    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    if (h > 0) return '$h:$m:$s';
+    return '$m:$s';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        systemNavigationBarColor: Colors.black,
+      ),
+      child: Material(
+        color: Colors.black,
+        child: GestureDetector(
+          onTap: _toggleControls,
+          behavior: HitTestBehavior.opaque,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              // ── الفيديو يغطي الشاشة كاملة بدون فراغات ──
+              FittedBox(
+                fit: BoxFit.cover,
+                child: SizedBox(
+                  width: widget.ctrl.value.size.width > 0
+                      ? widget.ctrl.value.size.width
+                      : 1920,
+                  height: widget.ctrl.value.size.height > 0
+                      ? widget.ctrl.value.size.height
+                      : 1080,
+                  child: VideoPlayer(widget.ctrl),
+                ),
+              ),
+
+              // ── طبقة التحكم ──
+              AnimatedOpacity(
+                opacity: _showControls ? 1.0 : 0.0,
+                duration: const Duration(milliseconds: 200),
+                child: IgnorePointer(
+                  ignoring: !_showControls,
+                  child: Container(
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Color(0x99000000),
+                          Color(0x00000000),
+                          Color(0x00000000),
+                          Color(0x99000000),
+                        ],
+                        stops: [0.0, 0.3, 0.6, 1.0],
+                      ),
+                    ),
+                    child: Column(
+                      children: [
+                        // ── الشريط العلوي: رجوع + صوت + سرعة ──
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          child: Row(
+                            children: [
+                              // زر الرجوع (إغلاق fullscreen)
+                              GestureDetector(
+                                onTap: () => Navigator.of(context).pop(),
+                                child: Container(
+                                  padding: const EdgeInsets.all(7),
+                                  decoration: BoxDecoration(
+                                    color: Colors.black45,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: const Icon(
+                                    CupertinoIcons.chevron_down,
+                                    color: Colors.white,
+                                    size: 16,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+
+                              // زر مستوى الصوت
+                              GestureDetector(
+                                onTap: () {
+                                  setState(() {
+                                    _showVolumeBar = !_showVolumeBar;
+                                    _showSpeedOptions = false;
+                                  });
+                                  _resetTimer();
+                                },
+                                child: Container(
+                                  padding: const EdgeInsets.all(7),
+                                  decoration: BoxDecoration(
+                                    color: _showVolumeBar ? AppColors.primary : Colors.black45,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Icon(
+                                    widget.volume == 0
+                                        ? CupertinoIcons.speaker_slash_fill
+                                        : widget.volume < 1.0
+                                            ? CupertinoIcons.speaker_1_fill
+                                            : CupertinoIcons.speaker_3_fill,
+                                    color: Colors.white,
+                                    size: 16,
+                                  ),
+                                ),
+                              ),
+
+                              if (_showVolumeBar) ...[
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: SliderTheme(
+                                    data: const SliderThemeData(
+                                      trackHeight: 2,
+                                      thumbShape: RoundSliderThumbShape(enabledThumbRadius: 5),
+                                      overlayShape: RoundSliderOverlayShape(overlayRadius: 10),
+                                      activeTrackColor: Colors.white,
+                                      inactiveTrackColor: Colors.white30,
+                                      thumbColor: Colors.white,
+                                      overlayColor: Colors.white24,
+                                    ),
+                                    child: Slider(
+                                      value: widget.volume.clamp(0.0, 3.0),
+                                      min: 0,
+                                      max: 3.0,
+                                      onChanged: (v) {
+                                        widget.onVolumeChange(v);
+                                        _resetTimer();
+                                      },
+                                    ),
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: 34,
+                                  child: Text(
+                                    '${(widget.volume * 100).toInt()}%',
+                                    style: const TextStyle(
+                                        color: Colors.white70, fontSize: 10, fontFamily: 'Tajawal'),
+                                    textAlign: TextAlign.end,
+                                  ),
+                                ),
+                              ] else
+                                const Spacer(),
+
+                              const SizedBox(width: 6),
+
+                              // زر السرعة
+                              GestureDetector(
+                                onTap: () {
+                                  setState(() {
+                                    _showSpeedOptions = !_showSpeedOptions;
+                                    _showVolumeBar = false;
+                                  });
+                                  _resetTimer();
+                                },
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+                                  decoration: BoxDecoration(
+                                    color: _showSpeedOptions ? AppColors.primary : Colors.black45,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text(
+                                    widget.speed == 1.0 ? '1×' : '${widget.speed}×',
+                                    style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 11,
+                                        fontFamily: 'Tajawal',
+                                        fontWeight: FontWeight.w700),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        // لوحة السرعة
+                        if (_showSpeedOptions)
+                          Container(
+                            margin: const EdgeInsets.symmetric(horizontal: 12),
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: Colors.black87,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                for (final s in _fastSpeeds)
+                                  GestureDetector(
+                                    onTap: () {
+                                      widget.onSpeedChange(s);
+                                      setState(() => _showSpeedOptions = false);
+                                      _resetTimer();
+                                    },
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                      margin: const EdgeInsets.symmetric(horizontal: 2),
+                                      decoration: BoxDecoration(
+                                        color: widget.speed == s
+                                            ? AppColors.primary
+                                            : Colors.white10,
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Text(
+                                        '${s}×',
+                                        style: TextStyle(
+                                          color: widget.speed == s ? Colors.white : Colors.white70,
+                                          fontSize: 11,
+                                          fontFamily: 'Tajawal',
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+
+                        const Spacer(),
+
+                        // ── الوسط: ترجيع + تشغيل + تقديم ──
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            GestureDetector(
+                              onTap: () {
+                                final pos = widget.audioPlayer.position;
+                                final back = pos - const Duration(seconds: 10);
+                                widget.onSeek(back < Duration.zero ? Duration.zero : back);
+                                _resetTimer();
+                              },
+                              child: Container(
+                                width: 40,
+                                height: 40,
+                                decoration: const BoxDecoration(color: Colors.black38, shape: BoxShape.circle),
+                                child: const Icon(CupertinoIcons.gobackward_10, color: Colors.white, size: 20),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+
+                            GestureDetector(
+                              onTap: () {
+                                setState(() => _isShuffle = !_isShuffle);
+                                _resetTimer();
+                              },
+                              child: Container(
+                                width: 40,
+                                height: 40,
+                                decoration: BoxDecoration(
+                                  color: _isShuffle ? AppColors.primary.withOpacity(0.7) : Colors.black45,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(CupertinoIcons.shuffle,
+                                    color: _isShuffle ? Colors.white : Colors.white70, size: 18),
+                              ),
+                            ),
+                            const SizedBox(width: 14),
+
+                            StreamBuilder<bool>(
+                              stream: widget.audioPlayer.playingStream,
+                              builder: (_, snap) {
+                                final playing = snap.data ?? false;
+                                return GestureDetector(
+                                  onTap: () {
+                                    widget.onPlayPause();
+                                    _resetTimer();
+                                  },
+                                  child: Container(
+                                    width: 64,
+                                    height: 64,
+                                    decoration: BoxDecoration(
+                                      color: AppColors.primary,
+                                      shape: BoxShape.circle,
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: AppColors.primary.withOpacity(0.55),
+                                          blurRadius: 20,
+                                          spreadRadius: 2,
+                                        ),
+                                      ],
+                                    ),
+                                    child: Icon(
+                                      playing ? CupertinoIcons.pause_fill : CupertinoIcons.play_fill,
+                                      color: Colors.white,
+                                      size: 28,
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                            const SizedBox(width: 14),
+
+                            GestureDetector(
+                              onTap: () {
+                                setState(() => _isRepeat = !_isRepeat);
+                                widget.audioPlayer.setLoopMode(
+                                    _isRepeat ? LoopMode.off : LoopMode.one);
+                                _resetTimer();
+                              },
+                              child: Container(
+                                width: 40,
+                                height: 40,
+                                decoration: BoxDecoration(
+                                  color: _isRepeat ? AppColors.primary.withOpacity(0.7) : Colors.black45,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(CupertinoIcons.repeat,
+                                    color: _isRepeat ? Colors.white : Colors.white70, size: 18),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+
+                            GestureDetector(
+                              onTap: () {
+                                final pos = widget.audioPlayer.position;
+                                widget.onSeek(pos + const Duration(seconds: 10));
+                                _resetTimer();
+                              },
+                              child: Container(
+                                width: 40,
+                                height: 40,
+                                decoration: const BoxDecoration(color: Colors.black38, shape: BoxShape.circle),
+                                child: const Icon(CupertinoIcons.goforward_10, color: Colors.white, size: 20),
+                              ),
+                            ),
+                          ],
+                        ),
+
+                        const Spacer(),
+
+                        // ── شريط التقدم السفلي ──
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+                          child: StreamBuilder<Duration?>(
+                            stream: widget.audioPlayer.durationStream,
+                            builder: (_, durSnap) {
+                              return StreamBuilder<Duration>(
+                                stream: widget.audioPlayer.positionStream,
+                                builder: (_, posSnap) {
+                                  final dur = durSnap.data ?? Duration.zero;
+                                  final pos = posSnap.data ?? Duration.zero;
+                                  final progress = dur.inMilliseconds > 0
+                                      ? pos.inMilliseconds / dur.inMilliseconds
+                                      : 0.0;
+                                  final display = _dragging ? _dragValue : progress;
+                                  return Column(
+                                    children: [
+                                      SliderTheme(
+                                        data: SliderThemeData(
+                                          trackHeight: 3,
+                                          thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
+                                          overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
+                                          activeTrackColor: AppColors.primary,
+                                          inactiveTrackColor: Colors.white30,
+                                          thumbColor: Colors.white,
+                                          overlayColor: AppColors.primary.withOpacity(0.3),
+                                        ),
+                                        child: Slider(
+                                          value: display.clamp(0.0, 1.0),
+                                          onChangeStart: (v) {
+                                            setState(() {
+                                              _dragging = true;
+                                              _dragValue = v;
+                                            });
+                                            _hideTimer?.cancel();
+                                          },
+                                          onChanged: (v) => setState(() => _dragValue = v),
+                                          onChangeEnd: (v) {
+                                            setState(() => _dragging = false);
+                                            final ms = (v * dur.inMilliseconds).toInt();
+                                            widget.onSeek(Duration(milliseconds: ms));
+                                            _startHideTimer();
+                                          },
+                                        ),
+                                      ),
+                                      Padding(
+                                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                                        child: Row(
+                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                          children: [
+                                            Text(
+                                              _fmt(_dragging
+                                                  ? Duration(milliseconds: (_dragValue * dur.inMilliseconds).toInt())
+                                                  : pos),
+                                              style: const TextStyle(color: Colors.white70, fontSize: 11),
+                                            ),
+                                            Text(
+                                              _fmt(dur),
+                                              style: const TextStyle(color: Colors.white70, fontSize: 11),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  );
+                                },
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

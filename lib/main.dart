@@ -32,10 +32,11 @@ Future<void> main() async {
   await JustAudioBackground.init(
     androidNotificationChannelId: 'com.mustami3.audio',
     androidNotificationChannelName: 'دندن',
-    androidNotificationOngoing: true,
-    // false = يبقي الـ foreground service والإشعار حياً عند pause()
-    // بحيث يمكن استكمال التشغيل من شاشة القفل أو الخلفية
+    // false = لا يوقف الـ foreground service عند pause()
+    // مما يبقي الإشعار حياً ويسمح باستكمال التشغيل من شاشة القفل أو الخلفية
+    androidNotificationOngoing: false,
     androidStopForegroundOnPause: false,
+    androidNotificationClickStartsActivity: true,
   );
 
   // تحميل الثيم المحفوظ أولاً
@@ -494,11 +495,9 @@ class AudioPlayerService {
     isVisible.value = true;
     _handlingIndexChange = true;
 
-    final quickTag = MediaItem(
-      id: item.path,
-      title: item.title.replaceAll(RegExp(r'\.\w+$'), ''),
-      artist: 'دندن',
-    );
+    // ① بناء tag للأغنية الحالية مع الصورة المصغرة قبل بدء التشغيل
+    // لضمان ظهور الصورة في إشعار الخلفية وشاشة القفل فوراً
+    final tag = await _buildTag(item);
 
     try {
       await player.stop();
@@ -508,23 +507,32 @@ class AudioPlayerService {
       final hasPrev = index > 0;
       final hasNext = index < list.length - 1;
 
+      // دالة مساعدة محلية لبناء MediaItem مع الصورة للأغاني المجاورة
+      Future<MediaItem> buildNeighborTag(LocalMediaItem neighbor) async {
+        Uri? artUri;
+        final localThumb = await ThumbnailManager.getLocalThumbnail(neighbor.path);
+        if (localThumb != null) {
+          artUri = Uri.file(localThumb);
+        } else if (neighbor.thumbnailUrl != null) {
+          artUri = Uri.parse(neighbor.thumbnailUrl!);
+        }
+        return MediaItem(
+          id: neighbor.path,
+          title: neighbor.title.replaceAll(RegExp(r'\.\w+$'), ''),
+          artist: 'دندن',
+          artUri: artUri,
+        );
+      }
+
       final sources = <AudioSource>[];
       if (hasPrev) {
-        sources.add(AudioSource.file(list[index - 1].path,
-            tag: MediaItem(
-              id: list[index - 1].path,
-              title: list[index - 1].title.replaceAll(RegExp(r'\.\w+$'), ''),
-              artist: 'دندن',
-            )));
+        final prevTag = await buildNeighborTag(list[index - 1]);
+        sources.add(AudioSource.file(list[index - 1].path, tag: prevTag));
       }
-      sources.add(AudioSource.file(item.path, tag: quickTag));
+      sources.add(AudioSource.file(item.path, tag: tag));
       if (hasNext) {
-        sources.add(AudioSource.file(list[index + 1].path,
-            tag: MediaItem(
-              id: list[index + 1].path,
-              title: list[index + 1].title.replaceAll(RegExp(r'\.\w+$'), ''),
-              artist: 'دندن',
-            )));
+        final nextTag = await buildNeighborTag(list[index + 1]);
+        sources.add(AudioSource.file(list[index + 1].path, tag: nextTag));
       }
 
       final initialIdx = hasPrev ? 1 : 0;
@@ -540,28 +548,40 @@ class AudioPlayerService {
       _handlingIndexChange = false;
       await player.play();
 
-      // ③ تحديث artwork بشكل غير متزامن
-      _buildTag(item).then((tag) async {
+      // ③ تحديث artwork بشكل غير متزامن (للتأكد من تحديث الصورة إن تم توليدها بعد التشغيل)
+      // نُضيف artUri لجميع المصادر بما فيها الأغاني المجاورة
+      Future(() async {
         try {
           if (currentIndex.value != index) return;
+          final updatedTag = await _buildTag(item);
           final pos = player.position;
           final playing = player.playing;
           final updatedSources = <AudioSource>[];
           if (hasPrev) {
+            final prevThumb = await ThumbnailManager.getLocalThumbnail(list[index - 1].path);
+            Uri? prevArt;
+            if (prevThumb != null) prevArt = Uri.file(prevThumb);
+            else if (list[index - 1].thumbnailUrl != null) prevArt = Uri.parse(list[index - 1].thumbnailUrl!);
             updatedSources.add(AudioSource.file(list[index - 1].path,
                 tag: MediaItem(
                   id: list[index - 1].path,
                   title: list[index - 1].title.replaceAll(RegExp(r'\.\w+$'), ''),
                   artist: 'دندن',
+                  artUri: prevArt,
                 )));
           }
-          updatedSources.add(AudioSource.file(item.path, tag: tag));
+          updatedSources.add(AudioSource.file(item.path, tag: updatedTag));
           if (hasNext) {
+            final nextThumb = await ThumbnailManager.getLocalThumbnail(list[index + 1].path);
+            Uri? nextArt;
+            if (nextThumb != null) nextArt = Uri.file(nextThumb);
+            else if (list[index + 1].thumbnailUrl != null) nextArt = Uri.parse(list[index + 1].thumbnailUrl!);
             updatedSources.add(AudioSource.file(list[index + 1].path,
                 tag: MediaItem(
                   id: list[index + 1].path,
                   title: list[index + 1].title.replaceAll(RegExp(r'\.\w+$'), ''),
                   artist: 'دندن',
+                  artUri: nextArt,
                 )));
           }
           _handlingIndexChange = true;
@@ -1193,17 +1213,36 @@ class _MiniPlayerState extends State<_MiniPlayer>
             color: context.isDark
                 ? const Color(0xFF1C1C1E)
                 : const Color(0xFFEEEEEE),
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(22),
             boxShadow: [
+              // Red neon glow — outer
               BoxShadow(
-                color: Colors.black.withOpacity(context.isDark ? 0.30 : 0.10),
+                color: AppColors.primary.withOpacity(context.isDark ? 0.55 : 0.35),
+                blurRadius: 28,
+                spreadRadius: -2,
+                offset: const Offset(0, 4),
+              ),
+              // Red neon glow — tight inner ring
+              BoxShadow(
+                color: AppColors.primary.withOpacity(context.isDark ? 0.30 : 0.18),
+                blurRadius: 10,
+                spreadRadius: 1,
+                offset: Offset.zero,
+              ),
+              // Normal shadow depth
+              BoxShadow(
+                color: Colors.black.withOpacity(context.isDark ? 0.40 : 0.12),
                 blurRadius: 24,
                 offset: const Offset(0, 8),
               ),
             ],
+            border: Border.all(
+              color: AppColors.primary.withOpacity(context.isDark ? 0.45 : 0.28),
+              width: 1.2,
+            ),
           ),
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(21),
             child: ValueListenableBuilder<int>(
               valueListenable: audioService.currentIndex,
               builder: (context, idx, _) {
@@ -1211,7 +1250,7 @@ class _MiniPlayerState extends State<_MiniPlayer>
                 if (item == null) return const SizedBox.shrink();
                 return Padding(
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 10),
+                      horizontal: 14, vertical: 14),
                   child: Row(
                     children: [
                       // ── الصورة المصغرة ──
@@ -2633,6 +2672,8 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
   bool _videoInitialized = false;
   double _volume = 1.0;
   double _speed = 1.0;
+  // يمنع ظهور عناصر التحكم القديمة أثناء الانتقال بين الأغاني
+  bool _isSwitching = false;
 
   // نتابع الـ streams حتى نُلغيها عند dispose
   StreamSubscription? _positionSub;
@@ -2665,18 +2706,30 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
     _videoCtrl?.pause();
     _videoCtrl?.dispose();
     _videoCtrl = null;
-    // لا نُحمّل الـ thumbnail للفيديوهات — نبقى على أسود 16:9 حتى يجهز الفيديو
+    // تعيين حالة الانتقال لمنع ظهور عناصر التحكم القديمة
     final item = audioService.currentItem;
-    if (item != null && !item.isVideo) {
-      _loadThumb();
-    } else {
-      if (mounted) setState(() { _thumbPath = null; _videoInitialized = false; });
+    if (mounted) {
+      setState(() {
+        _isSwitching = true;
+        _thumbPath = null;
+        _videoInitialized = false;
+      });
+    }
+    if (item == null) {
+      // لا يوجد عنصر حالي — أوقف الانتقال فوراً
+      if (mounted) setState(() => _isSwitching = false);
+      return;
+    }
+    // لا نُحمّل الـ thumbnail للفيديوهات — نبقى على أسود 16:9 حتى يجهز الفيديو
+    if (!item.isVideo) {
+      _loadThumb(); // ستُوقف _isSwitching عند الانتهاء
     }
     _initVideoIfNeeded();
   }
 
   Future<void> _initVideoIfNeeded() async {
     final item = audioService.currentItem;
+    // للأغاني الصوتية: _loadThumb هي التي تُوقف _isSwitching عند الانتهاء
     if (item == null || !item.isVideo) return;
 
     // VideoPlayerController بدون صوت — الصوت يأتي من just_audio
@@ -2694,6 +2747,7 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
         setState(() {
           _videoCtrl = ctrl;
           _videoInitialized = true;
+          _isSwitching = false; // انتهت مرحلة الانتقال
         });
       }
       // مزامنة الموقف مستمرة
@@ -2717,6 +2771,8 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
       });
     } catch (_) {
       ctrl.dispose();
+      // في حالة الفشل: أوقف _isSwitching لتجنب تجميد الواجهة
+      if (mounted) setState(() => _isSwitching = false);
     }
   }
 
@@ -2724,7 +2780,10 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
     final item = audioService.currentItem;
     if (item == null) return;
     final path = await ThumbnailManager.getLocalThumbnail(item.path);
-    if (mounted) setState(() => _thumbPath = path);
+    if (mounted) setState(() {
+      _thumbPath = path;
+      _isSwitching = false; // انتهت مرحلة الانتقال
+    });
   }
 
   String _fmt(Duration d) {
@@ -2897,25 +2956,58 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                 builder: (_, __, ___) {
                   final item = audioService.currentItem;
                   final title = item?.title.replaceAll(RegExp(r'\.\w+$'), '') ?? '';
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      Text(
-                        title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: textColor,
-                          fontSize: 20,
-                          fontFamily: 'Tajawal',
-                          fontWeight: FontWeight.w700,
+                      // ── Title + دندن ──
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              title,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: textColor,
+                                fontSize: 20,
+                                fontFamily: 'Tajawal',
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'دندن',
+                              style: TextStyle(
+                                  color: subColor, fontSize: 14, fontFamily: 'Tajawal'),
+                            ),
+                          ],
                         ),
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'دندن',
-                        style: TextStyle(
-                            color: subColor, fontSize: 14, fontFamily: 'Tajawal'),
+                      const SizedBox(width: 14),
+                      // ── User Logo ──
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: Image.asset(
+                          'assets/images/logo.png',
+                          width: 46,
+                          height: 46,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
+                            width: 46,
+                            height: 46,
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: [AppColors.primary, AppColors.primaryDark],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: const Icon(CupertinoIcons.music_note_2,
+                                color: Colors.white, size: 22),
+                          ),
+                        ),
                       ),
                     ],
                   );
@@ -2926,7 +3018,7 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
             const SizedBox(height: 12),
 
             // ── أزرار التشغيل (للصوت فقط — الفيديو له تحكم داخلي) ──
-            if (!(_videoInitialized && _videoCtrl != null)) ...[
+            if (!_isSwitching && !(_videoInitialized && _videoCtrl != null)) ...[
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
@@ -3086,6 +3178,7 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                       ),
                     ),
                   ),
+                  const SizedBox(height: 8),
                   Expanded(
                     child: ValueListenableBuilder<List<LocalMediaItem>>(
                       valueListenable: audioService.playlist,

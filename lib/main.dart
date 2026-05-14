@@ -500,7 +500,11 @@ class AudioPlayerService {
     final tag = await _buildTag(item);
 
     try {
-      await player.stop();
+      // ── pause() بدلاً من stop() ──
+      // stop() يُلغي الـ AVAudioSession ويمسح MPNowPlayingInfoCenter مما يُطفئ
+      // ضوابط شاشة القفل والخلفية. pause()+seek() يبقيان الـ session نشطاً
+      // ويسمحان باستكمال التشغيل فور استدعاء setAudioSource الجديد.
+      if (player.playing) await player.pause();
 
       // ② بناء ConcatenatingAudioSource بـ [prev?, current, next?]
       // هذا يُفعّل أزرار التالي والسابق في الإشعار وشاشة القفل وBluetooth
@@ -924,8 +928,10 @@ class _GlassNavBar extends StatefulWidget {
 }
 
 class _GlassNavBarState extends State<_GlassNavBar>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   late AnimationController _indicatorCtrl;
+  late AnimationController _pulseCtrl;
+  late Animation<double> _pulseAnim;
   int _prevIndex = 0;
 
   static const List<_NavTabData> _tabs = [
@@ -942,6 +948,22 @@ class _GlassNavBarState extends State<_GlassNavBar>
       duration: const Duration(milliseconds: 300),
       value: 1.0,
     );
+    _pulseCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 350),
+    );
+    _pulseAnim = TweenSequence<double>([
+      TweenSequenceItem(
+        tween: Tween<double>(begin: 1.0, end: 1.03)
+            .chain(CurveTween(curve: Curves.easeOut)),
+        weight: 40,
+      ),
+      TweenSequenceItem(
+        tween: Tween<double>(begin: 1.03, end: 1.0)
+            .chain(CurveTween(curve: Curves.easeInOut)),
+        weight: 60,
+      ),
+    ]).animate(_pulseCtrl);
     _navIndexNotifier.addListener(_onNavChange);
   }
 
@@ -949,7 +971,12 @@ class _GlassNavBarState extends State<_GlassNavBar>
   void dispose() {
     _navIndexNotifier.removeListener(_onNavChange);
     _indicatorCtrl.dispose();
+    _pulseCtrl.dispose();
     super.dispose();
+  }
+
+  void _triggerPulse() {
+    _pulseCtrl.forward(from: 0.0);
   }
 
   void _onNavChange() {
@@ -966,7 +993,15 @@ class _GlassNavBarState extends State<_GlassNavBar>
     final bottomPadding = MediaQuery.of(context).padding.bottom;
     final idx = _navIndexNotifier.value;
 
-    return Padding(
+    return GestureDetector(
+      onTapDown: (_) => _triggerPulse(),
+      child: AnimatedBuilder(
+        animation: _pulseAnim,
+        builder: (_, child) => Transform.scale(
+          scale: _pulseAnim.value,
+          child: child,
+        ),
+        child: Padding(
       padding: EdgeInsets.only(
         left: 18,
         right: 18,
@@ -975,7 +1010,7 @@ class _GlassNavBarState extends State<_GlassNavBar>
       child: ClipRRect(
         borderRadius: BorderRadius.circular(36),
         child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
+          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
           child: Container(
             height: 66,
             decoration: BoxDecoration(
@@ -986,8 +1021,8 @@ class _GlassNavBarState extends State<_GlassNavBar>
               borderRadius: BorderRadius.circular(36),
               border: Border.all(
                 color: isDark
-                    ? Colors.white.withOpacity(0.10)
-                    : Colors.white.withOpacity(0.75),
+                    ? const Color.fromARGB(255, 114, 114, 114).withOpacity(0.1)
+                    : const Color.fromARGB(255, 12, 0, 0).withOpacity(0.07),
                 width: 1.2,
               ),
               gradient: LinearGradient(
@@ -1005,13 +1040,13 @@ class _GlassNavBarState extends State<_GlassNavBar>
               ),
               boxShadow: [
                 BoxShadow(
-                  color: AppColors.primary.withOpacity(isDark ? 0.18 : 0.08),
+                  color: const Color.fromARGB(255, 0, 0, 0).withOpacity(isDark ? 0.18 : 0.08),
                   blurRadius: 32,
                   spreadRadius: -4,
                   offset: const Offset(0, 8),
                 ),
                 BoxShadow(
-                  color: Colors.black.withOpacity(isDark ? 0.25 : 0.06),
+                  color: const Color.fromARGB(0, 17, 1, 1).withOpacity(isDark ? 0.25 : 0.06),
                   blurRadius: 20,
                   offset: const Offset(0, 4),
                 ),
@@ -1055,9 +1090,9 @@ class _GlassNavBarState extends State<_GlassNavBar>
                               begin: Alignment.topCenter,
                               end: Alignment.bottomCenter,
                             ),
-                            borderRadius: BorderRadius.circular(26),
+                            borderRadius: BorderRadius.circular(40),
                             border: Border.all(
-                              color: AppColors.primary.withOpacity(0.30),
+                              color: AppColors.primary.withOpacity(0.02),
                               width: 0.8,
                             ),
                           ),
@@ -1143,6 +1178,8 @@ class _GlassNavBarState extends State<_GlassNavBar>
           ),
         ),
       ),
+        ),
+      ),
     );
   }
 }
@@ -1217,17 +1254,10 @@ class _MiniPlayerState extends State<_MiniPlayer>
             boxShadow: [
               // Red neon glow — outer
               BoxShadow(
-                color: AppColors.primary.withOpacity(context.isDark ? 0.55 : 0.35),
+                color: AppColors.primary.withOpacity(context.isDark ? 0.10 : 0.6),
                 blurRadius: 28,
                 spreadRadius: -2,
                 offset: const Offset(0, 4),
-              ),
-              // Red neon glow — tight inner ring
-              BoxShadow(
-                color: AppColors.primary.withOpacity(context.isDark ? 0.30 : 0.18),
-                blurRadius: 10,
-                spreadRadius: 1,
-                offset: Offset.zero,
               ),
               // Normal shadow depth
               BoxShadow(
@@ -2957,6 +2987,7 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                   final item = audioService.currentItem;
                   final title = item?.title.replaceAll(RegExp(r'\.\w+$'), '') ?? '';
                   return Row(
+                    textDirection: TextDirection.rtl,
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       // ── Title + دندن ──

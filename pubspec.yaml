@@ -30,6 +30,7 @@ dev_dependencies:
   flutter_lints: ^4.0.0
   video_player: ^2.9.2
   file_picker: ^8.1.4
+  url_launcher: ^6.3.0
 flutter:
   uses-material-design: true
   assets:

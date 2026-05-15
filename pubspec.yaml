@@ -28,13 +28,16 @@ dependencies:
   flutter_dynamic_icon: ^2.1.0
   video_thumbnail: ^0.5.3
   on_audio_query: ^2.9.0
+  video_player: ^2.9.2
+  file_picker: ^8.1.4
+  url_launcher: ^6.3.0
+  http: ^1.2.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
-  video_player: ^2.9.2
-  file_picker: ^8.1.4
-  url_launcher: ^6.3.0
+
 
 flutter:
   uses-material-design: true

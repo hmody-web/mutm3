@@ -24,6 +24,7 @@ import 'package:on_audio_query/on_audio_query.dart';
 import 'app_icon_service.dart';
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 // ─────────────────────────────────────────────
 //  ENTRY POINT
 // ─────────────────────────────────────────────
@@ -386,14 +387,17 @@ class AdSlide {
     required this.link,
   });
 
-  factory AdSlide.fromJson(Map<String, dynamic> json) {
-    return AdSlide(
-      title: json['title'] ?? '',
-      description: json['description'] ?? '',
-      imageUrl: json['image'] ?? '',
-      link: json['link'] ?? '',
-    );
-  }
+factory AdSlide.fromJson(Map<String, dynamic> json) {
+  const baseUrl = 'https://scrptaty.com/dndn/';
+  final rawImage = json['image'] ?? '';
+  
+  return AdSlide(
+    title: json['title'] ?? '',
+    description: json['description'] ?? '',
+    imageUrl: rawImage.startsWith('http') ? rawImage : '$baseUrl$rawImage',
+    link: json['link'] ?? '',
+  );
+}
 }
 // ─────────────────────────────────────────────
 //  AUDIO PLAYER SERVICE — Singleton (v4 — MediaSession next/prev support)
@@ -4367,47 +4371,24 @@ class _AdSlideshowCardState extends State<_AdSlideshowCard>
 
 Future<void> _fetchAds() async {
   try {
-    print('=== بدء جلب الإعلانات ===');
-    final response = await dio.get(
-      'https://scrptaty.com/dndn/index.php?json',
-      options: Options(
-        headers: {
-          'Accept': 'application/json',
-        },
-      ),
-    );
+    final uri = Uri.parse('https://scrptaty.com/dndn/index.php?json');
+    final response = await http.get(uri).timeout(const Duration(seconds: 10));
     
-    print('Status code: ${response.statusCode}');
-    print('Data type: ${response.runtimeType}');
-    print('Data: ${response.data}');
+    print('Status: ${response.statusCode}');
+    print('Body: ${response.body}');
     
     if (response.statusCode == 200) {
-      // تأكد من أن response.data هي List
-      if (response.data is List) {
-        setState(() {
-          _slides = (response.data as List)
-              .map((item) => AdSlide.fromJson(item as Map<String, dynamic>))
-              .toList();
-          _isLoading = false;
-        });
-        print('تم تحميل ${_slides.length} إعلان');
-        _startAutoSlide();
-      } else {
-        print('البيانات ليست List: ${response.data.runtimeType}');
-        throw Exception('تنسيق البيانات غير صحيح');
-      }
-    } else {
-      throw Exception('HTTP ${response.statusCode}');
+      final List<dynamic> data = jsonDecode(response.body);
+      if (!mounted) return;
+      setState(() {
+        _slides = data.map((item) => AdSlide.fromJson(item)).toList();
+        _isLoading = false;
+      });
+      _startAutoSlide();
     }
   } catch (e) {
     print('❌ خطأ: $e');
-    if (e is DioException) {
-      print('Dio error type: ${e.type}');
-      print('Dio message: ${e.message}');
-      if (e.response != null) {
-        print('Response: ${e.response?.data}');
-      }
-    }
+    if (!mounted) return;
     setState(() {
       _error = 'خطأ: $e';
       _isLoading = false;

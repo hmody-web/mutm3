@@ -370,7 +370,31 @@ class ThumbnailManager {
     try { File(tp).deleteSync(); } catch (_) {}
   }
 }
+// ═══════════════════════════════════════════════════════════
+//  MODEL: AD SLIDE
+// ═══════════════════════════════════════════════════════════
+class AdSlide {
+  final String title;
+  final String description;
+  final String imageUrl;
+  final String link;
 
+  AdSlide({
+    required this.title,
+    required this.description,
+    required this.imageUrl,
+    required this.link,
+  });
+
+  factory AdSlide.fromJson(Map<String, dynamic> json) {
+    return AdSlide(
+      title: json['title'] ?? '',
+      description: json['description'] ?? '',
+      imageUrl: json['image'] ?? '',
+      link: json['link'] ?? '',
+    );
+  }
+}
 // ─────────────────────────────────────────────
 //  AUDIO PLAYER SERVICE — Singleton (v4 — MediaSession next/prev support)
 // ─────────────────────────────────────────────
@@ -1294,7 +1318,6 @@ class _MiniPlayerState extends State<_MiniPlayer>
                       blurRadius: 1,
                       offset: const Offset(0, 1),
                     ),
-                    // Red glow accent
                     BoxShadow(
                       color: AppColors.primary.withOpacity(isDark ? 0.12 : 0.08),
                       blurRadius: 16,
@@ -4317,6 +4340,9 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
 // ═══════════════════════════════════════════════════════════
 //  AD SLIDESHOW CARD — كارت إعلاني بنسبة 16:9 مع سلايدشو
 // ═══════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
+//  AD SLIDESHOW CARD — Dynamic from Web DB
+// ═══════════════════════════════════════════════════════════
 class _AdSlideshowCard extends StatefulWidget {
   const _AdSlideshowCard();
 
@@ -4329,53 +4355,71 @@ class _AdSlideshowCardState extends State<_AdSlideshowCard>
   final PageController _pageCtrl = PageController();
   int _currentPage = 0;
   Timer? _autoTimer;
-
-  // بيانات الإعلانات — ضع مسار صورتك في 'image'
-  static const List<Map<String, String>> _slides = [
-    {
-      'image': 'assets/images/ad1.jpg',
-      'color': '0xFF1A1A2E',
-      'color2': '0xFF16213E',
-      'title': 'دندن — رفيقك الموسيقي',
-      'desc': 'تجربة استماع لا مثيل لها',
-      'icon': 'music',
-    },
-    {
-      'image': 'assets/images/ad2.jpg',
-      'color': '0xFF1B4332',
-      'color2': '0xFF2D6A4F',
-      'title': 'سكربتاتي - Scrptaty',
-      'desc': 'تدور على مواقع وتطبيقات مجانية ! انضم الينا',
-      'icon': 'download',
-    },
-    {
-      'image': 'assets/images/ad3.jpg',
-      'color': '0xFF4A1942',
-      'color2': '0xFF6B2D5E',
-      'title': 'لعبة Squid Jump  ',
-      'desc': '   تخطي العقبات وحطم الارقام القياسية واتحدى اصدقائك',
-      'icon': 'sound',
-    },
-    {
-      'image': 'assets/images/ad4.jpg',
-      'color': '0xFF7B2D00',
-      'color2': '0xFFE8272A',
-      'title': 'اعلن هنا داخل التطبيق   ',
-      'desc': 'تجربة مستخدمين متميزة مع وصول لآلاف المستخدمين',
-      'icon': 'logo',
-    },
-  ];
+  List<AdSlide> _slides = [];
+  bool _isLoading = true;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
-    _startAutoSlide();
+    _fetchAds();
   }
 
+Future<void> _fetchAds() async {
+  try {
+    print('=== بدء جلب الإعلانات ===');
+    final response = await dio.get(
+      'https://scrptaty.com/dndn/index.php?json',
+      options: Options(
+        headers: {
+          'Accept': 'application/json',
+        },
+      ),
+    );
+    
+    print('Status code: ${response.statusCode}');
+    print('Data type: ${response.runtimeType}');
+    print('Data: ${response.data}');
+    
+    if (response.statusCode == 200) {
+      // تأكد من أن response.data هي List
+      if (response.data is List) {
+        setState(() {
+          _slides = (response.data as List)
+              .map((item) => AdSlide.fromJson(item as Map<String, dynamic>))
+              .toList();
+          _isLoading = false;
+        });
+        print('تم تحميل ${_slides.length} إعلان');
+        _startAutoSlide();
+      } else {
+        print('البيانات ليست List: ${response.data.runtimeType}');
+        throw Exception('تنسيق البيانات غير صحيح');
+      }
+    } else {
+      throw Exception('HTTP ${response.statusCode}');
+    }
+  } catch (e) {
+    print('❌ خطأ: $e');
+    if (e is DioException) {
+      print('Dio error type: ${e.type}');
+      print('Dio message: ${e.message}');
+      if (e.response != null) {
+        print('Response: ${e.response?.data}');
+      }
+    }
+    setState(() {
+      _error = 'خطأ: $e';
+      _isLoading = false;
+    });
+  }
+}
+
   void _startAutoSlide() {
+    if (_slides.length <= 1) return;
     _autoTimer?.cancel();
     _autoTimer = Timer.periodic(const Duration(seconds: 5), (_) {
-      if (!mounted) return;
+      if (!mounted || _slides.isEmpty) return;
       final next = (_currentPage + 1) % _slides.length;
       _pageCtrl.animateToPage(
         next,
@@ -4392,19 +4436,57 @@ class _AdSlideshowCardState extends State<_AdSlideshowCard>
     super.dispose();
   }
 
-  Color _hexColor(String hex) {
-    return Color(int.parse(hex));
+  Future<void> _openLink(String url) async {
+    if (url.isEmpty) return;
+    final uri = Uri.parse(url);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoading) {
+      return AspectRatio(
+        aspectRatio: 16 / 9,
+        child: Container(
+          decoration: BoxDecoration(
+            color: context.appSurfaceAlt,
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: const Center(
+            child: CircularProgressIndicator(
+              valueColor: AlwaysStoppedAnimation(AppColors.primary),
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (_error != null || _slides.isEmpty) {
+      return AspectRatio(
+        aspectRatio: 16 / 9,
+        child: Container(
+          decoration: BoxDecoration(
+            color: context.appSurfaceAlt,
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Center(
+            child: Text(
+              _error != null ? 'حدث خطأ في تحميل الإعلانات' : 'لا توجد إعلانات',
+              style: TextStyle(color: context.appTextSec),
+            ),
+          ),
+        ),
+      );
+    }
+
     return AspectRatio(
       aspectRatio: 16 / 9,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(20),
         child: Stack(
           children: [
-            // ── الصفحات ──
             PageView.builder(
               controller: _pageCtrl,
               itemCount: _slides.length,
@@ -4414,73 +4496,74 @@ class _AdSlideshowCardState extends State<_AdSlideshowCard>
               },
               itemBuilder: (context, index) {
                 final slide = _slides[index];
-                return _buildSlide(slide);
+                return GestureDetector(
+                  onTap: () => _openLink(slide.link),
+                  child: _buildSlide(slide),
+                );
               },
             ),
-
-            // ── نقاط المؤشر ──
-            Positioned(
-              bottom: 14,
-              left: 0,
-              right: 0,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(_slides.length, (i) {
-                  final active = i == _currentPage;
-                  return AnimatedContainer(
-                    duration: const Duration(milliseconds: 300),
-                    margin: const EdgeInsets.symmetric(horizontal: 3),
-                    width: active ? 20 : 6,
-                    height: 6,
-                    decoration: BoxDecoration(
-                      color: active ? Colors.white : Colors.white38,
-                      borderRadius: BorderRadius.circular(3),
-                    ),
-                  );
-                }),
+            if (_slides.length > 1)
+              Positioned(
+                bottom: 14,
+                left: 0,
+                right: 0,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: List.generate(_slides.length, (i) {
+                    final active = i == _currentPage;
+                    return AnimatedContainer(
+                      duration: const Duration(milliseconds: 300),
+                      margin: const EdgeInsets.symmetric(horizontal: 3),
+                      width: active ? 20 : 6,
+                      height: 6,
+                      decoration: BoxDecoration(
+                        color: active ? Colors.white : Colors.white38,
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                    );
+                  }),
+                ),
               ),
-            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildSlide(Map<String, String> slide) {
+  Widget _buildSlide(AdSlide slide) {
     return Stack(
       fit: StackFit.expand,
       children: [
-        // ── الصورة ──
-        Image.asset(
-          slide['image']!,
+        CachedNetworkImage(
+          imageUrl: slide.imageUrl,
           fit: BoxFit.cover,
           width: double.infinity,
           height: double.infinity,
-          errorBuilder: (_, __, ___) => Container(
+          placeholder: (_, __) => Container(
+            color: Colors.grey[900],
+            child: const Center(
+              child: CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation(Colors.white54),
+              ),
+            ),
+          ),
+          errorWidget: (_, __, ___) => Container(
             decoration: BoxDecoration(
               gradient: LinearGradient(
-                colors: [
-                  _hexColor(slide['color']!),
-                  _hexColor(slide['color2']!),
-                ],
+                colors: [AppColors.primary, AppColors.primaryDark],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
             ),
-            child: Center(
-              child: Opacity(
-                opacity: 0.3,
-                child: Icon(
-                  _slideIcon(slide['icon']!),
-                  color: Colors.white,
-                  size: 90,
-                ),
+            child: const Center(
+              child: Icon(
+                Icons.broken_image,
+                color: Colors.white,
+                size: 48,
               ),
             ),
           ),
         ),
-
-        // ── الظل ──
         Positioned.fill(
           child: DecoratedBox(
             decoration: BoxDecoration(
@@ -4490,16 +4573,14 @@ class _AdSlideshowCardState extends State<_AdSlideshowCard>
                 stops: const [0.4, 1.0],
                 colors: [
                   const Color.fromARGB(22, 0, 0, 0),
-                  Colors.black.withOpacity(1),
+                  Colors.black.withOpacity(0.75),
                 ],
               ),
             ),
           ),
         ),
-
-        // ── النصوص تبدأ من اليمين ──
         Positioned(
-          bottom: 32,
+          bottom: 24,
           right: 18,
           left: 18,
           child: Directionality(
@@ -4508,30 +4589,23 @@ class _AdSlideshowCardState extends State<_AdSlideshowCard>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  slide['title']!,
-                  textAlign: TextAlign.left,
+                  slide.title,
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 17,
                     fontFamily: 'Tajawal',
                     fontWeight: FontWeight.w800,
-                    shadows: [
-                      Shadow(color: Colors.black87, blurRadius: 10),
-                    ],
+                    shadows: [Shadow(color: Colors.black87, blurRadius: 10)],
                   ),
                 ),
-                const SizedBox(height: 3),
+                const SizedBox(height: 4),
                 Text(
-                  slide['desc']!,
-                  textAlign: TextAlign.right,
+                  slide.description,
                   style: TextStyle(
                     color: Colors.white.withOpacity(0.88),
                     fontSize: 12,
                     fontFamily: 'Tajawal',
-                    fontWeight: FontWeight.w400,
-                    shadows: const [
-                      Shadow(color: Colors.black54, blurRadius: 8),
-                    ],
+                    shadows: [Shadow(color: Colors.black54, blurRadius: 8)],
                   ),
                 ),
               ],
@@ -4540,19 +4614,6 @@ class _AdSlideshowCardState extends State<_AdSlideshowCard>
         ),
       ],
     );
-  }
-
-  IconData _slideIcon(String key) {
-    switch (key) {
-      case 'download':
-        return CupertinoIcons.arrow_down_circle_fill;
-      case 'sound':
-        return CupertinoIcons.speaker_3_fill;
-      case 'logo':
-        return CupertinoIcons.music_note_2;
-      default:
-        return CupertinoIcons.music_note_list;
-    }
   }
 }
 

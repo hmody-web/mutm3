@@ -2280,17 +2280,22 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
   Timer? _hideTimer;
   bool _dragging = false;
   double _dragValue = 0.0;
-  bool _showVolumeBar = false;
-  bool _showSpeedOptions = false;
   bool _isShuffle = false;
   bool _isRepeat = false;
+
+  // Pinch-to-zoom
+  double _scale = 1.0;
+  double _baseScale = 1.0;
+
+  // double-tap feedback
+  String? _doubleTapHint;
+  Timer? _doubleTapHintTimer;
 
   static const List<double> _fastSpeeds = [1.25, 1.5, 1.75, 2.0];
 
   @override
   void initState() {
     super.initState();
-    // تأكيد إخفاء System UI عند بناء الصفحة
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersive);
     _startHideTimer();
   }
@@ -2298,16 +2303,13 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
   @override
   void dispose() {
     _hideTimer?.cancel();
+    _doubleTapHintTimer?.cancel();
     super.dispose();
   }
 
   void _toggleControls() {
     setState(() {
       _showControls = !_showControls;
-      if (!_showControls) {
-        _showVolumeBar = false;
-        _showSpeedOptions = false;
-      }
     });
     if (_showControls) _startHideTimer();
   }
@@ -2315,11 +2317,7 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
   void _startHideTimer() {
     _hideTimer?.cancel();
     _hideTimer = Timer(const Duration(seconds: 4), () {
-      if (mounted) setState(() {
-        _showControls = false;
-        _showVolumeBar = false;
-        _showSpeedOptions = false;
-      });
+      if (mounted) setState(() => _showControls = false);
     });
   }
 
@@ -2336,8 +2334,182 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
     return '$m:$s';
   }
 
+  void _showSettingsSheet(BuildContext context) {
+    _hideTimer?.cancel();
+    double localVolume = widget.volume;
+    double localSpeed = widget.speed;
+    bool localRepeat = _isRepeat;
+    bool localShuffle = _isShuffle;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setSheet) => Container(
+          decoration: const BoxDecoration(
+            color: Color(0xFF1C1C1E),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 36, height: 4,
+                decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+              ),
+              const SizedBox(height: 20),
+
+              // ── مستوى الصوت ──
+              _sheetTile(
+                icon: CupertinoIcons.speaker_3_fill,
+                label: 'مستوى الصوت',
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: SliderTheme(
+                        data: const SliderThemeData(
+                          trackHeight: 3,
+                          thumbShape: RoundSliderThumbShape(enabledThumbRadius: 7),
+                          activeTrackColor: AppColors.primary,
+                          inactiveTrackColor: Colors.white24,
+                          thumbColor: Colors.white,
+                        ),
+                        child: Slider(
+                          value: localVolume.clamp(0.0, 3.0),
+                          min: 0, max: 3.0,
+                          onChanged: (v) {
+                            setSheet(() => localVolume = v);
+                            widget.onVolumeChange(v);
+                          },
+                        ),
+                      ),
+                    ),
+                    SizedBox(
+                      width: 38,
+                      child: Text('${(localVolume * 100).toInt()}%',
+                          style: const TextStyle(color: Colors.white70, fontSize: 11, fontFamily: 'Tajawal'),
+                          textAlign: TextAlign.end),
+                    ),
+                  ],
+                ),
+              ),
+
+              const Divider(color: Colors.white12, height: 1),
+
+              // ── سرعة التشغيل ──
+              _sheetTile(
+                icon: CupertinoIcons.speedometer,
+                label: 'سرعة التشغيل',
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: SliderTheme(
+                        data: const SliderThemeData(
+                          trackHeight: 3,
+                          thumbShape: RoundSliderThumbShape(enabledThumbRadius: 7),
+                          activeTrackColor: AppColors.primary,
+                          inactiveTrackColor: Colors.white24,
+                          thumbColor: Colors.white,
+                        ),
+                        child: Slider(
+                          value: localSpeed.clamp(0.5, 2.0),
+                          min: 0.5, max: 2.0,
+                          divisions: 30,
+                          onChanged: (v) {
+                            final r = (v * 20).round() / 20;
+                            setSheet(() => localSpeed = r);
+                            widget.onSpeedChange(r);
+                          },
+                        ),
+                      ),
+                    ),
+                    SizedBox(
+                      width: 38,
+                      child: Text('${localSpeed.toStringAsFixed(2)}×',
+                          style: const TextStyle(color: Colors.white70, fontSize: 11, fontFamily: 'Tajawal'),
+                          textAlign: TextAlign.end),
+                    ),
+                  ],
+                ),
+              ),
+
+              const Divider(color: Colors.white12, height: 1),
+
+              // ── تكرار الفيديو ──
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(CupertinoIcons.repeat, color: Colors.white70, size: 20),
+                title: const Text('تكرار الفيديو', style: TextStyle(color: Colors.white, fontFamily: 'Tajawal', fontSize: 15)),
+                trailing: CupertinoSwitch(
+                  value: localRepeat,
+                  activeColor: AppColors.primary,
+                  onChanged: (v) {
+                    setSheet(() => localRepeat = v);
+                    setState(() => _isRepeat = v);
+                    widget.audioPlayer.setLoopMode(v ? LoopMode.one : LoopMode.off);
+                  },
+                ),
+              ),
+
+              const Divider(color: Colors.white12, height: 1),
+
+              // ── تشغيل عشوائي ──
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(CupertinoIcons.shuffle, color: Colors.white70, size: 20),
+                title: const Text('تشغيل عشوائي', style: TextStyle(color: Colors.white, fontFamily: 'Tajawal', fontSize: 15)),
+                trailing: CupertinoSwitch(
+                  value: localShuffle,
+                  activeColor: AppColors.primary,
+                  onChanged: (v) {
+                    setSheet(() => localShuffle = v);
+                    setState(() => _isShuffle = v);
+                  },
+                ),
+              ),
+
+              const Divider(color: Colors.white12, height: 1),
+
+              // ── مشاركة الشاشة ──
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(CupertinoIcons.tv, color: Colors.white70, size: 20),
+                title: const Text('مشاركة الشاشة', style: TextStyle(color: Colors.white, fontFamily: 'Tajawal', fontSize: 15)),
+                onTap: () => Navigator.pop(ctx),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ).then((_) => _startHideTimer());
+  }
+
+  Widget _sheetTile({required IconData icon, required String label, required Widget child}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Icon(icon, color: Colors.white70, size: 18),
+            const SizedBox(width: 8),
+            Text(label, style: const TextStyle(color: Colors.white70, fontFamily: 'Tajawal', fontSize: 13)),
+          ]),
+          const SizedBox(height: 6),
+          child,
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final item = audioService.currentItem;
+    final title = item?.title ?? '';
+    final artist = item?.artist ?? 'دندن';
+
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: const SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
@@ -2351,19 +2523,74 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              // ── الفيديو يغطي الشاشة كاملة بدون فراغات ──
-              FittedBox(
-                fit: BoxFit.cover,
-                child: SizedBox(
-                  width: widget.ctrl.value.size.width > 0
-                      ? widget.ctrl.value.size.width
-                      : 1920,
-                  height: widget.ctrl.value.size.height > 0
-                      ? widget.ctrl.value.size.height
-                      : 1080,
-                  child: VideoPlayer(widget.ctrl),
+              // ── الفيديو بنسبته الأصلية مع دعم pinch zoom ──
+              GestureDetector(
+                onScaleStart: (d) => _baseScale = _scale,
+                onScaleUpdate: (d) {
+                  setState(() => _scale = (_baseScale * d.scale).clamp(1.0, 3.0));
+                },
+                child: Transform.scale(
+                  scale: _scale,
+                  child: FittedBox(
+                    fit: _scale > 1.0 ? BoxFit.cover : BoxFit.contain,
+                    child: SizedBox(
+                      width: widget.ctrl.value.size.width > 0 ? widget.ctrl.value.size.width : 1920,
+                      height: widget.ctrl.value.size.height > 0 ? widget.ctrl.value.size.height : 1080,
+                      child: VideoPlayer(widget.ctrl),
+                    ),
+                  ),
                 ),
               ),
+
+              // ── double tap: يمين = رجوع، يسار = تقديم ──
+              Row(
+                children: [
+                  // يسار → تقديم 10 ثواني
+                  Expanded(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.translucent,
+                      onDoubleTap: () {
+                        final pos = widget.audioPlayer.position;
+                        widget.onSeek(pos + const Duration(seconds: 10));
+                        setState(() => _doubleTapHint = '⏩ +10 ثواني');
+                        _doubleTapHintTimer?.cancel();
+                        _doubleTapHintTimer = Timer(const Duration(milliseconds: 800), () {
+                          if (mounted) setState(() => _doubleTapHint = null);
+                        });
+                        _resetTimer();
+                      },
+                    ),
+                  ),
+                  // يمين → رجوع 10 ثواني
+                  Expanded(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.translucent,
+                      onDoubleTap: () {
+                        final pos = widget.audioPlayer.position;
+                        final back = pos - const Duration(seconds: 10);
+                        widget.onSeek(back < Duration.zero ? Duration.zero : back);
+                        setState(() => _doubleTapHint = '⏪ -10 ثواني');
+                        _doubleTapHintTimer?.cancel();
+                        _doubleTapHintTimer = Timer(const Duration(milliseconds: 800), () {
+                          if (mounted) setState(() => _doubleTapHint = null);
+                        });
+                        _resetTimer();
+                      },
+                    ),
+                  ),
+                ],
+              ),
+
+              // ── مؤشر double tap ──
+              if (_doubleTapHint != null)
+                Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(20)),
+                    child: Text(_doubleTapHint!,
+                        style: const TextStyle(color: Colors.white, fontSize: 16, fontFamily: 'Tajawal')),
+                  ),
+                ),
 
               // ── طبقة التحكم ──
               AnimatedOpacity(
@@ -2376,282 +2603,92 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
                       gradient: LinearGradient(
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
-                        colors: [
-                          Color(0x99000000),
-                          Color(0x00000000),
-                          Color(0x00000000),
-                          Color(0x99000000),
-                        ],
+                        colors: [Color(0x99000000), Color(0x00000000), Color(0x00000000), Color(0x99000000)],
                         stops: [0.0, 0.3, 0.6, 1.0],
                       ),
                     ),
                     child: Column(
                       children: [
-                        // ── الشريط العلوي: رجوع + صوت + سرعة ──
+                        // ── الشريط العلوي ──
                         Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                           child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
                             children: [
-                              // زر الرجوع (إغلاق fullscreen)
+                              // زر رجوع
                               GestureDetector(
                                 onTap: () => Navigator.of(context).pop(),
                                 child: Container(
                                   padding: const EdgeInsets.all(7),
-                                  decoration: BoxDecoration(
-                                    color: Colors.black45,
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: const Icon(
-                                    CupertinoIcons.chevron_down,
-                                    color: Colors.white,
-                                    size: 16,
-                                  ),
+                                  decoration: BoxDecoration(color: Colors.black45, borderRadius: BorderRadius.circular(8)),
+                                  child: const Icon(CupertinoIcons.chevron_down, color: Colors.white, size: 16),
                                 ),
                               ),
-                              const SizedBox(width: 6),
-
-                              // زر مستوى الصوت
+                              const Spacer(),
+                              // العنوان + الفنان يمين
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Text(title,
+                                      style: const TextStyle(color: Colors.white, fontSize: 14, fontFamily: 'Tajawal', fontWeight: FontWeight.w700),
+                                      overflow: TextOverflow.ellipsis),
+                                  Text(artist,
+                                      style: const TextStyle(color: Colors.white70, fontSize: 12, fontFamily: 'Tajawal')),
+                                ],
+                              ),
+                              const SizedBox(width: 10),
+                              // زر الإعدادات
                               GestureDetector(
-                                onTap: () {
-                                  setState(() {
-                                    _showVolumeBar = !_showVolumeBar;
-                                    _showSpeedOptions = false;
-                                  });
-                                  _resetTimer();
-                                },
+                                onTap: () => _showSettingsSheet(context),
                                 child: Container(
                                   padding: const EdgeInsets.all(7),
-                                  decoration: BoxDecoration(
-                                    color: _showVolumeBar ? AppColors.primary : Colors.black45,
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: Icon(
-                                    widget.volume == 0
-                                        ? CupertinoIcons.speaker_slash_fill
-                                        : widget.volume < 1.0
-                                            ? CupertinoIcons.speaker_1_fill
-                                            : CupertinoIcons.speaker_3_fill,
-                                    color: Colors.white,
-                                    size: 16,
-                                  ),
-                                ),
-                              ),
-
-                              if (_showVolumeBar) ...[
-                                const SizedBox(width: 6),
-                                Expanded(
-                                  child: SliderTheme(
-                                    data: const SliderThemeData(
-                                      trackHeight: 2,
-                                      thumbShape: RoundSliderThumbShape(enabledThumbRadius: 5),
-                                      overlayShape: RoundSliderOverlayShape(overlayRadius: 10),
-                                      activeTrackColor: Colors.white,
-                                      inactiveTrackColor: Colors.white30,
-                                      thumbColor: Colors.white,
-                                      overlayColor: Colors.white24,
-                                    ),
-                                    child: Slider(
-                                      value: widget.volume.clamp(0.0, 3.0),
-                                      min: 0,
-                                      max: 3.0,
-                                      onChanged: (v) {
-                                        widget.onVolumeChange(v);
-                                        _resetTimer();
-                                      },
-                                    ),
-                                  ),
-                                ),
-                                SizedBox(
-                                  width: 34,
-                                  child: Text(
-                                    '${(widget.volume * 100).toInt()}%',
-                                    style: const TextStyle(
-                                        color: Colors.white70, fontSize: 10, fontFamily: 'Tajawal'),
-                                    textAlign: TextAlign.end,
-                                  ),
-                                ),
-                              ] else
-                                const Spacer(),
-
-                              const SizedBox(width: 6),
-
-                              // زر السرعة
-                              GestureDetector(
-                                onTap: () {
-                                  setState(() {
-                                    _showSpeedOptions = !_showSpeedOptions;
-                                    _showVolumeBar = false;
-                                  });
-                                  _resetTimer();
-                                },
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
-                                  decoration: BoxDecoration(
-                                    color: _showSpeedOptions ? AppColors.primary : Colors.black45,
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: Text(
-                                    widget.speed == 1.0 ? '1×' : '${widget.speed}×',
-                                    style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 11,
-                                        fontFamily: 'Tajawal',
-                                        fontWeight: FontWeight.w700),
-                                  ),
+                                  decoration: BoxDecoration(color: Colors.black45, borderRadius: BorderRadius.circular(8)),
+                                  child: const Icon(CupertinoIcons.settings, color: Colors.white, size: 16),
                                 ),
                               ),
                             ],
                           ),
                         ),
 
-                        // لوحة السرعة
-                        if (_showSpeedOptions)
-                          Container(
-                            margin: const EdgeInsets.symmetric(horizontal: 12),
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                            decoration: BoxDecoration(
-                              color: Colors.black87,
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                for (final s in _fastSpeeds)
-                                  GestureDetector(
-                                    onTap: () {
-                                      widget.onSpeedChange(s);
-                                      setState(() => _showSpeedOptions = false);
-                                      _resetTimer();
-                                    },
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                                      margin: const EdgeInsets.symmetric(horizontal: 2),
-                                      decoration: BoxDecoration(
-                                        color: widget.speed == s
-                                            ? AppColors.primary
-                                            : Colors.white10,
-                                        borderRadius: BorderRadius.circular(6),
-                                      ),
-                                      child: Text(
-                                        '${s}×',
-                                        style: TextStyle(
-                                          color: widget.speed == s ? Colors.white : Colors.white70,
-                                          fontSize: 11,
-                                          fontFamily: 'Tajawal',
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-
                         const Spacer(),
 
-                        // ── الوسط: ترجيع + تشغيل + تقديم ──
+                        // ── الوسط: السابق + تشغيل + التالي ──
                         Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             GestureDetector(
-                              onTap: () {
-                                final pos = widget.audioPlayer.position;
-                                final back = pos - const Duration(seconds: 10);
-                                widget.onSeek(back < Duration.zero ? Duration.zero : back);
-                                _resetTimer();
-                              },
+                              onTap: () { widget.onPrev(); _resetTimer(); },
                               child: Container(
-                                width: 40,
-                                height: 40,
+                                width: 48, height: 48,
                                 decoration: const BoxDecoration(color: Colors.black38, shape: BoxShape.circle),
-                                child: const Icon(CupertinoIcons.gobackward_10, color: Colors.white, size: 20),
+                                child: const Icon(CupertinoIcons.backward_end_fill, color: Colors.white, size: 22),
                               ),
                             ),
-                            const SizedBox(width: 12),
-
-                            GestureDetector(
-                              onTap: () {
-                                setState(() => _isShuffle = !_isShuffle);
-                                _resetTimer();
-                              },
-                              child: Container(
-                                width: 40,
-                                height: 40,
-                                decoration: BoxDecoration(
-                                  color: _isShuffle ? AppColors.primary.withOpacity(0.7) : Colors.black45,
-                                  shape: BoxShape.circle,
-                                ),
-                                child: Icon(CupertinoIcons.shuffle,
-                                    color: _isShuffle ? Colors.white : Colors.white70, size: 18),
-                              ),
-                            ),
-                            const SizedBox(width: 14),
-
+                            const SizedBox(width: 20),
                             StreamBuilder<bool>(
                               stream: widget.audioPlayer.playingStream,
                               builder: (_, snap) {
                                 final playing = snap.data ?? false;
                                 return GestureDetector(
-                                  onTap: () {
-                                    widget.onPlayPause();
-                                    _resetTimer();
-                                  },
+                                  onTap: () { widget.onPlayPause(); _resetTimer(); },
                                   child: Container(
-                                    width: 64,
-                                    height: 64,
+                                    width: 64, height: 64,
                                     decoration: BoxDecoration(
-                                      color: AppColors.primary,
-                                      shape: BoxShape.circle,
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: AppColors.primary.withOpacity(0.55),
-                                          blurRadius: 20,
-                                          spreadRadius: 2,
-                                        ),
-                                      ],
+                                      color: AppColors.primary, shape: BoxShape.circle,
+                                      boxShadow: [BoxShadow(color: AppColors.primary.withOpacity(0.55), blurRadius: 20, spreadRadius: 2)],
                                     ),
-                                    child: Icon(
-                                      playing ? CupertinoIcons.pause_fill : CupertinoIcons.play_fill,
-                                      color: Colors.white,
-                                      size: 28,
-                                    ),
+                                    child: Icon(playing ? CupertinoIcons.pause_fill : CupertinoIcons.play_fill, color: Colors.white, size: 28),
                                   ),
                                 );
                               },
                             ),
-                            const SizedBox(width: 14),
-
+                            const SizedBox(width: 20),
                             GestureDetector(
-                              onTap: () {
-                                setState(() => _isRepeat = !_isRepeat);
-                                widget.audioPlayer.setLoopMode(
-                                    _isRepeat ? LoopMode.off : LoopMode.one);
-                                _resetTimer();
-                              },
+                              onTap: () { widget.onNext(); _resetTimer(); },
                               child: Container(
-                                width: 40,
-                                height: 40,
-                                decoration: BoxDecoration(
-                                  color: _isRepeat ? AppColors.primary.withOpacity(0.7) : Colors.black45,
-                                  shape: BoxShape.circle,
-                                ),
-                                child: Icon(CupertinoIcons.repeat,
-                                    color: _isRepeat ? Colors.white : Colors.white70, size: 18),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-
-                            GestureDetector(
-                              onTap: () {
-                                final pos = widget.audioPlayer.position;
-                                widget.onSeek(pos + const Duration(seconds: 10));
-                                _resetTimer();
-                              },
-                              child: Container(
-                                width: 40,
-                                height: 40,
+                                width: 48, height: 48,
                                 decoration: const BoxDecoration(color: Colors.black38, shape: BoxShape.circle),
-                                child: const Icon(CupertinoIcons.goforward_10, color: Colors.white, size: 20),
+                                child: const Icon(CupertinoIcons.forward_end_fill, color: Colors.white, size: 22),
                               ),
                             ),
                           ],
@@ -2659,9 +2696,9 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
 
                         const Spacer(),
 
-                        // ── شريط التقدم السفلي ──
+                        // ── شريط التقدم مرفوع مع margins ──
                         Padding(
-                          padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+                          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
                           child: StreamBuilder<Duration?>(
                             stream: widget.audioPlayer.durationStream,
                             builder: (_, durSnap) {
@@ -2671,8 +2708,7 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
                                   final dur = durSnap.data ?? Duration.zero;
                                   final pos = posSnap.data ?? Duration.zero;
                                   final progress = dur.inMilliseconds > 0
-                                      ? pos.inMilliseconds / dur.inMilliseconds
-                                      : 0.0;
+                                      ? pos.inMilliseconds / dur.inMilliseconds : 0.0;
                                   final display = _dragging ? _dragValue : progress;
                                   return Column(
                                     children: [
@@ -2689,17 +2725,13 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
                                         child: Slider(
                                           value: display.clamp(0.0, 1.0),
                                           onChangeStart: (v) {
-                                            setState(() {
-                                              _dragging = true;
-                                              _dragValue = v;
-                                            });
+                                            setState(() { _dragging = true; _dragValue = v; });
                                             _hideTimer?.cancel();
                                           },
                                           onChanged: (v) => setState(() => _dragValue = v),
                                           onChangeEnd: (v) {
                                             setState(() => _dragging = false);
-                                            final ms = (v * dur.inMilliseconds).toInt();
-                                            widget.onSeek(Duration(milliseconds: ms));
+                                            widget.onSeek(Duration(milliseconds: (v * dur.inMilliseconds).toInt()));
                                             _startHideTimer();
                                           },
                                         ),
@@ -2710,15 +2742,10 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
                                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                           children: [
                                             Text(
-                                              _fmt(_dragging
-                                                  ? Duration(milliseconds: (_dragValue * dur.inMilliseconds).toInt())
-                                                  : pos),
+                                              _fmt(_dragging ? Duration(milliseconds: (_dragValue * dur.inMilliseconds).toInt()) : pos),
                                               style: const TextStyle(color: Colors.white70, fontSize: 11),
                                             ),
-                                            Text(
-                                              _fmt(dur),
-                                              style: const TextStyle(color: Colors.white70, fontSize: 11),
-                                            ),
+                                            Text(_fmt(dur), style: const TextStyle(color: Colors.white70, fontSize: 11)),
                                           ],
                                         ),
                                       ),

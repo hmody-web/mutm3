@@ -401,6 +401,8 @@ class AudioPlayerService {
   StreamSubscription? _indexSub;
   StreamSubscription? _playingSub;
   bool _handlingIndexChange = false;
+  // true = أوقف المستخدم التشغيل يدوياً → لا نُعيد التشغيل تلقائياً بعد الانقطاع
+  bool _userPaused = false;
 
   Future<void> init() async {
     final session = await AudioSession.instance;
@@ -436,10 +438,14 @@ class AudioPlayerService {
 
     session.interruptionEventStream.listen((event) {
       if (event.begin) {
-        player.pause();
+        // انقطاع خارجي (مكالمة، تطبيق آخر...) → إيقاف مؤقت تلقائي
+        // لكن لا نُغيّر _userPaused حتى لا يُعيد التشغيل بعد الانقطاع إذا كان المستخدم أوقفه
+        if (player.playing) player.pause();
       } else {
-        if (event.type == AudioInterruptionType.pause ||
-            event.type == AudioInterruptionType.unknown) {
+        // انتهى الانقطاع → أعد التشغيل فقط إذا لم يوقفه المستخدم يدوياً
+        if (!_userPaused &&
+            (event.type == AudioInterruptionType.pause ||
+                event.type == AudioInterruptionType.unknown)) {
           player.play();
         }
       }
@@ -449,8 +455,12 @@ class AudioPlayerService {
     // عندما يضغط المستخدم على play في الإشعار بعد إخفاء المشغل بزر X،
     // نُعيد isVisible=true حتى يظهر المشغل المصغر مجدداً في التطبيق.
     _playingSub = player.playingStream.listen((playing) {
-      if (playing && !isVisible.value && currentIndex.value >= 0) {
-        isVisible.value = true;
+      if (playing) {
+        // المستخدم استكمل التشغيل من الإشعار أو شاشة القفل → إلغاء علامة الإيقاف اليدوي
+        _userPaused = false;
+        if (!isVisible.value && currentIndex.value >= 0) {
+          isVisible.value = true;
+        }
       }
     });
   }
@@ -458,6 +468,7 @@ class AudioPlayerService {
   void _autoNext() {
     final idx = currentIndex.value;
     final list = playlist.value;
+    _userPaused = false; // انتقال تلقائي → أعد التشغيل دائماً
     if (player.loopMode == LoopMode.one) {
       player.seek(Duration.zero);
       player.play();
@@ -608,17 +619,32 @@ class AudioPlayerService {
   }
 
   Future<void> playList(List<LocalMediaItem> items, int startIndex) async {
+    _userPaused = false; // تشغيل جديد → إلغاء حالة الإيقاف اليدوي
     final idx = startIndex.clamp(0, items.length - 1);
     await _playSingleFile(List.unmodifiable(items), idx);
   }
 
   Future<void> playAtIndex(int index) async {
+    _userPaused = false;
     final list = playlist.value;
     if (list.isEmpty) return;
     await _playSingleFile(list, index);
   }
 
+  /// إيقاف مؤقت بواسطة المستخدم — يحفظ النية حتى لا تُعيد الجلسة التشغيل تلقائياً
+  Future<void> pauseByUser() async {
+    _userPaused = true;
+    await player.pause();
+  }
+
+  /// تشغيل بواسطة المستخدم — يمسح علامة الإيقاف اليدوي
+  Future<void> playByUser() async {
+    _userPaused = false;
+    await player.play();
+  }
+
   Future<void> playNext() async {
+    _userPaused = false;
     final idx = currentIndex.value;
     final list = playlist.value;
     if (idx < list.length - 1) {
@@ -627,6 +653,7 @@ class AudioPlayerService {
   }
 
   Future<void> playPrevious() async {
+    _userPaused = false;
     final pos = player.position;
     if (pos.inSeconds > 3) {
       await player.seek(Duration.zero);
@@ -1254,7 +1281,7 @@ class _MiniPlayerState extends State<_MiniPlayer>
             boxShadow: [
               // Red neon glow — outer
               BoxShadow(
-                color: AppColors.primary.withOpacity(context.isDark ? 0.10 : 0.6),
+                color: AppColors.primary.withOpacity(context.isDark ? 0.1 : 0.07),
                 blurRadius: 28,
                 spreadRadius: -2,
                 offset: const Offset(0, 4),
@@ -1354,8 +1381,8 @@ class _MiniPlayerState extends State<_MiniPlayer>
                             size: 22,
                             isDark: context.isDark,
                             onTap: () => playing
-                                ? audioService.player.pause()
-                                : audioService.player.play(),
+                                ? audioService.pauseByUser()
+                                : audioService.playByUser(),
                           );
                         },
                       ),
@@ -1368,7 +1395,7 @@ class _MiniPlayerState extends State<_MiniPlayer>
                         icon: CupertinoIcons.xmark,
                         isDark: context.isDark,
                         onTap: () {
-                          audioService.player.pause();
+                          audioService.pauseByUser();
                           audioService.isVisible.value = false;
                         },
                       ),
@@ -2914,9 +2941,9 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                               },
                               onPlayPause: () {
                                 if (audioService.player.playing) {
-                                  audioService.player.pause();
+                                  audioService.pauseByUser();
                                 } else {
-                                  audioService.player.play();
+                                  audioService.playByUser();
                                 }
                               },
                               onNext: () => audioService.playNext(),
@@ -2990,6 +3017,31 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                     textDirection: TextDirection.rtl,
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
+                      // ── User Logo (يمين التايتل في RTL) ──
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: Image.asset(
+                          'assets/images/logo.png',
+                          width: 46,
+                          height: 46,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
+                            width: 46,
+                            height: 46,
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: [AppColors.primary, AppColors.primaryDark],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: const Icon(CupertinoIcons.music_note_2,
+                                color: Colors.white, size: 22),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 14),
                       // ── Title + دندن ──
                       Expanded(
                         child: Column(
@@ -3013,31 +3065,6 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                                   color: subColor, fontSize: 14, fontFamily: 'Tajawal'),
                             ),
                           ],
-                        ),
-                      ),
-                      const SizedBox(width: 14),
-                      // ── User Logo ──
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: Image.asset(
-                          'assets/images/logo.png',
-                          width: 46,
-                          height: 46,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => Container(
-                            width: 46,
-                            height: 46,
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                colors: [AppColors.primary, AppColors.primaryDark],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                              ),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: const Icon(CupertinoIcons.music_note_2,
-                                color: Colors.white, size: 22),
-                          ),
                         ),
                       ),
                     ],
@@ -3086,8 +3113,8 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                       final playing = snap.data ?? false;
                       return GestureDetector(
                         onTap: () => playing
-                            ? audioService.player.pause()
-                            : audioService.player.play(),
+                            ? audioService.pauseByUser()
+                            : audioService.playByUser(),
                         child: Container(
                           width: 72, height: 72,
                           decoration: BoxDecoration(
@@ -4031,9 +4058,9 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
                     behavior: HitTestBehavior.opaque,
                     onTap: () {
                       if (playing) {
-                        audioService.player.pause();
+                        audioService.pauseByUser();
                       } else {
-                        audioService.player.play();
+                        audioService.playByUser();
                       }
                     },
                     child: Container(
@@ -4132,6 +4159,249 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
 }
 
 // ═══════════════════════════════════════════════════════════
+//  AD SLIDESHOW CARD — كارت إعلاني بنسبة 16:9 مع سلايدشو
+// ═══════════════════════════════════════════════════════════
+class _AdSlideshowCard extends StatefulWidget {
+  const _AdSlideshowCard();
+
+  @override
+  State<_AdSlideshowCard> createState() => _AdSlideshowCardState();
+}
+
+class _AdSlideshowCardState extends State<_AdSlideshowCard>
+    with SingleTickerProviderStateMixin {
+  final PageController _pageCtrl = PageController();
+  int _currentPage = 0;
+  Timer? _autoTimer;
+
+  // بيانات الإعلانات — ضع مسار صورتك في 'image'
+  static const List<Map<String, String>> _slides = [
+    {
+      'image': 'assets/images/ad1.jpg',
+      'color': '0xFF1A1A2E',
+      'color2': '0xFF16213E',
+      'title': 'دندن — رفيقك الموسيقي',
+      'desc': 'تجربة استماع لا مثيل لها',
+      'icon': 'music',
+    },
+    {
+      'image': 'assets/images/ad2.jpg',
+      'color': '0xFF1B4332',
+      'color2': '0xFF2D6A4F',
+      'title': 'سكربتاتي - Scrptaty',
+      'desc': 'تدور على مواقع وتطبيقات مجانية ! انضم الينا',
+      'icon': 'download',
+    },
+    {
+      'image': 'assets/images/ad3.jpg',
+      'color': '0xFF4A1942',
+      'color2': '0xFF6B2D5E',
+      'title': 'لعبة Squid Jump  ',
+      'desc': '   تخطي العقبات وحطم الارقام القياسية واتحدى اصدقائك',
+      'icon': 'sound',
+    },
+    {
+      'image': 'assets/images/ad4.jpg',
+      'color': '0xFF7B2D00',
+      'color2': '0xFFE8272A',
+      'title': 'اعلن هنا داخل التطبيق   ',
+      'desc': 'تجربة مستخدمين متميزة مع وصول لآلاف المستخدمين',
+      'icon': 'logo',
+    },
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _startAutoSlide();
+  }
+
+  void _startAutoSlide() {
+    _autoTimer?.cancel();
+    _autoTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (!mounted) return;
+      final next = (_currentPage + 1) % _slides.length;
+      _pageCtrl.animateToPage(
+        next,
+        duration: const Duration(milliseconds: 600),
+        curve: Curves.easeInOutCubic,
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    _autoTimer?.cancel();
+    _pageCtrl.dispose();
+    super.dispose();
+  }
+
+  Color _hexColor(String hex) {
+    return Color(int.parse(hex));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AspectRatio(
+      aspectRatio: 16 / 9,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: Stack(
+          children: [
+            // ── الصفحات ──
+            PageView.builder(
+              controller: _pageCtrl,
+              itemCount: _slides.length,
+              onPageChanged: (i) {
+                setState(() => _currentPage = i);
+                _startAutoSlide();
+              },
+              itemBuilder: (context, index) {
+                final slide = _slides[index];
+                return _buildSlide(slide);
+              },
+            ),
+
+            // ── نقاط المؤشر ──
+            Positioned(
+              bottom: 14,
+              left: 0,
+              right: 0,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(_slides.length, (i) {
+                  final active = i == _currentPage;
+                  return AnimatedContainer(
+                    duration: const Duration(milliseconds: 300),
+                    margin: const EdgeInsets.symmetric(horizontal: 3),
+                    width: active ? 20 : 6,
+                    height: 6,
+                    decoration: BoxDecoration(
+                      color: active ? Colors.white : Colors.white38,
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                  );
+                }),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSlide(Map<String, String> slide) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // ── الصورة ──
+        Image.asset(
+          slide['image']!,
+          fit: BoxFit.cover,
+          width: double.infinity,
+          height: double.infinity,
+          errorBuilder: (_, __, ___) => Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  _hexColor(slide['color']!),
+                  _hexColor(slide['color2']!),
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+            ),
+            child: Center(
+              child: Opacity(
+                opacity: 0.3,
+                child: Icon(
+                  _slideIcon(slide['icon']!),
+                  color: Colors.white,
+                  size: 90,
+                ),
+              ),
+            ),
+          ),
+        ),
+
+        // ── الظل ──
+        Positioned.fill(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                stops: const [0.4, 1.0],
+                colors: [
+                  const Color.fromARGB(22, 0, 0, 0),
+                  Colors.black.withOpacity(1),
+                ],
+              ),
+            ),
+          ),
+        ),
+
+        // ── النصوص تبدأ من اليمين ──
+        Positioned(
+          bottom: 32,
+          right: 18,
+          left: 18,
+          child: Directionality(
+            textDirection: TextDirection.rtl,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  slide['title']!,
+                  textAlign: TextAlign.left,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 17,
+                    fontFamily: 'Tajawal',
+                    fontWeight: FontWeight.w800,
+                    shadows: [
+                      Shadow(color: Colors.black87, blurRadius: 10),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  slide['desc']!,
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.88),
+                    fontSize: 12,
+                    fontFamily: 'Tajawal',
+                    fontWeight: FontWeight.w400,
+                    shadows: const [
+                      Shadow(color: Colors.black54, blurRadius: 8),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  IconData _slideIcon(String key) {
+    switch (key) {
+      case 'download':
+        return CupertinoIcons.arrow_down_circle_fill;
+      case 'sound':
+        return CupertinoIcons.speaker_3_fill;
+      case 'logo':
+        return CupertinoIcons.music_note_2;
+      default:
+        return CupertinoIcons.music_note_list;
+    }
+  }
+}
+
+
+// ═══════════════════════════════════════════════════════════
 //  PAGE 2 — تصفح (Browse)
 // ═══════════════════════════════════════════════════════════
 class BrowsePage extends StatelessWidget {
@@ -4163,6 +4433,14 @@ class BrowsePage extends StatelessWidget {
               ),
             ),
           ),
+          // ── سلايدشو إعلاني ──
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: const _AdSlideshowCard(),
+            ),
+          ),
+          const SliverToBoxAdapter(child: SizedBox(height: 16)),
           // ── يوتيوب ──
           SliverToBoxAdapter(
             child: Padding(

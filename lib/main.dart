@@ -1323,7 +1323,7 @@ class _MiniPlayerState extends State<_MiniPlayer>
                       offset: const Offset(0, 1),
                     ),
                     BoxShadow(
-                      color: AppColors.primary.withOpacity(isDark ? 0.12 : 0.08),
+                      color: AppColors.primary.withOpacity(isDark ? 0.02 : 0.08),
                       blurRadius: 16,
                       spreadRadius: -2,
                       offset: const Offset(0, 2),
@@ -1931,17 +1931,17 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
                               _resetTimer();
                             },
                             child: Container(
-                              width: 64,
-                              height: 64,
+                              width: 54,
+                              height: 54,
                               decoration: BoxDecoration(
-                                color: Colors.black.withOpacity(0.45),
+                                color: Colors.black.withOpacity(0.25),
                                 shape: BoxShape.circle,
                               ),
-                              child: const Icon(CupertinoIcons.backward_end_fill,
-                                  color: Colors.white, size: 26),
+                              child: const Icon(CupertinoIcons.forward_end_fill,
+                                  color: Colors.white, size: 22),
                             ),
                           ),
-                          const SizedBox(width: 28),
+                          const SizedBox(width: 24),
 
                           // تشغيل / إيقاف
                           StreamBuilder<bool>(
@@ -1954,10 +1954,10 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
                                   _resetTimer();
                                 },
                                 child: Container(
-                                  width: 80,
-                                  height: 80,
+                                  width: 68,
+                                  height: 68,
                                   decoration: BoxDecoration(
-                                    color: Colors.black.withOpacity(0.5),
+                                    color: Colors.black.withOpacity(0.3),
                                     shape: BoxShape.circle,
                                   ),
                                   child: Icon(
@@ -1965,13 +1965,13 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
                                         ? CupertinoIcons.pause_fill
                                         : CupertinoIcons.play_fill,
                                     color: Colors.white,
-                                    size: 36,
+                                    size: 30,
                                   ),
                                 ),
                               );
                             },
                           ),
-                          const SizedBox(width: 28),
+                          const SizedBox(width: 24),
 
                           // زر التالي
                           GestureDetector(
@@ -1980,14 +1980,14 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
                               _resetTimer();
                             },
                             child: Container(
-                              width: 64,
-                              height: 64,
+                              width: 54,
+                              height: 54,
                               decoration: BoxDecoration(
-                                color: Colors.black.withOpacity(0.45),
+                                color: Colors.black.withOpacity(0.25),
                                 shape: BoxShape.circle,
                               ),
-                              child: const Icon(CupertinoIcons.forward_end_fill,
-                                  color: Colors.white, size: 26),
+                              child: const Icon(CupertinoIcons.backward_end_fill,
+                                  color: Colors.white, size: 22),
                             ),
                           ),
                         ],
@@ -2692,7 +2692,7 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
                                 color: Colors.black.withOpacity(0.45),
                                 shape: BoxShape.circle,
                               ),
-                              child: const Icon(CupertinoIcons.backward_end_fill,
+                              child: const Icon(CupertinoIcons.forward_end_fill,
                                   color: Colors.white, size: 26),
                             ),
                           ),
@@ -2726,7 +2726,7 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
                                 color: Colors.black.withOpacity(0.45),
                                 shape: BoxShape.circle,
                               ),
-                              child: const Icon(CupertinoIcons.forward_end_fill,
+                              child: const Icon(CupertinoIcons.backward_end_fill,
                                   color: Colors.white, size: 26),
                             ),
                           ),
@@ -3072,9 +3072,7 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                         ),
                       ],
                     ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: AspectRatio(
+                    child: AspectRatio(
                         aspectRatio: (_videoInitialized && _videoCtrl != null &&
                                 _videoCtrl!.value.aspectRatio > 0)
                             ? _videoCtrl!.value.aspectRatio
@@ -3115,7 +3113,6 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                                 ),
                         ),
                       ),
-                    ),
                   );
                 }
 
@@ -4267,7 +4264,7 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
           // ── زر الحذف خلف الكرت (جهة اليسار) ──
           Positioned.fill(
             child: Align(
-              alignment: Alignment.centerLeft,
+              alignment: Alignment.centerRight,
               child: GestureDetector(
                 onTap: () {
                   _closeSwipe();
@@ -4926,20 +4923,21 @@ class _PatternPainter extends CustomPainter {
 // ═══════════════════════════════════════════════════════════
 //  BACKGROUND WITH REPEATED PATTERN - صورة متكررة تملأ الصفحة
 // ═══════════════════════════════════════════════════════════
-
 /// Widget يرسم خلفية متكررة من صورة واحدة مع إمكانية التدوير والشفافية
 class RepeatingPatternBackground extends StatelessWidget {
   final double opacity;
   final double rotationDegrees;
   final double patternWidth;
   final double patternHeight;
+  final bool isDark; // <--- أضف هذه الخاصية الجديدة
 
   const RepeatingPatternBackground({
     super.key,
     required this.opacity,
     required this.rotationDegrees,
-    this.patternWidth = 100,    // عرض كل تكرار
-    this.patternHeight = 100,   // ارتفاع كل تكرار
+    this.patternWidth = 100,
+    this.patternHeight = 100,
+    required this.isDark, // <--- اجعلها مطلوبة
   });
 
   @override
@@ -4958,6 +4956,7 @@ class RepeatingPatternBackground extends StatelessWidget {
                   rotationRad: rotationDegrees * -30.4 / 180,
                   patternWidth: patternWidth,
                   patternHeight: patternHeight,
+                  isDark: isDark, // <--- تمرير القيمة إلى الـ Painter
                 ),
               );
             }
@@ -4972,6 +4971,7 @@ class RepeatingPatternBackground extends StatelessWidget {
   Future<ui.Image?> _loadImage() async {
     try {
       final completer = Completer<ui.Image>();
+      // استخدم AssetImage مباشرة
       final assetImage = AssetImage('assets/images/bg.png');
       final stream = assetImage.resolve(ImageConfiguration());
 
@@ -4998,6 +4998,7 @@ class _RepeatingPatternPainter extends CustomPainter {
   final double rotationRad;
   final double patternWidth;
   final double patternHeight;
+  final bool isDark;
 
   _RepeatingPatternPainter({
     required this.image,
@@ -5005,34 +5006,42 @@ class _RepeatingPatternPainter extends CustomPainter {
     required this.rotationRad,
     required this.patternWidth,
     required this.patternHeight,
+    required this.isDark,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.white.withOpacity(opacity)
-      ..filterQuality = FilterQuality.medium;
-
     canvas.save();
 
-    // نقل نقطة الرسم إلى مركز الصفحة
-    canvas.translate(size.width / 2, size.height / 2);
-    // تدوير الخلفية بأكملها
+    // نقل نقطة الرسم إلى مركز الصفحة للدوران
+    canvas.translate(size.width / 20, size.height / 4);
     canvas.rotate(rotationRad);
-    // إعادة النقطة إلى الزاوية العلوية اليسرى
-    canvas.translate(-size.width / 1, -size.height / 1);
+    canvas.translate(-size.width / 1, -size.height / 2);
 
-    // حساب عدد التكرارات المطلوبة لتغطية الصفحة بالكامل
-    final cols = (size.width / patternWidth).ceil() + 5;
-    final rows = (size.height / patternHeight).ceil() + 5;
+    // حساب عدد التكرارات
+    final cols = (size.width / patternWidth).ceil() + 9;
+    final rows = (size.height / patternHeight).ceil() + 9;
+
+    // ✅ إعداد اللون حسب الثيم
+    final paint = Paint()
+      ..filterQuality = FilterQuality.medium;
+    
+    if (isDark) {
+      // في الوضع الداكن: نرسم باللون الأبيض مع شفافية عالية
+      paint.color = Colors.white.withOpacity(0.1);  // شفافية واضحة
+    } else {
+      // في الوضع الفاتح: نرسم باللون الأبيض مع شفافية خفيفة جداً
+      paint.color = Colors.white.withOpacity(0.04);
+    }
 
     // رسم الصور بشكل متكرر
     for (int row = 0; row <= rows; row++) {
       for (int col = 0; col <= cols; col++) {
         final dx = col * patternWidth;
         final dy = row * patternHeight;
-
         final rect = Rect.fromLTWH(dx, dy, patternWidth, patternHeight);
+        
+        // نرسم الصورة نفسها ولكن بلون موحد (أبيض)
         canvas.drawImageRect(
           image,
           Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
@@ -5051,7 +5060,8 @@ class _RepeatingPatternPainter extends CustomPainter {
         oldDelegate.opacity != opacity ||
         oldDelegate.rotationRad != rotationRad ||
         oldDelegate.patternWidth != patternWidth ||
-        oldDelegate.patternHeight != patternHeight;
+        oldDelegate.patternHeight != patternHeight ||
+        oldDelegate.isDark != isDark;
   }
 }
 // ═══════════════════════════════════════════════════════════
@@ -5069,12 +5079,12 @@ class BrowsePage extends StatelessWidget {
       backgroundColor: bgColor,
       body: Stack(
         children: [
-          // ── الخلفية المتكررة (شفافية 0.1، دوران 300 درجة) ──
-          const RepeatingPatternBackground(
-            opacity: 0.03,
+          RepeatingPatternBackground(
+            opacity: isDark ? 0.03 : 0.03, // <--- في الداكن نزيد الشفافية قليلاً لنظهر الفلتر بشكل أفضل
             rotationDegrees: 300,
-            patternWidth: 120,   // عرض كل تكرار
-            patternHeight: 120,  // ارتفاع كل تكرار
+            patternWidth: 120,
+            patternHeight: 120,
+            isDark: isDark, // <--- تمرير قيمة الثيم
           ),
           
           // ── المحتوى الأصلي (فوق الخلفية) ──
@@ -5089,9 +5099,9 @@ class BrowsePage extends StatelessWidget {
                     bottom: 20,
                   ),
                   child: Text(
-                    'تصفح',
+                    '',
                     style: TextStyle(
-                      fontSize: 28,
+                      fontSize: 0,
                       fontFamily: 'Tajawal',
                       fontWeight: FontWeight.w700,
                       color: context.appText,

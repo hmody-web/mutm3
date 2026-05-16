@@ -435,7 +435,6 @@ class AudioPlayerService {
   bool _handlingIndexChange = false;
   bool _userPaused = false;
   bool _isSwitching = false;
-  // آخر طلب وصل أثناء تبديل جارٍ — يُنفَّذ فور انتهاء التبديل الحالي
   int _pendingIndex = -1;
   List<LocalMediaItem>? _pendingList;
 
@@ -454,7 +453,7 @@ class AudioPlayerService {
     // عند الضغط على التالي/السابق في الإشعار أو شاشة القفل أو Bluetooth
     // يُغيّر just_audio_background currentIndex في ConcatenatingAudioSource
     _indexSub = player.currentIndexStream.distinct().listen((rawIdx) {
-      if (rawIdx == null || _handlingIndexChange) return;
+      if (rawIdx == null || _handlingIndexChange || _isSwitching) return;
       final list = playlist.value;
       final cur = currentIndex.value;
       if (list.isEmpty || cur < 0) return;
@@ -464,10 +463,10 @@ class AudioPlayerService {
       final currentRawIdx = hasPrev ? 1 : 0;
       if (rawIdx < currentRawIdx) {
         // الضغط على السابق
-        _playSingleFile(list, cur - 1);
+        Future.microtask(() => _playSingleFile(list, cur - 1));
       } else if (rawIdx > currentRawIdx) {
         // الضغط على التالي
-        _playSingleFile(list, cur + 1);
+        Future.microtask(() => _playSingleFile(list, cur + 1));
       }
     });
 
@@ -541,11 +540,9 @@ class AudioPlayerService {
     );
   }
 
-  /// ─── الدالة المحورية ───
   Future<void> _playSingleFile(List<LocalMediaItem> list, int index) async {
     if (list.isEmpty || index < 0 || index >= list.length) return;
 
-    // إذا يوجد تبديل جارٍ، احفظ الطلب الجديد وارجع — سيُنفَّذ تلقائياً
     if (_isSwitching) {
       _pendingIndex = index;
       _pendingList = list;
@@ -556,14 +553,16 @@ class AudioPlayerService {
     _pendingIndex = -1;
     _pendingList = null;
 
-    // حدّث القيم المرئية فوراً
     playlist.value = list;
     currentIndex.value = index;
     isVisible.value = true;
     _handlingIndexChange = true;
 
+    int? pendingAfter;
+    List<LocalMediaItem>? pendingListAfter;
+
     try {
-      if (player.playing) await player.pause();
+      try { if (player.playing) await player.pause(); } catch (_) {}
 
       final item = list[index];
       final hasPrev = index > 0;
@@ -609,10 +608,19 @@ class AudioPlayerService {
       );
 
       _handlingIndexChange = false;
-      _isSwitching = false; // أفرج عن القفل قبل play()
-      await player.play();
+      _isSwitching = false;
 
-      // توليد الصور في الخلفية
+      // احفظ الـ pending قبل play()
+      if (_pendingIndex >= 0) {
+        pendingAfter = _pendingIndex;
+        pendingListAfter = _pendingList ?? list;
+        _pendingIndex = -1;
+        _pendingList = null;
+      }
+
+      try { await player.play(); } catch (_) {}
+
+      // تحميل thumbnails في الخلفية
       Future(() async {
         try {
           if (currentIndex.value != index) return;
@@ -622,26 +630,22 @@ class AudioPlayerService {
         } catch (_) {}
       });
 
-      // تنفيذ أي طلب وصل أثناء التبديل
-      if (_pendingIndex >= 0) {
-        final pi = _pendingIndex;
-        final pl = _pendingList ?? list;
-        _pendingIndex = -1;
-        _pendingList = null;
-        await _playSingleFile(pl, pi);
-      }
     } catch (e) {
       _handlingIndexChange = false;
       _isSwitching = false;
-      debugPrint('AudioPlayerService._playSingleFile error: $e');
-      // تنفيذ الطلب المعلق حتى بعد الخطأ
+      debugPrint('_playSingleFile error: $e');
+
       if (_pendingIndex >= 0) {
-        final pi = _pendingIndex;
-        final pl = _pendingList ?? list;
+        pendingAfter = _pendingIndex;
+        pendingListAfter = _pendingList ?? list;
         _pendingIndex = -1;
         _pendingList = null;
-        Future.microtask(() => _playSingleFile(pl, pi));
       }
+    }
+
+    // تنفيذ الطلب المعلق بعد انتهاء كل شيء
+    if (pendingAfter != null) {
+      Future.microtask(() => _playSingleFile(pendingListAfter ?? list, pendingAfter!));
     }
   }
 
@@ -1654,12 +1658,7 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
   @override
   void dispose() {
     _hideTimer?.cancel();
-    // دائماً أعد Portrait + System UI عند تدمير الـ widget
-    SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-    SystemChrome.setEnabledSystemUIMode(
-      SystemUiMode.manual,
-      overlays: SystemUiOverlay.values,
-    );
+    // لا نُغيّر الاتجاه هنا — فقط عند الخروج الفعلي من FullScreen
     super.dispose();
   }
 
@@ -2954,16 +2953,11 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
   double _volume = 1.0;
   double _speed = 1.0;
   bool _isSwitching = false;
-
-  // ── مؤقت لمنع الـ seekTo المتكرر (debounce) ──
-  Timer? _seekDebounce;
-  // منع استدعاء seekTo المتزامن على VideoPlayerController
-  bool _isSeeking = false;
+  bool _isSeeking = false;          // يمنع seekTo المتزامنة
+  int _generation = 0;              // يُبطل أي Future قديمة عند تغيير الأغنية
 
   StreamSubscription? _positionSub;
   StreamSubscription? _playingSub;
-  // رقم جيل الـ controller الحالي — يمنع subscriptions قديمة من التأثير
-  int _ctrlGeneration = 0;
 
   @override
   void initState() {
@@ -2978,28 +2972,35 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
   void dispose() {
     audioService.currentIndex.removeListener(_onTrackChange);
     _positionSub?.cancel();
+    _positionSub = null;
     _playingSub?.cancel();
-    _seekDebounce?.cancel();
-    _videoCtrlNotifier.dispose();
+    _playingSub = null;
+    _generation++;
     final ctrl = _videoCtrl;
     _videoCtrl = null;
+    // امسح القيمة أولاً قبل dispose حتى لا يصل أي listener إلى controller محذوف
+    _videoCtrlNotifier.value = null;
+    // dispose في الخلفية لا يحجب الـ UI
     Future.microtask(() async {
       try { await ctrl?.pause(); } catch (_) {}
       try { ctrl?.dispose(); } catch (_) {}
     });
+    _videoCtrlNotifier.dispose();
     super.dispose();
   }
 
   void _onTrackChange() {
+    _generation++;                  // بطّل كل Futures قديمة
     _positionSub?.cancel();
+    _positionSub = null;
     _playingSub?.cancel();
-    _seekDebounce?.cancel();
+    _playingSub = null;
     _isSeeking = false;
-    _ctrlGeneration++; // بطّل كل subscriptions قديمة
 
-    // تحرير controller القديم بأمان
+    // تحرير controller القديم في الخلفية
     final oldCtrl = _videoCtrl;
     _videoCtrl = null;
+    // إخفاء الـ notifier أولاً قبل dispose القديم
     _videoCtrlNotifier.value = null;
     Future.microtask(() async {
       try { await oldCtrl?.pause(); } catch (_) {}
@@ -3007,28 +3008,30 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
     });
 
     if (!mounted) return;
-    setState(() {
-      _isSwitching = true;
-      _thumbPath = null;
-      _videoInitialized = false;
-    });
 
-    final item = audioService.currentItem;
-    if (item == null) {
-      if (mounted) setState(() => _isSwitching = false);
-      return;
-    }
-
-    // مهلة أمان مطلقة — لا يمكن أن يبقى _isSwitching=true أكثر من 10 ثوانٍ
-    final safeGen = _ctrlGeneration;
-    Future.delayed(const Duration(seconds: 10), () {
-      if (mounted && _isSwitching && _ctrlGeneration == safeGen) {
-        setState(() => _isSwitching = false);
-      }
-    });
-
+    // تأجيل setState إلى ما بعد الـ frame الحالي لتجنب إعادة البناء أثناء callback
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      setState(() {
+        _isSwitching = true;
+        _thumbPath = null;
+        _videoInitialized = false;
+      });
+
+      final item = audioService.currentItem;
+      if (item == null) {
+        if (mounted) setState(() => _isSwitching = false);
+        return;
+      }
+
+      // مهلة أمان: إذا لم ينتهِ التحميل خلال 8 ثوانٍ أُوقف _isSwitching
+      final gen = _generation;
+      Future.delayed(const Duration(seconds: 8), () {
+        if (mounted && _isSwitching && _generation == gen) {
+          setState(() => _isSwitching = false);
+        }
+      });
+
       if (!item.isVideo) {
         _loadThumb();
       } else {
@@ -3041,15 +3044,13 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
     final item = audioService.currentItem;
     if (item == null || !item.isVideo) return;
 
-    final myGen = _ctrlGeneration;
-    final myPath = item.path;
-
-    final ctrl = VideoPlayerController.file(File(myPath));
+    final gen = _generation;
+    final ctrl = VideoPlayerController.file(File(item.path));
     try {
       await ctrl.initialize();
 
-      // إذا تغيّر الجيل (المستخدم انتقل لأغنية أخرى) — تجاهل هذا الـ controller
-      if (!mounted || _ctrlGeneration != myGen) {
+      // تُجاهَل هذه النتيجة إذا تغيّرت الأغنية أثناء التهيئة
+      if (!mounted || _generation != gen) {
         try { ctrl.dispose(); } catch (_) {}
         return;
       }
@@ -3058,7 +3059,7 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
       await ctrl.seekTo(audioService.player.position);
       if (audioService.player.playing) await ctrl.play();
 
-      if (!mounted || _ctrlGeneration != myGen) {
+      if (!mounted || _generation != gen) {
         try { ctrl.dispose(); } catch (_) {}
         return;
       }
@@ -3070,44 +3071,31 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
       });
       _videoCtrlNotifier.value = ctrl;
 
-      // ── مزامنة الموقف مع debounce لمنع deadlock ──
-      // positionStream يُطلق كل ~200ms — نستخدم debounce لمنع seekTo المتكررة
+      // مزامنة الموقف — مع حماية كاملة من الـ deadlock
       _positionSub = audioService.player.positionStream.listen((pos) {
-        if (_ctrlGeneration != myGen) return;
-        if (_videoCtrl == null || !_videoInitialized) return;
-        // debounce: لا ننفّذ seekTo إلا إذا توقف الstream لـ 300ms
-        _seekDebounce?.cancel();
-        _seekDebounce = Timer(const Duration(milliseconds: 300), () async {
-          if (_ctrlGeneration != myGen) return;
-          if (_videoCtrl == null || !_videoInitialized || _isSeeking) return;
-          try {
-            final diff = (ctrl.value.position - audioService.player.position).abs();
-            if (diff.inMilliseconds > 600) {
-              _isSeeking = true;
-              await ctrl.seekTo(audioService.player.position);
-              _isSeeking = false;
-            }
-          } catch (_) {
+        if (_generation != gen || _videoCtrl == null || !_videoInitialized) return;
+        if (_isSeeking) return;
+        final diff = (ctrl.value.position - pos).abs();
+        if (diff.inMilliseconds > 800) {
+          _isSeeking = true;
+          ctrl.seekTo(pos).then((_) {
+            if (_generation == gen) _isSeeking = false;
+          }).catchError((_) {
             _isSeeking = false;
-          }
-        });
+          });
+        }
       });
 
-      // مزامنة التشغيل/الإيقاف
       _playingSub = audioService.player.playingStream.listen((playing) {
-        if (_ctrlGeneration != myGen) return;
-        if (_videoCtrl == null || !_videoInitialized) return;
+        if (_generation != gen || _videoCtrl == null || !_videoInitialized) return;
         try {
-          if (playing) {
-            ctrl.play();
-          } else {
-            ctrl.pause();
-          }
+          if (playing) { ctrl.play(); } else { ctrl.pause(); }
         } catch (_) {}
       });
+
     } catch (e) {
       try { ctrl.dispose(); } catch (_) {}
-      if (mounted && _ctrlGeneration == myGen) {
+      if (mounted && _generation == gen) {
         setState(() => _isSwitching = false);
       }
     }
@@ -3116,9 +3104,9 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
   Future<void> _loadThumb() async {
     final item = audioService.currentItem;
     if (item == null) return;
-    final myGen = _ctrlGeneration;
+    final gen = _generation;
     final path = await ThumbnailManager.getLocalThumbnail(item.path);
-    if (mounted && _ctrlGeneration == myGen) {
+    if (mounted && _generation == gen) {
       setState(() {
         _thumbPath = path;
         _isSwitching = false;
@@ -3410,6 +3398,7 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             _MarqueeTitle(
+                              key: ValueKey(title),
                               text: title,
                               textColor: textColor,
                               maxCharsBeforeScroll: 27,
@@ -3657,7 +3646,7 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                                   isActive: isActive,
                                   textColor: textColor,
                                   subColor: subColor,
-                                  onTap: () => audioService.playAtIndex(i),
+                                  onTap: () => Future.microtask(() => audioService.playAtIndex(i)),
                                 );
                               },
                             );
@@ -3686,6 +3675,7 @@ class _MarqueeTitle extends StatefulWidget {
   final int maxCharsBeforeScroll;
 
   const _MarqueeTitle({
+    super.key,
     required this.text,
     required this.textColor,
     this.maxCharsBeforeScroll = 27,
@@ -3700,6 +3690,8 @@ class _MarqueeTitleState extends State<_MarqueeTitle>
   late ScrollController _scrollCtrl;
   Timer? _timer;
   bool _needsScroll = false;
+  // رقم جيل يُبطل أي حلقة قديمة فور تغيير النص أو dispose
+  int _loopGen = 0;
 
   static const double _gap = 60.0;
   static const double _speed = 40.0; // بكسل في الثانية
@@ -3715,8 +3707,13 @@ class _MarqueeTitleState extends State<_MarqueeTitle>
   void didUpdateWidget(_MarqueeTitle old) {
     super.didUpdateWidget(old);
     if (old.text != widget.text) {
+      // إلغاء الحلقة القديمة فوراً برفع رقم الجيل
+      _loopGen++;
       _timer?.cancel();
-      if (_scrollCtrl.hasClients) _scrollCtrl.jumpTo(0);
+      _timer = null;
+      if (_scrollCtrl.hasClients) {
+        try { _scrollCtrl.jumpTo(0); } catch (_) {}
+      }
       WidgetsBinding.instance.addPostFrameCallback((_) => _startMarquee());
     }
   }
@@ -3724,17 +3721,25 @@ class _MarqueeTitleState extends State<_MarqueeTitle>
   void _startMarquee() {
     if (!mounted) return;
     final needsScroll = widget.text.length > widget.maxCharsBeforeScroll;
-    setState(() => _needsScroll = needsScroll);
+    if (mounted) setState(() => _needsScroll = needsScroll);
     if (!needsScroll) return;
 
-    _timer = Timer(const Duration(seconds: 1), () => _loop());
+    final gen = _loopGen;
+    _timer = Timer(const Duration(seconds: 1), () {
+      if (mounted && _loopGen == gen) _loop(gen);
+    });
   }
 
-  void _loop() {
-    if (!mounted || !_scrollCtrl.hasClients) return;
-    // نصف maxScrollExtent = عرض نسخة واحدة + الفراغ
-    final oneLoop = _scrollCtrl.position.maxScrollExtent / 2 + _gap / 2;
+  void _loop(int gen) {
+    // إذا تغيّر الجيل أو تم الـ dispose أو لا يوجد clients → توقف
+    if (!mounted || _loopGen != gen || !_scrollCtrl.hasClients) return;
+
+    double oneLoop;
+    try {
+      oneLoop = _scrollCtrl.position.maxScrollExtent / 2 + _gap / 2;
+    } catch (_) { return; }
     if (oneLoop <= 0) return;
+
     final duration = Duration(milliseconds: (oneLoop / _speed * 1000).toInt());
 
     _scrollCtrl
@@ -3744,15 +3749,18 @@ class _MarqueeTitleState extends State<_MarqueeTitle>
           curve: Curves.linear,
         )
         .then((_) {
-          if (!mounted || !_scrollCtrl.hasClients) return;
-          _scrollCtrl.jumpTo(_scrollCtrl.offset - oneLoop);
-          _loop();
-        });
+          if (!mounted || _loopGen != gen || !_scrollCtrl.hasClients) return;
+          try { _scrollCtrl.jumpTo(_scrollCtrl.offset - oneLoop); } catch (_) { return; }
+          _loop(gen);
+        })
+        .catchError((_) {/* animation cancelled — توقف بهدوء */});
   }
 
   @override
   void dispose() {
+    _loopGen++; // إبطال أي حلقة جارية
     _timer?.cancel();
+    _timer = null;
     _scrollCtrl.dispose();
     super.dispose();
   }

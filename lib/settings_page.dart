@@ -168,8 +168,101 @@ class _SettingsPageState extends State<SettingsPage> {
                         CupertinoIcons.folder_fill),
                     _qualityTile(),
                   ]),
+
+
+                  
                   const SizedBox(height: 16),
                   _settingsSection('الإدارة', [
+                                 GestureDetector(
+  onTap: () async {
+    final uri = Uri.parse('https://scrptaty.com');
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
+    }
+  },
+  child: Container(
+    decoration: BoxDecoration(
+      color: context.isDark
+          ? AppColors.darkSurface
+          : AppColors.surface,
+borderRadius: const BorderRadius.only(
+  topLeft: Radius.circular(16),
+  topRight: Radius.circular(16),
+),  
+border: Border(
+  top: BorderSide(
+    color: context.isDark
+        ? AppColors.darkDivider
+        : AppColors.divider,
+    width: 0.5,
+  ),
+  left: BorderSide(
+    color: context.isDark
+        ? AppColors.darkDivider
+        : AppColors.divider,
+    width: 0.5,
+  ),
+  right: BorderSide(
+    color: context.isDark
+        ? AppColors.darkDivider
+        : AppColors.divider,
+    width: 0.5,
+  ),
+),
+    ),
+    child: ListTile(
+      contentPadding:
+          const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      leading: Container(
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(
+color: context.isDark
+    ? const Color(0xFF3A1212)
+    : const Color(0xFFFFEBEB),          borderRadius: BorderRadius.circular(10),
+        ),
+child: Padding(
+  padding: const EdgeInsets.all(7),
+  child: ColorFiltered(
+    colorFilter: const ColorFilter.mode(
+      Color.fromARGB(255, 232, 39, 42),
+      BlendMode.srcIn,
+    ),
+    child: Image.asset(
+      'assets/images/scrptaty.png',
+      fit: BoxFit.contain,
+    ),
+  ),
+),
+      ),
+      title: Text(
+        'سكربتاتي',
+        style: TextStyle(
+          fontFamily: 'Tajawal',
+          fontSize: 14,
+          fontWeight: FontWeight.w600,
+          color: context.appText,
+        ),
+      ),
+      subtitle: Text(
+        'فريق مطوري تطبيق دندن',
+        style: TextStyle(
+          fontFamily: 'Tajawal',
+          fontSize: 12,
+          color: context.appTextSec,
+        ),
+      ),
+      trailing: Icon(
+        CupertinoIcons.chevron_left,
+        size: 18,
+        color: context.appTextSec,
+      ),
+    ),
+  ),
+),
                     _actionTile(
                       'حذف جميع التنزيلات',
                       'مسح كل الملفات المحملة',
@@ -178,79 +271,7 @@ class _SettingsPageState extends State<SettingsPage> {
                       _clearDownloads,
                     ),
                   ]),
-                  const SizedBox(height: 16),
-                  GestureDetector(
-                    onTap: () async {
-                      final uri = Uri.parse('https://scrptaty.com');
-                      if (await canLaunchUrl(uri)) {
-                        await launchUrl(
-                          uri,
-                          mode: LaunchMode.externalApplication,
-                        );
-                      }
-                    },
-                    child: Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: context.isDark
-                            ? AppColors.darkSurface
-                            : AppColors.surface,
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                          color: context.isDark
-                              ? AppColors.darkDivider
-                              : AppColors.divider,
-                          width: 0.5,
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(16),
-                            child: ColorFiltered(
-                              colorFilter: const ColorFilter.mode(
-                                Color(0xFFE53935),
-                                BlendMode.srcIn,
-                              ),
-                              child: Image.asset(
-                                'assets/images/scrptaty.png',
-                                width: 58,
-                                height: 58,
-                                fit: BoxFit.cover,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 14),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  ' سكربتاتي',
-                                  style: TextStyle(
-                                    color: context.appText,
-                                    fontFamily: 'Tajawal',
-                                    fontSize: 17,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  ' فريق مطوري تطبيق دندن  ',
-                                  style: TextStyle(
-                                    color: context.appTextSec,
-                                    fontFamily: 'Tajawal',
-                                    fontSize: 13,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
+   
                   const SizedBox(height: 160),
                 ],
               ),
@@ -320,7 +341,7 @@ class _SettingsPageState extends State<SettingsPage> {
           color: isDark ? AppColors.darkRedLight : AppColors.redLight,
           borderRadius: BorderRadius.circular(10),
         ),
-        child: Icon(icon, color: AppColors.primary, size: 18),
+        child: Icon(icon, color: const Color.fromARGB(255, 232, 39, 42), size: 18),
       ),
       title: Text(title,
           style: TextStyle(
@@ -347,7 +368,7 @@ class _SettingsPageState extends State<SettingsPage> {
         width: 36,
         height: 36,
         decoration: BoxDecoration(
-          color: isDark ? AppColors.darkRedLight : AppColors.redLight,
+          color: isDark ? const Color(0xFF3A1212) : AppColors.redLight,
           borderRadius: BorderRadius.circular(10),
         ),
         child: Icon(icon, color: AppColors.primary, size: 18),
@@ -375,7 +396,7 @@ class _SettingsPageState extends State<SettingsPage> {
         width: 36,
         height: 36,
         decoration: BoxDecoration(
-          color: isDark ? AppColors.darkRedLight : AppColors.redLight,
+          color: isDark ? const Color.from(alpha: 1, red: 0.227, green: 0.071, blue: 0.071) : AppColors.redLight,
           borderRadius: BorderRadius.circular(10),
         ),
         child: const Icon(CupertinoIcons.dial_fill,

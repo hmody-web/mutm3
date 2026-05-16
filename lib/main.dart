@@ -433,12 +433,11 @@ class AudioPlayerService {
   StreamSubscription? _indexSub;
   StreamSubscription? _playingSub;
   bool _handlingIndexChange = false;
-  // true = أوقف المستخدم التشغيل يدوياً → لا نُعيد التشغيل تلقائياً بعد الانقطاع
   bool _userPaused = false;
-  // يمنع تشغيل أغنيتين في نفس الوقت — نستخدم index الطلب الأخير لضمان تنفيذه دائماً
   bool _isSwitching = false;
-  // آخر index طُلب — إذا تغيّر أثناء التبديل، ننفّذ الطلب الجديد فور الانتهاء
+  // آخر طلب وصل أثناء تبديل جارٍ — يُنفَّذ فور انتهاء التبديل الحالي
   int _pendingIndex = -1;
+  List<LocalMediaItem>? _pendingList;
 
   Future<void> init() async {
     final session = await AudioSession.instance;
@@ -512,9 +511,10 @@ class AudioPlayerService {
   void _autoNext() {
     final idx = currentIndex.value;
     final list = playlist.value;
-    _userPaused = false; // انتقال تلقائي → أعد التشغيل دائماً
-    _isSwitching = false; // أعد تعيين القفل عند الانتقال التلقائي
+    _userPaused = false;
+    _isSwitching = false;
     _pendingIndex = -1;
+    _pendingList = null;
     if (player.loopMode == LoopMode.one) {
       player.seek(Duration.zero);
       player.play();
@@ -541,32 +541,31 @@ class AudioPlayerService {
     );
   }
 
-  /// ─── الدالة المحورية: تشغيل ملف مع ConcatenatingAudioSource لدعم MediaSession ───
+  /// ─── الدالة المحورية ───
   Future<void> _playSingleFile(List<LocalMediaItem> list, int index) async {
     if (list.isEmpty || index < 0 || index >= list.length) return;
 
-    // ── إذا كان هناك تبديل جارٍ، احفظ الطلب الجديد وسيُنفَّذ تلقائياً عند الانتهاء ──
+    // إذا يوجد تبديل جارٍ، احفظ الطلب الجديد وارجع — سيُنفَّذ تلقائياً
     if (_isSwitching) {
       _pendingIndex = index;
-      debugPrint('AudioPlayerService: طلب معلّق للأغنية $index');
+      _pendingList = list;
       return;
     }
+
     _isSwitching = true;
     _pendingIndex = -1;
+    _pendingList = null;
 
-    final item = list[index];
-
-    // ① حدّث القيم المرئية فوراً
+    // حدّث القيم المرئية فوراً
     playlist.value = list;
     currentIndex.value = index;
     isVisible.value = true;
     _handlingIndexChange = true;
 
     try {
-      // ── pause() بدلاً من stop() ──
       if (player.playing) await player.pause();
 
-      // ② بناء tags بالتوازي باستخدام Future.wait لتسريع العملية وعدم حجب الـ UI
+      final item = list[index];
       final hasPrev = index > 0;
       final hasNext = index < list.length - 1;
 
@@ -586,7 +585,6 @@ class AudioPlayerService {
         );
       }
 
-      // بناء كل الـ tags بالتوازي — أسرع بكثير من await واحدة تلو الأخرى
       final tagFutures = <Future<MediaItem>>[
         if (hasPrev) buildTag(list[index - 1]),
         buildTag(item),
@@ -611,10 +609,10 @@ class AudioPlayerService {
       );
 
       _handlingIndexChange = false;
-      _isSwitching = false; // ← أفرج عن القفل قبل play() حتى يستجيب الـ UI
+      _isSwitching = false; // أفرج عن القفل قبل play()
       await player.play();
 
-      // ③ توليد الصور في الخلفية — لا يحجب شيئاً
+      // توليد الصور في الخلفية
       Future(() async {
         try {
           if (currentIndex.value != index) return;
@@ -624,31 +622,34 @@ class AudioPlayerService {
         } catch (_) {}
       });
 
-      // ④ تنفيذ أي طلب معلّق جاء أثناء التبديل
-      if (_pendingIndex >= 0 && _pendingIndex != index) {
-        final nextPending = _pendingIndex;
+      // تنفيذ أي طلب وصل أثناء التبديل
+      if (_pendingIndex >= 0) {
+        final pi = _pendingIndex;
+        final pl = _pendingList ?? list;
         _pendingIndex = -1;
-        debugPrint('AudioPlayerService: تنفيذ الطلب المعلّق → أغنية $nextPending');
-        await _playSingleFile(list, nextPending);
+        _pendingList = null;
+        await _playSingleFile(pl, pi);
       }
     } catch (e) {
       _handlingIndexChange = false;
       _isSwitching = false;
-      // تنفيذ الطلب المعلّق حتى في حالة الخطأ
-      if (_pendingIndex >= 0) {
-        final nextPending = _pendingIndex;
-        _pendingIndex = -1;
-        debugPrint('AudioPlayerService: تنفيذ الطلب المعلّق بعد خطأ → أغنية $nextPending');
-        Future.microtask(() => _playSingleFile(list, nextPending));
-      }
       debugPrint('AudioPlayerService._playSingleFile error: $e');
+      // تنفيذ الطلب المعلق حتى بعد الخطأ
+      if (_pendingIndex >= 0) {
+        final pi = _pendingIndex;
+        final pl = _pendingList ?? list;
+        _pendingIndex = -1;
+        _pendingList = null;
+        Future.microtask(() => _playSingleFile(pl, pi));
+      }
     }
   }
 
   Future<void> playList(List<LocalMediaItem> items, int startIndex) async {
-    _userPaused = false; // تشغيل جديد → إلغاء حالة الإيقاف اليدوي
-    _isSwitching = false; // إعادة تعيين القفل عند بدء قائمة جديدة
-    _pendingIndex = -1;   // إلغاء أي طلب معلّق سابق
+    _userPaused = false;
+    _isSwitching = false;
+    _pendingIndex = -1;
+    _pendingList = null;
     final idx = startIndex.clamp(0, items.length - 1);
     await _playSingleFile(List.unmodifiable(items), idx);
   }
@@ -657,7 +658,6 @@ class AudioPlayerService {
     _userPaused = false;
     final list = playlist.value;
     if (list.isEmpty) return;
-    // إذا ضغط المستخدم على نفس الأغنية الحالية وليس هناك تبديل جارٍ — تجاهل
     if (index == currentIndex.value && !_isSwitching && _pendingIndex < 0) return;
     await _playSingleFile(list, index);
   }
@@ -676,8 +676,9 @@ class AudioPlayerService {
 
   Future<void> playNext() async {
     _userPaused = false;
-    _isSwitching = false; // السماح بالانتقال للتالي دائماً
+    _isSwitching = false;
     _pendingIndex = -1;
+    _pendingList = null;
     final idx = currentIndex.value;
     final list = playlist.value;
     if (idx < list.length - 1) {
@@ -687,8 +688,9 @@ class AudioPlayerService {
 
   Future<void> playPrevious() async {
     _userPaused = false;
-    _isSwitching = false; // السماح بالانتقال للسابق دائماً
+    _isSwitching = false;
     _pendingIndex = -1;
+    _pendingList = null;
     final pos = player.position;
     if (pos.inSeconds > 3) {
       await player.seek(Duration.zero);
@@ -2947,22 +2949,25 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
   bool _isRepeat = false;
   String? _thumbPath;
   VideoPlayerController? _videoCtrl;
-  // ValueNotifier يُشارَك مع _ImmersiveFullScreenPage ليُعيد بناءها تلقائياً
   final ValueNotifier<VideoPlayerController?> _videoCtrlNotifier = ValueNotifier(null);
   bool _videoInitialized = false;
   double _volume = 1.0;
   double _speed = 1.0;
-  // يمنع ظهور عناصر التحكم القديمة أثناء الانتقال بين الأغاني
   bool _isSwitching = false;
 
-  // نتابع الـ streams حتى نُلغيها عند dispose
+  // ── مؤقت لمنع الـ seekTo المتكرر (debounce) ──
+  Timer? _seekDebounce;
+  // منع استدعاء seekTo المتزامن على VideoPlayerController
+  bool _isSeeking = false;
+
   StreamSubscription? _positionSub;
   StreamSubscription? _playingSub;
+  // رقم جيل الـ controller الحالي — يمنع subscriptions قديمة من التأثير
+  int _ctrlGeneration = 0;
 
   @override
   void initState() {
     super.initState();
-    // للأغاني فقط نُحمّل الـ thumbnail — للفيديوهات نبدأ بأسود مباشرة
     final item = audioService.currentItem;
     if (item != null && !item.isVideo) _loadThumb();
     _initVideoIfNeeded();
@@ -2974,134 +2979,149 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
     audioService.currentIndex.removeListener(_onTrackChange);
     _positionSub?.cancel();
     _playingSub?.cancel();
-    // نوقف الفيديو المرئي فقط — الصوت يستمر عبر just_audio في الخلفية
-    _videoCtrl?.pause();
-    _videoCtrl?.dispose();
+    _seekDebounce?.cancel();
     _videoCtrlNotifier.dispose();
+    final ctrl = _videoCtrl;
+    _videoCtrl = null;
+    Future.microtask(() async {
+      try { await ctrl?.pause(); } catch (_) {}
+      try { ctrl?.dispose(); } catch (_) {}
+    });
     super.dispose();
   }
 
   void _onTrackChange() {
     _positionSub?.cancel();
     _playingSub?.cancel();
+    _seekDebounce?.cancel();
+    _isSeeking = false;
+    _ctrlGeneration++; // بطّل كل subscriptions قديمة
 
-    // ── تحرير الـ video controller القديم بشكل آمن في الخلفية ──
-    // dispose() المباشر على الـ UI thread يُحجب الواجهة — نُشغّله في microtask
+    // تحرير controller القديم بأمان
     final oldCtrl = _videoCtrl;
     _videoCtrl = null;
     _videoCtrlNotifier.value = null;
     Future.microtask(() async {
-      try {
-        await oldCtrl?.pause();
-        oldCtrl?.dispose();
-      } catch (_) {}
+      try { await oldCtrl?.pause(); } catch (_) {}
+      try { oldCtrl?.dispose(); } catch (_) {}
+    });
+
+    if (!mounted) return;
+    setState(() {
+      _isSwitching = true;
+      _thumbPath = null;
+      _videoInitialized = false;
     });
 
     final item = audioService.currentItem;
-
-    // تحديث UI فوراً بدون انتظار
-    if (mounted) {
-      setState(() {
-        _isSwitching = true;
-        _thumbPath = null;
-        _videoInitialized = false;
-      });
-    }
-
     if (item == null) {
       if (mounted) setState(() => _isSwitching = false);
       return;
     }
 
-    // ── مهلة أمان: إذا لم ينتهِ التحميل خلال 8 ثوانٍ، أوقف _isSwitching لمنع التجميد ──
-    Future.delayed(const Duration(seconds: 8), () {
-      if (mounted && _isSwitching) {
+    // مهلة أمان مطلقة — لا يمكن أن يبقى _isSwitching=true أكثر من 10 ثوانٍ
+    final safeGen = _ctrlGeneration;
+    Future.delayed(const Duration(seconds: 10), () {
+      if (mounted && _isSwitching && _ctrlGeneration == safeGen) {
         setState(() => _isSwitching = false);
-        debugPrint('FullScreenPlayer: مهلة الأمان — أُوقفت _isSwitching');
       }
     });
 
-    // نُشغّل العمليات الثقيلة بعد frame واحد حتى لا يتجمد الـ UI
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       if (!item.isVideo) {
         _loadThumb();
+      } else {
+        _initVideoIfNeeded();
       }
-      _initVideoIfNeeded();
     });
   }
 
   Future<void> _initVideoIfNeeded() async {
     final item = audioService.currentItem;
-    // للأغاني الصوتية: _loadThumb هي التي تُوقف _isSwitching عند الانتهاء
     if (item == null || !item.isVideo) return;
 
-    final expectedPath = item.path;
+    final myGen = _ctrlGeneration;
+    final myPath = item.path;
 
-    // VideoPlayerController بدون صوت — الصوت يأتي من just_audio
-    final ctrl = VideoPlayerController.file(File(item.path));
+    final ctrl = VideoPlayerController.file(File(myPath));
     try {
       await ctrl.initialize();
-      // تحقق أن المستخدم لم ينتقل لأغنية أخرى أثناء التهيئة
-      if (audioService.currentItem?.path != expectedPath) {
-        ctrl.dispose();
+
+      // إذا تغيّر الجيل (المستخدم انتقل لأغنية أخرى) — تجاهل هذا الـ controller
+      if (!mounted || _ctrlGeneration != myGen) {
+        try { ctrl.dispose(); } catch (_) {}
         return;
       }
-      // أوقف صوت video_player تماماً — الصوت يأتي من just_audio
+
       await ctrl.setVolume(0.0);
-      // مزامنة الموضع مع just_audio
-      final pos = audioService.player.position;
-      await ctrl.seekTo(pos);
-      final playing = audioService.player.playing;
-      if (playing) await ctrl.play();
-      if (mounted && audioService.currentItem?.path == expectedPath) {
-        setState(() {
-          _videoCtrl = ctrl;
-          _videoInitialized = true;
-          _isSwitching = false; // انتهت مرحلة الانتقال
-        });
-        // أعلم _ImmersiveFullScreenPage بالـ controller الجديد
-        _videoCtrlNotifier.value = ctrl;
-      } else {
-        ctrl.dispose();
+      await ctrl.seekTo(audioService.player.position);
+      if (audioService.player.playing) await ctrl.play();
+
+      if (!mounted || _ctrlGeneration != myGen) {
+        try { ctrl.dispose(); } catch (_) {}
         return;
       }
-      // مزامنة الموقف مستمرة
-      _positionSub = audioService.player.positionStream.listen((pos) {
-        if (_videoCtrl != null && _videoInitialized) {
-          final diff = (ctrl.value.position - pos).abs();
-          if (diff.inMilliseconds > 500) {
-            ctrl.seekTo(pos);
-          }
-        }
+
+      setState(() {
+        _videoCtrl = ctrl;
+        _videoInitialized = true;
+        _isSwitching = false;
       });
+      _videoCtrlNotifier.value = ctrl;
+
+      // ── مزامنة الموقف مع debounce لمنع deadlock ──
+      // positionStream يُطلق كل ~200ms — نستخدم debounce لمنع seekTo المتكررة
+      _positionSub = audioService.player.positionStream.listen((pos) {
+        if (_ctrlGeneration != myGen) return;
+        if (_videoCtrl == null || !_videoInitialized) return;
+        // debounce: لا ننفّذ seekTo إلا إذا توقف الstream لـ 300ms
+        _seekDebounce?.cancel();
+        _seekDebounce = Timer(const Duration(milliseconds: 300), () async {
+          if (_ctrlGeneration != myGen) return;
+          if (_videoCtrl == null || !_videoInitialized || _isSeeking) return;
+          try {
+            final diff = (ctrl.value.position - audioService.player.position).abs();
+            if (diff.inMilliseconds > 600) {
+              _isSeeking = true;
+              await ctrl.seekTo(audioService.player.position);
+              _isSeeking = false;
+            }
+          } catch (_) {
+            _isSeeking = false;
+          }
+        });
+      });
+
       // مزامنة التشغيل/الإيقاف
       _playingSub = audioService.player.playingStream.listen((playing) {
-        if (_videoCtrl != null && _videoInitialized) {
+        if (_ctrlGeneration != myGen) return;
+        if (_videoCtrl == null || !_videoInitialized) return;
+        try {
           if (playing) {
             ctrl.play();
           } else {
             ctrl.pause();
           }
-        }
+        } catch (_) {}
       });
-    } catch (_) {
-      ctrl.dispose();
-      // في حالة الفشل: أوقف _isSwitching لتجنب تجميد الواجهة
-      if (mounted) setState(() => _isSwitching = false);
+    } catch (e) {
+      try { ctrl.dispose(); } catch (_) {}
+      if (mounted && _ctrlGeneration == myGen) {
+        setState(() => _isSwitching = false);
+      }
     }
   }
 
   Future<void> _loadThumb() async {
     final item = audioService.currentItem;
     if (item == null) return;
-    final expectedPath = item.path;
+    final myGen = _ctrlGeneration;
     final path = await ThumbnailManager.getLocalThumbnail(item.path);
-    // تحقق أن المستخدم لم ينتقل لأغنية أخرى أثناء التحميل
-    if (mounted && audioService.currentItem?.path == expectedPath) {
+    if (mounted && _ctrlGeneration == myGen) {
       setState(() {
         _thumbPath = path;
-        _isSwitching = false; // انتهت مرحلة الانتقال
+        _isSwitching = false;
       });
     }
   }

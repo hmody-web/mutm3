@@ -953,6 +953,9 @@ class _BottomArea extends StatelessWidget {
 // ─────────────────────────────────────────────
 //  GLASS NAV BAR — iOS Floating Glass Style
 // ─────────────────────────────────────────────
+// ─────────────────────────────────────────────
+//  GLASS NAV BAR — iOS Floating Glass Style (Fluid Drag & Blend)
+// ─────────────────────────────────────────────
 class _GlassNavBar extends StatefulWidget {
   const _GlassNavBar();
   @override
@@ -962,8 +965,12 @@ class _GlassNavBar extends StatefulWidget {
 class _GlassNavBarState extends State<_GlassNavBar>
     with TickerProviderStateMixin {
   late AnimationController _indicatorCtrl;
-  late AnimationController _pulseCtrl;
-  late Animation<double> _pulseAnim;
+  late AnimationController _scaleCtrl;
+  late Animation<double> _scaleAnim;
+  
+  // متغيرات مخصصة لحساب تأثير المزج والتمدد أثناء السحب
+  double _dragOffset = 0.0;
+  bool _isDragging = false;
   int _prevIndex = 0;
 
   static const List<_NavTabData> _tabs = [
@@ -977,25 +984,19 @@ class _GlassNavBarState extends State<_GlassNavBar>
     super.initState();
     _indicatorCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 300),
+      duration: const Duration(milliseconds: 350), // حركة أنعم للمؤشر
       value: 1.0,
     );
-    _pulseCtrl = AnimationController(
+
+    _scaleCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 350),
+      duration: const Duration(milliseconds: 180), 
     );
-    _pulseAnim = TweenSequence<double>([
-      TweenSequenceItem(
-        tween: Tween<double>(begin: 1.0, end: 1.03)
-            .chain(CurveTween(curve: Curves.easeOut)),
-        weight: 40,
-      ),
-      TweenSequenceItem(
-        tween: Tween<double>(begin: 1.03, end: 1.0)
-            .chain(CurveTween(curve: Curves.easeInOut)),
-        weight: 60,
-      ),
-    ]).animate(_pulseCtrl);
+
+    _scaleAnim = Tween<double>(begin: 1.0, end: 1.04).animate(
+      CurvedAnimation(parent: _scaleCtrl, curve: Curves.easeOutBack),
+    );
+
     _navIndexNotifier.addListener(_onNavChange);
   }
 
@@ -1003,12 +1004,19 @@ class _GlassNavBarState extends State<_GlassNavBar>
   void dispose() {
     _navIndexNotifier.removeListener(_onNavChange);
     _indicatorCtrl.dispose();
-    _pulseCtrl.dispose();
+    _scaleCtrl.dispose();
     super.dispose();
   }
 
-  void _triggerPulse() {
-    _pulseCtrl.forward(from: 0.0);
+  void _startScaling() {
+    _scaleCtrl.forward();
+  }
+
+  void _stopScaling() {
+    _scaleCtrl.reverse();
+    setState(() {
+      _isDragging = false;
+    });
   }
 
   void _onNavChange() {
@@ -1019,199 +1027,232 @@ class _GlassNavBarState extends State<_GlassNavBar>
     if (mounted) setState(() {});
   }
 
+  // تحديث موقع السحب الفعلي لإصبع المستخدم
+  void _updateDragPosition(Offset localPosition, double totalWidth) {
+    if (totalWidth <= 0) return;
+    setState(() {
+      _isDragging = true;
+      _dragOffset = localPosition.dx.clamp(0.0, totalWidth);
+    });
+
+    // حساب التبويب المستهدف لتغيير الصفحة خلف الكواليس
+    final invertedX = totalWidth - localPosition.dx;
+    final tabWidth = totalWidth / _tabs.length;
+    int targetIndex = (invertedX / tabWidth).floor().clamp(0, _tabs.length - 1);
+    
+    if (_navIndexNotifier.value != targetIndex) {
+      _navIndexNotifier.value = targetIndex;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = context.isDark;
     final bottomPadding = MediaQuery.of(context).padding.bottom;
     final idx = _navIndexNotifier.value;
 
-    return GestureDetector(
-      onTapDown: (_) => _triggerPulse(),
-      child: AnimatedBuilder(
-        animation: _pulseAnim,
-        builder: (_, child) => Transform.scale(
-          scale: _pulseAnim.value,
-          child: child,
-        ),
-        child: Padding(
-      padding: EdgeInsets.only(
-        left: 18,
-        right: 18,
-        bottom: bottomPadding > 0 ? bottomPadding + 6 : 14,
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(36),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-          child: Container(
-            height: 66,
-            decoration: BoxDecoration(
-              // زجاج شفاف حقيقي
-              color: isDark
-                  ? Colors.black.withOpacity(0.30)
-                  : Colors.white.withOpacity(0.28),
-              borderRadius: BorderRadius.circular(36),
-              border: Border.all(
-                color: isDark
-                    ? const Color.fromARGB(255, 114, 114, 114).withOpacity(0.1)
-                    : const Color.fromARGB(255, 12, 0, 0).withOpacity(0.07),
-                width: 1.2,
-              ),
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: isDark
-                    ? [
-                        Colors.white.withOpacity(0.08),
-                        Colors.white.withOpacity(0.02),
-                      ]
-                    : [
-                        Colors.white.withOpacity(0.60),
-                        Colors.white.withOpacity(0.20),
-                      ],
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: const Color.fromARGB(255, 0, 0, 0).withOpacity(isDark ? 0.18 : 0.08),
-                  blurRadius: 32,
-                  spreadRadius: -4,
-                  offset: const Offset(0, 8),
-                ),
-                BoxShadow(
-                  color: const Color.fromARGB(0, 17, 1, 1).withOpacity(isDark ? 0.25 : 0.06),
-                  blurRadius: 20,
-                  offset: const Offset(0, 4),
-                ),
-                BoxShadow(
-                  color: Colors.white.withOpacity(isDark ? 0.04 : 0.50),
-                  blurRadius: 1,
-                  offset: const Offset(0, 1),
-                ),
-              ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final barWidth = constraints.maxWidth - 36;
+
+        return GestureDetector(
+          onTapDown: (details) {
+            _startScaling();
+            _updateDragPosition(details.localPosition, barWidth);
+          },
+          onHorizontalDragStart: (details) {
+            _startScaling();
+            _updateDragPosition(details.localPosition, barWidth);
+          },
+          onHorizontalDragUpdate: (details) {
+            _updateDragPosition(details.localPosition, barWidth);
+          },
+          onTapUp: (_) => _stopScaling(),
+          onHorizontalDragEnd: (_) => _stopScaling(),
+          onHorizontalDragCancel: () => _stopScaling(),
+          child: AnimatedBuilder(
+            animation: _scaleAnim,
+            builder: (_, child) => Transform.scale(
+              scale: _scaleAnim.value,
+              child: child,
             ),
-            child: LayoutBuilder(builder: (ctx, constraints) {
-              final tabWidth = constraints.maxWidth / _tabs.length;
-              return Stack(alignment: Alignment.center, children: [
-                // ── Animated Red Indicator Pill ──
-                // RTL: tab 0 (استمع) في أقصى اليمين
-                // right = idx * tabWidth يضع الـ indicator عند التبويب الصحيح
-                AnimatedPositioned(
-                  duration: const Duration(milliseconds: 320),
-                  curve: Curves.easeOutCubic,
-                  right: idx * tabWidth + tabWidth * 0.12,
-                  top: 8,
-                  bottom: 8,
-                  width: tabWidth * 0.76,
-                  child: AnimatedBuilder(
-                    animation: _indicatorCtrl,
-                    builder: (_, __) {
-                      final s = Tween<double>(begin: 0.82, end: 1.0)
-                          .animate(CurvedAnimation(
-                              parent: _indicatorCtrl,
-                              curve: Curves.easeOutBack))
-                          .value;
-                      return Transform.scale(
-                        scale: s,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [
-                                AppColors.primary.withOpacity(0.18),
-                                AppColors.primaryDark.withOpacity(0.10),
-                              ],
-                              begin: Alignment.topCenter,
-                              end: Alignment.bottomCenter,
-                            ),
-                            borderRadius: BorderRadius.circular(40),
-                            border: Border.all(
-                              color: AppColors.primary.withOpacity(0.02),
-                              width: 0.8,
-                            ),
+            child: Padding(
+              padding: EdgeInsets.only(
+                left: 18,
+                right: 18,
+                bottom: bottomPadding > 0 ? bottomPadding + 6 : 14,
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(36),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                  child: Container(
+                    height: 66,
+                    decoration: BoxDecoration(
+                      color: isDark
+                          ? Colors.black.withOpacity(0.30)
+                          : Colors.white.withOpacity(0.28),
+                      borderRadius: BorderRadius.circular(36),
+                      border: Border.all(
+                        color: isDark
+                            ? const Color.fromARGB(255, 114, 114, 114).withOpacity(0.1)
+                            : const Color.fromARGB(255, 12, 0, 0).withOpacity(0.07),
+                        width: 1.2,
+                      ),
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: isDark
+                            ? [Colors.white.withOpacity(0.08), Colors.white.withOpacity(0.02)]
+                            : [Colors.white.withOpacity(0.60), Colors.white.withOpacity(0.20)],
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color.fromARGB(255, 0, 0, 0).withOpacity(isDark ? 0.18 : 0.08),
+                          blurRadius: 32,
+                          spreadRadius: -4,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    child: LayoutBuilder(builder: (ctx, innerConstraints) {
+                      final totalBarWidth = innerConstraints.maxWidth;
+                      final tabWidth = totalBarWidth / _tabs.length;
+
+                      // ── الحسبة السحرية للمزج والتمدد (Fluid Blend Logic) ──
+                      double indicatorWidth = tabWidth * 0.76;
+                      double indicatorRightPosition = idx * tabWidth + tabWidth * 0.12;
+
+                      if (_isDragging) {
+                        // تحويل إحداثيات السحب لتتوافق مع اتجاه الـ RTL العربي (اليمين هو الصفر)
+                        double rtlDragX = totalBarWidth - _dragOffset;
+                        
+                        // حساب المسافة بين مركز المؤشر الحالي وإصبع المستخدم لتحديد قوة التمدد
+                        double currentCenter = indicatorRightPosition + (indicatorWidth / 2);
+                        double distance = rtlDragX - currentCenter;
+
+                        // تمديد عرض المؤشر بناءً على مسافة السحب لإعطاء تأثير الجيلي/الزئبق
+                        indicatorWidth = (tabWidth * 0.76) + (distance.abs() * 0.4);
+                        // تحديد الحد الأقصى للتمدد حتى لا يخرج عن حدود البار
+                        indicatorWidth = indicatorWidth.clamp(tabWidth * 0.76, tabWidth * 1.8);
+
+                        // جعل المؤشر ينساب ويمزج موقعه بمرونة فائقة مع اتجاه السحب
+                        if (distance > 0) {
+                          indicatorRightPosition = currentCenter - (tabWidth * 0.38);
+                        } else {
+                          indicatorRightPosition = rtlDragX - (indicatorWidth * 0.3);
+                        }
+                        indicatorRightPosition = indicatorRightPosition.clamp(0.0, totalBarWidth - indicatorWidth);
+                      }
+
+                      return Stack(alignment: Alignment.center, children: [
+                        // ── المؤشر الأحمر الذكي (تأثير مائع وممتزج) ──
+                        AnimatedPositioned(
+                          // عند السحب تكون الاستجابة فورية صفر مللي ثانية للمزج، وعند الإفلات يعود بسلاسة كالزنبرك
+                          duration: _isDragging ? Duration.zero : const Duration(milliseconds: 300),
+                          curve: Curves.easeOutCubic,
+                          right: indicatorRightPosition,
+                          width: indicatorWidth,
+                          top: 8,
+                          bottom: 8,
+                          child: AnimatedBuilder(
+                            animation: _indicatorCtrl,
+                            builder: (_, __) {
+                              final s = Tween<double>(begin: 0.9, end: 1.0)
+                                  .animate(CurvedAnimation(
+                                      parent: _indicatorCtrl,
+                                      curve: Curves.easeOutBack))
+                                  .value;
+                              return Transform.scale(
+                                scale: s,
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      colors: [
+                                        AppColors.primary.withOpacity(0.22), // زيادة الوضوح أثناء التمدد
+                                        AppColors.primaryDark.withOpacity(0.12),
+                                      ],
+                                      begin: Alignment.topCenter,
+                                      end: Alignment.bottomCenter,
+                                    ),
+                                    borderRadius: BorderRadius.circular(40),
+                                    border: Border.all(
+                                      color: AppColors.primary.withOpacity(0.1),
+                                      width: 0.8,
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
                           ),
                         ),
-                      );
-                    },
+                        
+                        // ── Tab Buttons (عناصر التبويبات) ──
+                        Row(
+                          children: List.generate(_tabs.length, (i) {
+                            final tab = _tabs[i];
+                            final isSelected = i == idx;
+                            return Expanded(
+                              child: IgnorePointer(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    AnimatedScale(
+                                      scale: isSelected ? 1.2 : 1.0,
+                                      duration: const Duration(milliseconds: 260),
+                                      curve: Curves.easeOutBack,
+                                      child: AnimatedContainer(
+                                        duration: const Duration(milliseconds: 200),
+                                        child: i == 0
+                                            ? ClipRRect(
+                                                borderRadius: BorderRadius.circular(6),
+                                                child: Image.asset(
+                                                  'assets/images/logo.png',
+                                                  width: 22,
+                                                  height: 22,
+                                                  fit: BoxFit.cover,
+                                                  color: isSelected ? null : (isDark ? Colors.white38 : AppColors.textSecondary),
+                                                  colorBlendMode: isSelected ? null : BlendMode.srcIn,
+                                                  errorBuilder: (_, __, ___) => Icon(
+                                                    tab.icon,
+                                                    size: 22,
+                                                    color: isSelected ? AppColors.primary : (isDark ? Colors.white38 : AppColors.textSecondary),
+                                                  ),
+                                                ),
+                                              )
+                                            : Icon(
+                                                tab.icon,
+                                                size: 22,
+                                                color: isSelected ? AppColors.primary : (isDark ? Colors.white38 : AppColors.textSecondary),
+                                              ),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 3),
+                                    AnimatedDefaultTextStyle(
+                                      duration: const Duration(milliseconds: 200),
+                                      style: TextStyle(
+                                        fontFamily: 'Tajawal',
+                                        fontSize: 10,
+                                        fontWeight: isSelected ? FontWeight.w700 : FontWeight.w400,
+                                        color: isSelected ? AppColors.primary : (isDark ? Colors.white38 : AppColors.textSecondary),
+                                      ),
+                                      child: Text(tab.label),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          }),
+                        ),
+                      ]);
+                    }),
                   ),
                 ),
-
-                // ── Tab Buttons ──
-                Row(
-                  children: List.generate(_tabs.length, (i) {
-                    final tab = _tabs[i];
-                    final isSelected = i == idx;
-                    return Expanded(
-                      child: GestureDetector(
-                        onTap: () => _navIndexNotifier.value = i,
-                        behavior: HitTestBehavior.opaque,
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            AnimatedScale(
-                              scale: isSelected ? 1.2 : 1.0,
-                              duration: const Duration(milliseconds: 260),
-                              curve: Curves.easeOutBack,
-                              child: AnimatedContainer(
-                                duration: const Duration(milliseconds: 200),
-                                child: i == 0
-                                    ? ClipRRect(
-                                        borderRadius: BorderRadius.circular(6),
-                                        child: Image.asset(
-                                          'assets/images/logo.png',
-                                          width: 22,
-                                          height: 22,
-                                          fit: BoxFit.cover,
-                                          color: isSelected ? null : (isDark ? Colors.white38 : AppColors.textSecondary),
-                                          colorBlendMode: isSelected ? null : BlendMode.srcIn,
-                                          errorBuilder: (_, __, ___) => Icon(
-                                            tab.icon,
-                                            size: 22,
-                                            color: isSelected
-                                                ? AppColors.primary
-                                                : (isDark ? Colors.white38 : AppColors.textSecondary),
-                                          ),
-                                        ),
-                                      )
-                                    : Icon(
-                                        tab.icon,
-                                        size: 22,
-                                        color: isSelected
-                                            ? AppColors.primary
-                                            : (isDark
-                                                ? Colors.white38
-                                                : AppColors.textSecondary),
-                                      ),
-                              ),
-                            ),
-                            const SizedBox(height: 3),
-                            AnimatedDefaultTextStyle(
-                              duration: const Duration(milliseconds: 200),
-                              style: TextStyle(
-                                fontFamily: 'Tajawal',
-                                fontSize: 10,
-                                fontWeight: isSelected
-                                    ? FontWeight.w700
-                                    : FontWeight.w400,
-                                color: isSelected
-                                    ? AppColors.primary
-                                    : (isDark
-                                        ? Colors.white38
-                                        : AppColors.textSecondary),
-                              ),
-                              child: Text(tab.label),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  }),
-                ),
-              ]);
-            }),
+              ),
+            ),
           ),
-        ),
-      ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
@@ -1533,7 +1574,7 @@ class _MiniBtn extends StatelessWidget {
 //  VIDEO PLAYER WIDGET — مشغل فيديو متكامل مع ملء الشاشة
 // ═══════════════════════════════════════════════════════════
 class _VideoPlayerWidget extends StatefulWidget {
-  final VideoPlayerController ctrl;
+  final ValueNotifier<VideoPlayerController?> ctrlNotifier;
   final AudioPlayer audioPlayer;
   final void Function(Duration) onSeek;
   final VoidCallback onPlayPause;
@@ -1545,7 +1586,7 @@ class _VideoPlayerWidget extends StatefulWidget {
   final void Function(double) onVolumeChange;
 
   const _VideoPlayerWidget({
-    required this.ctrl,
+    required this.ctrlNotifier,
     required this.audioPlayer,
     required this.onSeek,
     required this.onPlayPause,
@@ -1643,7 +1684,7 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
         opaque: true,
         barrierColor: Colors.black,
         pageBuilder: (ctx, _, __) => _ImmersiveFullScreenPage(
-          ctrl: widget.ctrl,
+          ctrlNotifier: widget.ctrlNotifier,
           audioPlayer: widget.audioPlayer,
           onSeek: widget.onSeek,
           onPlayPause: widget.onPlayPause,
@@ -1848,7 +1889,13 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
   @override
   Widget build(BuildContext context) {
     // محتوى الفيديو مع أدوات التحكم
-    final videoContent = SizedBox(
+    final videoContent = ValueListenableBuilder<VideoPlayerController?>(
+      valueListenable: widget.ctrlNotifier,
+      builder: (_, ctrl, __) {
+        if (ctrl == null) {
+          return const SizedBox.shrink();
+        }
+        return SizedBox(
       width: double.infinity,
       height: double.infinity,
       child: GestureDetector(
@@ -1861,9 +1908,9 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
             FittedBox(
               fit: BoxFit.contain,
               child: SizedBox(
-                width: widget.ctrl.value.size.width > 0 ? widget.ctrl.value.size.width : 1920,
-                height: widget.ctrl.value.size.height > 0 ? widget.ctrl.value.size.height : 1080,
-                child: VideoPlayer(widget.ctrl),
+                width: ctrl.value.size.width > 0 ? ctrl.value.size.width : 1920,
+                height: ctrl.value.size.height > 0 ? ctrl.value.size.height : 1080,
+                child: VideoPlayer(ctrl),
               ),
             ),
 
@@ -2102,17 +2149,23 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
           ],
         ),
       ),
-    );
+        );
+      }, // end ValueListenableBuilder builder
+    ); // end ValueListenableBuilder
 
     // ── وضع عادي: نسبة 16:9 بدون سواد ──
-    return AspectRatio(
-      aspectRatio: widget.ctrl.value.aspectRatio > 0
-          ? widget.ctrl.value.aspectRatio
-          : 16 / 9,
-      child: Container(
-        color: Colors.black,
-        child: videoContent,
+    return ValueListenableBuilder<VideoPlayerController?>(
+      valueListenable: widget.ctrlNotifier,
+      builder: (_, ctrl, child) => AspectRatio(
+        aspectRatio: (ctrl != null && ctrl.value.aspectRatio > 0)
+            ? ctrl.value.aspectRatio
+            : 16 / 9,
+        child: Container(
+          color: Colors.black,
+          child: child,
+        ),
       ),
+      child: videoContent,
     );
   }
 
@@ -2274,7 +2327,7 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
 //  مثل يوتيوب تماماً: لا StatusBar، لا NavigationBar، لا فراغات
 // ═══════════════════════════════════════════════════════════
 class _ImmersiveFullScreenPage extends StatefulWidget {
-  final VideoPlayerController ctrl;
+  final ValueNotifier<VideoPlayerController?> ctrlNotifier;
   final AudioPlayer audioPlayer;
   final void Function(Duration) onSeek;
   final VoidCallback onPlayPause;
@@ -2286,7 +2339,7 @@ class _ImmersiveFullScreenPage extends StatefulWidget {
   final void Function(double) onVolumeChange;
 
   const _ImmersiveFullScreenPage({
-    required this.ctrl,
+    required this.ctrlNotifier,
     required this.audioPlayer,
     required this.onSeek,
     required this.onPlayPause,
@@ -2547,40 +2600,30 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
               },
               child: Transform.scale(
                 scale: _scale,
-                child: FittedBox(
-                  fit: _scale > 1.0 ? BoxFit.cover : BoxFit.contain,
-                  child: SizedBox(
-                    width: widget.ctrl.value.size.width > 0
-                        ? widget.ctrl.value.size.width : 1920,
-                    height: widget.ctrl.value.size.height > 0
-                        ? widget.ctrl.value.size.height : 1080,
-                    child: VideoPlayer(widget.ctrl),
-                  ),
+                child: ValueListenableBuilder<VideoPlayerController?>(
+                  valueListenable: widget.ctrlNotifier,
+                  builder: (_, ctrl, __) {
+                    if (ctrl == null) return const SizedBox.expand();
+                    return FittedBox(
+                      fit: _scale > 1.0 ? BoxFit.cover : BoxFit.contain,
+                      child: SizedBox(
+                        width: ctrl.value.size.width > 0
+                            ? ctrl.value.size.width : 1920,
+                        height: ctrl.value.size.height > 0
+                            ? ctrl.value.size.height : 1080,
+                        child: VideoPlayer(ctrl),
+                      ),
+                    );
+                  },
                 ),
               ),
             ),
 
-            // ── double tap: يمين=رجوع، يسار=تقديم (كل نصف الشاشة) ──
+            // ── double tap: يسار=رجوع 10ث، يمين=تقديم 10ث (معكوس) ──
             Positioned.fill(
               child: Row(
                 children: [
-                  // نصف الشاشة اليسار → تقديم 10 ثواني
-                  Expanded(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.translucent,
-                      onDoubleTap: () {
-                        final pos = widget.audioPlayer.position;
-                        widget.onSeek(pos + const Duration(seconds: 10));
-                        setState(() => _doubleTapHint = '⏩ +10');
-                        _doubleTapHintTimer?.cancel();
-                        _doubleTapHintTimer = Timer(const Duration(milliseconds: 700), () {
-                          if (mounted) setState(() => _doubleTapHint = null);
-                        });
-                        _resetTimer();
-                      },
-                    ),
-                  ),
-                  // نصف الشاشة اليمين → رجوع 10 ثواني
+                  // نصف الشاشة اليسار → رجوع 10 ثواني
                   Expanded(
                     child: GestureDetector(
                       behavior: HitTestBehavior.translucent,
@@ -2589,6 +2632,22 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
                         final back = pos - const Duration(seconds: 10);
                         widget.onSeek(back < Duration.zero ? Duration.zero : back);
                         setState(() => _doubleTapHint = '⏪ -10');
+                        _doubleTapHintTimer?.cancel();
+                        _doubleTapHintTimer = Timer(const Duration(milliseconds: 700), () {
+                          if (mounted) setState(() => _doubleTapHint = null);
+                        });
+                        _resetTimer();
+                      },
+                    ),
+                  ),
+                  // نصف الشاشة اليمين → تقديم 10 ثواني
+                  Expanded(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.translucent,
+                      onDoubleTap: () {
+                        final pos = widget.audioPlayer.position;
+                        widget.onSeek(pos + const Duration(seconds: 10));
+                        setState(() => _doubleTapHint = '⏩ +10');
                         _doubleTapHintTimer?.cancel();
                         _doubleTapHintTimer = Timer(const Duration(milliseconds: 700), () {
                           if (mounted) setState(() => _doubleTapHint = null);
@@ -2637,26 +2696,16 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
                   ),
                   child: Column(
                     children: [
-                      // ── الشريط العلوي ── إعدادات يسار + عنوان يمين
+                      // ── الشريط العلوي: عنوان يمين + إعدادات يسار ──
                       Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        padding: const EdgeInsets.fromLTRB(24, 18, 24, 12),
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
-                            // زر الإعدادات — أقصى اليسار
-                            GestureDetector(
-                              onTap: () {
-                                _showSettingsSheet(context);
-                                _resetTimer();
-                              },
-                              child: const Icon(CupertinoIcons.settings,
-                                  color: Colors.white, size: 26),
-                            ),
-                            const SizedBox(width: 16),
-                            // العنوان + الفنان — يمين
+                            // العنوان + الفنان — أقصى اليسار
                             Expanded(
                               child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.end,
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   Text(title,
@@ -2676,6 +2725,16 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
                                           fontFamily: 'Tajawal')),
                                 ],
                               ),
+                            ),
+                            const SizedBox(width: 16),
+                            // زر الإعدادات — أقصى اليمين
+                            GestureDetector(
+                              onTap: () {
+                                _showSettingsSheet(context);
+                                _resetTimer();
+                              },
+                              child: const Icon(CupertinoIcons.settings,
+                                  color: Colors.white, size: 30),
                             ),
                           ],
                         ),
@@ -2738,9 +2797,9 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
 
                       const Spacer(),
 
-                      // ── شريط التقدم + زر خروج fullscreen أسفل يمين ──
+                      // ── شريط التقدم + الوقت يسار + زر خروج يمين (كلاهما فوق الشريط) ──
                       Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+                        padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
                         child: StreamBuilder<Duration?>(
                           stream: widget.audioPlayer.durationStream,
                           builder: (_, durSnap) {
@@ -2758,7 +2817,44 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
                                     : pos;
                                 return Column(
                                   children: [
-                                    // شريط التقدم الأحمر مع thumb يكبر عند السحب
+                                    // ── صف الوقت (يسار) + زر الخروج (يمين) فوق الشريط ──
+                                    Padding(
+                                      padding: const EdgeInsets.fromLTRB(4, 0, 4, 6),
+                                      child: Row(
+                                        children: [
+                                          // الوقت — يسار مع خلفية سوداء شفافة
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                            decoration: BoxDecoration(
+                                              color: Colors.black54,
+                                              borderRadius: BorderRadius.circular(20),
+                                            ),
+                                            child: Text(
+                                              '${_fmt(displayPos)} / ${_fmt(dur)}',
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 13,
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                            ),
+                                          ),
+                                          const Spacer(),
+                                          // زر الخروج من ملء الشاشة — يمين
+                                          GestureDetector(
+                                            onTap: () {
+                                              Navigator.of(context).pop();
+                                              _resetTimer();
+                                            },
+                                            child: const Icon(
+                                              CupertinoIcons.fullscreen_exit,
+                                              color: Colors.white,
+                                              size: 28,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    // ── شريط التقدم الأحمر ──
                                     SliderTheme(
                                       data: SliderThemeData(
                                         trackHeight: 3,
@@ -2786,36 +2882,6 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
                                           widget.onSeek(Duration(milliseconds: ms));
                                           _startHideTimer();
                                         },
-                                      ),
-                                    ),
-                                    // صف الوقت + زر الخروج
-                                    Padding(
-                                      padding: const EdgeInsets.symmetric(horizontal: 4),
-                                      child: Row(
-                                        children: [
-                                          // الوقت يسار
-                                          Text(
-                                            '${_fmt(displayPos)} / ${_fmt(dur)}',
-                                            style: const TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 13,
-                                              fontWeight: FontWeight.w500,
-                                            ),
-                                          ),
-                                          const Spacer(),
-                                          // زر الخروج من ملء الشاشة — يمين
-                                          GestureDetector(
-                                            onTap: () {
-                                              Navigator.of(context).pop();
-                                              _resetTimer();
-                                            },
-                                            child: const Icon(
-                                              CupertinoIcons.fullscreen_exit,
-                                              color: Colors.white,
-                                              size: 22,
-                                            ),
-                                          ),
-                                        ],
                                       ),
                                     ),
                                   ],
@@ -2851,6 +2917,8 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
   bool _isRepeat = false;
   String? _thumbPath;
   VideoPlayerController? _videoCtrl;
+  // ValueNotifier يُشارَك مع _ImmersiveFullScreenPage ليُعيد بناءها تلقائياً
+  final ValueNotifier<VideoPlayerController?> _videoCtrlNotifier = ValueNotifier(null);
   bool _videoInitialized = false;
   double _volume = 1.0;
   double _speed = 1.0;
@@ -2879,6 +2947,7 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
     // نوقف الفيديو المرئي فقط — الصوت يستمر عبر just_audio في الخلفية
     _videoCtrl?.pause();
     _videoCtrl?.dispose();
+    _videoCtrlNotifier.dispose();
     super.dispose();
   }
 
@@ -2888,6 +2957,8 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
     _videoCtrl?.pause();
     _videoCtrl?.dispose();
     _videoCtrl = null;
+    // أعلم _ImmersiveFullScreenPage فوراً بأن الـ controller تغيّر (null = تحميل)
+    _videoCtrlNotifier.value = null;
     // تعيين حالة الانتقال لمنع ظهور عناصر التحكم القديمة
     final item = audioService.currentItem;
     if (mounted) {
@@ -2931,6 +3002,8 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
           _videoInitialized = true;
           _isSwitching = false; // انتهت مرحلة الانتقال
         });
+        // أعلم _ImmersiveFullScreenPage بالـ controller الجديد
+        _videoCtrlNotifier.value = ctrl;
       }
       // مزامنة الموقف مستمرة
       _positionSub = audioService.player.positionStream.listen((pos) {
@@ -3084,7 +3157,7 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                           color: Colors.black,
                           child: _videoInitialized && _videoCtrl != null
                               ? _VideoPlayerWidget(
-                                  ctrl: _videoCtrl!,
+                                  ctrlNotifier: _videoCtrlNotifier,
                                   audioPlayer: audioService.player,
                                   onSeek: (pos) {
                                     audioService.player.seek(pos);
@@ -3543,11 +3616,13 @@ class _MarqueeTitleState extends State<_MarqueeTitle>
   Timer? _timer;
   bool _needsScroll = false;
 
+  static const double _gap = 60.0;
+  static const double _speed = 40.0; // بكسل في الثانية
+
   @override
   void initState() {
     super.initState();
     _scrollCtrl = ScrollController();
-    // نبدأ الأنيميشن بعد بناء الويدجت
     WidgetsBinding.instance.addPostFrameCallback((_) => _startMarquee());
   }
 
@@ -3556,7 +3631,7 @@ class _MarqueeTitleState extends State<_MarqueeTitle>
     super.didUpdateWidget(old);
     if (old.text != widget.text) {
       _timer?.cancel();
-      _scrollCtrl.jumpTo(0);
+      if (_scrollCtrl.hasClients) _scrollCtrl.jumpTo(0);
       WidgetsBinding.instance.addPostFrameCallback((_) => _startMarquee());
     }
   }
@@ -3567,35 +3642,26 @@ class _MarqueeTitleState extends State<_MarqueeTitle>
     setState(() => _needsScroll = needsScroll);
     if (!needsScroll) return;
 
-    // انتظر ثانية ثم ابدأ التمرير ببطء
-    _timer = Timer(const Duration(seconds: 1), () {
-      _animateMarquee();
-    });
+    _timer = Timer(const Duration(seconds: 1), () => _loop());
   }
 
-  void _animateMarquee() {
+  void _loop() {
     if (!mounted || !_scrollCtrl.hasClients) return;
-    final maxExtent = _scrollCtrl.position.maxScrollExtent;
-    if (maxExtent <= 0) return;
-
-    // مدة التمرير: 50ms لكل بكسل (بطيء وسلس)
-    final duration = Duration(milliseconds: (maxExtent * 50).toInt());
+    // نصف maxScrollExtent = عرض نسخة واحدة + الفراغ
+    final oneLoop = _scrollCtrl.position.maxScrollExtent / 2 + _gap / 2;
+    if (oneLoop <= 0) return;
+    final duration = Duration(milliseconds: (oneLoop / _speed * 1000).toInt());
 
     _scrollCtrl
         .animateTo(
-          maxExtent,
+          _scrollCtrl.offset + oneLoop,
           duration: duration,
           curve: Curves.linear,
         )
         .then((_) {
-          if (!mounted) return;
-          // توقف ثانيتين ثم ارجع للبداية
-          _timer = Timer(const Duration(seconds: 2), () {
-            if (!mounted || !_scrollCtrl.hasClients) return;
-            _scrollCtrl.jumpTo(0);
-            // انتظر ثانية ثم كرر
-            _timer = Timer(const Duration(seconds: 1), () => _animateMarquee());
-          });
+          if (!mounted || !_scrollCtrl.hasClients) return;
+          _scrollCtrl.jumpTo(_scrollCtrl.offset - oneLoop);
+          _loop();
         });
   }
 
@@ -3626,19 +3692,34 @@ class _MarqueeTitleState extends State<_MarqueeTitle>
                 controller: _scrollCtrl,
                 scrollDirection: Axis.horizontal,
                 physics: const NeverScrollableScrollPhysics(),
-                child: Padding(
-                  padding: const EdgeInsets.only(right: 30),
-                  child: Text(
-                    widget.text,
-                    maxLines: 1,
-                    softWrap: false,
-                    style: TextStyle(
-                      color: widget.textColor,
-                      fontSize: 20,
-                      fontFamily: 'Tajawal',
-                      fontWeight: FontWeight.w700,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      widget.text,
+                      maxLines: 1,
+                      softWrap: false,
+                      style: TextStyle(
+                        color: widget.textColor,
+                        fontSize: 20,
+                        fontFamily: 'Tajawal',
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
-                  ),
+                    const SizedBox(width: _gap),
+                    Text(
+                      widget.text,
+                      maxLines: 1,
+                      softWrap: false,
+                      style: TextStyle(
+                        color: widget.textColor,
+                        fontSize: 20,
+                        fontFamily: 'Tajawal',
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(width: _gap),
+                  ],
                 ),
               ),
             )
@@ -3816,4 +3897,4 @@ class _PlaylistTileState extends State<_PlaylistTile> {
       ),
     );
   }
-}
+} 

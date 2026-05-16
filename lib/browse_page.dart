@@ -652,7 +652,7 @@ class _RepeatingPatternPainter extends CustomPainter {
       ..filterQuality = FilterQuality.medium;
     
     if (isDark) {
-      paint.color = Colors.white.withValues(alpha: 0.1);
+      paint.color = Colors.white.withValues(alpha: 0.15);
     } else {
       paint.color = Colors.white.withValues(alpha: 0.04);
     }
@@ -734,6 +734,13 @@ class BrowsePage extends StatelessWidget {
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: _UrlDownloadBox(),
+                ),
+              ),
+              const SliverToBoxAdapter(child: SizedBox(height: 14)),
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: GestureDetector(
                     onTap: () {
                       Navigator.push(
@@ -795,16 +802,12 @@ class BrowsePage extends StatelessWidget {
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: GestureDetector(
-                    onTap: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('سيتم إضافة صفحة وسائط الجهاز قريباً', textDirection: TextDirection.rtl),
-                          backgroundColor: Colors.green,
-                          behavior: SnackBarBehavior.floating,
-                          duration: Duration(seconds: 2),
-                        ),
-                      );
-                    },
+onTap: () {
+  Navigator.push(
+    context,
+    CupertinoPageRoute(builder: (_) => const MediaVideoBrowserPage()),
+  );
+},
                     child: Container(
                       height: 45,
                       decoration: BoxDecoration(
@@ -918,6 +921,753 @@ class BrowsePage extends StatelessWidget {
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  URL DOWNLOAD BOX — بوكس إدخال الرابط مع لصق وبحث
+// ═══════════════════════════════════════════════════════════
+class _UrlDownloadBox extends StatefulWidget {
+  const _UrlDownloadBox();
+
+  @override
+  State<_UrlDownloadBox> createState() => _UrlDownloadBoxState();
+}
+
+class _UrlDownloadBoxState extends State<_UrlDownloadBox> {
+  final TextEditingController _ctrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  bool _isArabic(String text) {
+    if (text.isEmpty) return false;
+    for (final ch in text.characters) {
+      final code = ch.codeUnitAt(0);
+      if (code >= 0x0600 && code <= 0x06FF) return true;
+      if (ch == ' ') continue;
+      return false;
+    }
+    return false;
+  }
+
+  Future<void> _paste() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    if (data?.text != null) {
+      setState(() => _ctrl.text = data!.text!.trim());
+    }
+  }
+
+  void _search() {
+    final url = _ctrl.text.trim();
+    if (url.isEmpty) return;
+    Navigator.push(
+      context,
+      CupertinoPageRoute(builder: (_) => UrlDownloadPage(url: url)),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = context.isDark;
+    final surface = isDark ? AppColors.darkSurface : AppColors.surface;
+    final textPrimary = isDark ? AppColors.darkText : AppColors.textPrimary;
+    final textSecondary = isDark ? AppColors.darkTextSec : AppColors.textSecondary;
+    final divider = isDark ? AppColors.darkDivider : AppColors.divider;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: divider, width: 0.8),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: isDark ? 0.25 : 0.06),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Directionality(
+            textDirection: TextDirection.rtl,
+            child: Row(
+              children: [
+                const Icon(CupertinoIcons.link, color: AppColors.primary, size: 18),
+                const SizedBox(width: 8),
+                Text(
+                  'تحميل بالرابط',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontFamily: 'Tajawal',
+                    fontWeight: FontWeight.w700,
+                    color: textPrimary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+          Directionality(
+            textDirection: TextDirection.rtl,
+            child: Row(
+              children: [
+                Expanded(
+                  child: Container(
+                    height: 42,
+                    decoration: BoxDecoration(
+                      color: isDark ? AppColors.darkBg : AppColors.background,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: divider, width: 0.8),
+                    ),
+child: TextField(
+  controller: _ctrl,
+  // إذا كان الحقل فارغاً، سيتحاذى النص لليمين (لأجل التلميح)، وإذا كتب المستخدم سيتحقق من اللغة
+  textDirection: _ctrl.text.isEmpty 
+      ? TextDirection.rtl 
+      : (_isArabic(_ctrl.text) ? TextDirection.rtl : TextDirection.ltr),
+  textAlign: _ctrl.text.isEmpty 
+      ? TextAlign.right 
+      : (_isArabic(_ctrl.text) ? TextAlign.right : TextAlign.left),
+  textAlignVertical: TextAlignVertical.center,
+  onChanged: (_) => setState(() {}),
+  style: TextStyle(
+    fontSize: 13,
+    color: textPrimary,
+    fontFamily: 'Tajawal',
+  ),
+  decoration: InputDecoration(
+    hintText: 'الصق رابط الفيديو هنا...',
+    hintTextDirection: TextDirection.rtl, 
+    hintStyle: TextStyle(
+      fontSize: 13,
+      color: textSecondary,
+      fontFamily: 'Tajawal',
+    ),
+    border: InputBorder.none,
+    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+    isDense: true,
+  ),
+  onSubmitted: (_) => _search(),
+),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                // زر لصق
+                GestureDetector(
+                  onTap: _paste,
+                  child: Container(
+                    height: 42,
+                    width: 42,
+                    decoration: BoxDecoration(
+                      color: isDark ? AppColors.darkBg : AppColors.background,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: divider, width: 0.8),
+                    ),
+                    child: Icon(CupertinoIcons.doc_on_clipboard, color: textSecondary, size: 19),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                // زر بحث/تحميل
+                GestureDetector(
+                  onTap: _search,
+                  child: Container(
+                    height: 42,
+                    width: 42,
+                    decoration: BoxDecoration(
+                      color: AppColors.primary,
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: AppColors.primary.withValues(alpha: 0.35),
+                          blurRadius: 8,
+                          offset: const Offset(0, 3),
+                        ),
+                      ],
+                    ),
+                    child: const Icon(CupertinoIcons.arrow_down_circle_fill, color: Colors.white, size: 22),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          Directionality(
+            textDirection: TextDirection.rtl,
+            child: Text(
+              'يدعم يوتيوب وروابط MP4/MP3 المباشرة',
+              style: TextStyle(
+                fontSize: 11,
+                color: textSecondary,
+                fontFamily: 'Tajawal',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  URL DOWNLOAD PAGE — صفحة تحميل الفيديو من الرابط
+// ═══════════════════════════════════════════════════════════
+class UrlDownloadPage extends StatefulWidget {
+  final String url;
+  const UrlDownloadPage({super.key, required this.url});
+
+  @override
+  State<UrlDownloadPage> createState() => _UrlDownloadPageState();
+}
+
+class _UrlDownloadPageState extends State<UrlDownloadPage> {
+  // حالة الصفحة
+  bool _loading = true;
+  bool _downloading = false;
+  bool _done = false;
+  String? _error;
+  double _progress = 0;
+
+  // معلومات الفيديو
+  String? _title;
+  String? _author;
+  String? _thumbnailUrl;
+  Duration? _duration;
+  String? _downloadUrl;
+  String? _savedFileName;
+
+  // نوع الرابط
+  bool _isYoutube = false;
+  bool _isDirectVideo = false;
+  bool _isDirectAudio = false;
+  String? _videoId;
+
+  @override
+  void initState() {
+    super.initState();
+    _analyzeAndFetch();
+  }
+
+  String? _extractYoutubeId(String url) {
+    return YoutubePlayer.convertUrlToId(url);
+  }
+
+  bool _isDirectVideoUrl(String url) {
+    final lower = url.toLowerCase();
+    return lower.endsWith('.mp4') || lower.endsWith('.mkv') ||
+           lower.endsWith('.webm') || lower.endsWith('.mov') ||
+           lower.contains('.mp4?') || lower.contains('.webm?');
+  }
+
+  bool _isDirectAudioUrl(String url) {
+    final lower = url.toLowerCase();
+    return lower.endsWith('.mp3') || lower.endsWith('.m4a') ||
+           lower.endsWith('.aac') || lower.endsWith('.opus') ||
+           lower.endsWith('.flac') || lower.endsWith('.wav');
+  }
+
+  Future<void> _analyzeAndFetch() async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      final url = widget.url;
+      _videoId = _extractYoutubeId(url);
+      _isYoutube = _videoId != null;
+      _isDirectVideo = !_isYoutube && _isDirectVideoUrl(url);
+      _isDirectAudio = !_isYoutube && !_isDirectVideo && _isDirectAudioUrl(url);
+
+      if (_isYoutube) {
+        await _fetchYoutubeInfo(_videoId!);
+      } else if (_isDirectVideo || _isDirectAudio) {
+        await _fetchDirectInfo(url);
+      } else {
+        // حاول كـ YouTube أو عرض خطأ
+        throw Exception('الرابط غير مدعوم. يرجى استخدام رابط يوتيوب أو رابط مباشر لملف فيديو/صوت.');
+      }
+    } catch (e) {
+      if (mounted) setState(() { _error = e.toString().replaceAll('Exception: ', ''); _loading = false; });
+    }
+  }
+
+  Future<void> _fetchYoutubeInfo(String videoId) async {
+    final yt = YoutubeExplode();
+    try {
+      final video = await yt.videos.get(videoId);
+      final manifest = await yt.videos.streamsClient.getManifest(videoId);
+      final muxed = manifest.muxed;
+      if (muxed.isEmpty) throw Exception('لا تتوفر صيغ مدعومة لهذا الفيديو');
+
+      // اختر أفضل جودة مناسبة (360p أو أقرب)
+      final chosen = muxed.firstWhere(
+        (s) => s.videoResolution.height == 360,
+        orElse: () {
+          final sorted = List<MuxedStreamInfo>.from(muxed)
+            ..sort((a, b) => (a.videoResolution.height - 360).abs()
+                .compareTo((b.videoResolution.height - 360).abs()));
+          return sorted.first;
+        },
+      );
+
+      if (mounted) {
+        setState(() {
+          _title = video.title;
+          _author = video.author;
+          _thumbnailUrl = video.thumbnails.highResUrl;
+          _duration = video.duration;
+          _downloadUrl = chosen.url.toString();
+          _loading = false;
+        });
+      }
+    } finally {
+      yt.close();
+    }
+  }
+
+  Future<void> _fetchDirectInfo(String url) async {
+    // استخرج اسم الملف من الرابط
+    final uri = Uri.parse(url);
+    final fileName = uri.pathSegments.isNotEmpty ? uri.pathSegments.last : 'ملف';
+    if (mounted) {
+      setState(() {
+        _title = fileName.isNotEmpty ? fileName : 'ملف مباشر';
+        _author = uri.host;
+        _downloadUrl = url;
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _startDownload() async {
+    if (_downloadUrl == null) return;
+    setState(() { _downloading = true; _progress = 0; _error = null; });
+    try {
+      // إنشاء مجلد الحفظ
+      final dir = await getApplicationDocumentsDirectory();
+      final destDir = Directory('${dir.path}/dndn');
+      if (!await destDir.exists()) await destDir.create(recursive: true);
+
+      // اسم الملف
+      String safeTitle = (_title ?? 'video')
+          .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
+          .replaceAll(RegExp(r'\s+'), '_');
+      if (safeTitle.length > 60) safeTitle = safeTitle.substring(0, 60);
+      final ext = (_isDirectAudio) ? '.mp3' : '.mp4';
+      final savePath = '${destDir.path}/$safeTitle$ext';
+      _savedFileName = '$safeTitle$ext';
+
+      final dio = Dio(BaseOptions(
+        connectTimeout: const Duration(seconds: 15),
+        receiveTimeout: const Duration(minutes: 20),
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) '
+              'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+          'Accept-Encoding': 'identity',
+          'Connection': 'keep-alive',
+          'Range': 'bytes=0-',
+        },
+      ));
+
+      await dio.download(
+        _downloadUrl!,
+        savePath,
+        deleteOnError: true,
+        onReceiveProgress: (received, total) {
+          if (total > 0 && mounted) {
+            setState(() => _progress = received / total);
+          }
+        },
+      );
+      dio.close();
+
+      // توليد thumbnail وإشعار قسم استمع
+      ThumbnailManager.generateLocalThumbnail(savePath).catchError((_) {});
+      downloadCompleteNotifier.value = destDir.path;
+
+      if (mounted) setState(() { _downloading = false; _done = true; });
+    } catch (e) {
+      if (mounted) setState(() {
+        _downloading = false;
+        _error = 'فشل التحميل: ${e.toString().replaceAll('Exception: ', '')}';
+      });
+    }
+  }
+
+  String _formatDuration(Duration? d) {
+    if (d == null) return '';
+    final h = d.inHours;
+    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return h > 0 ? '$h:$m:$s' : '$m:$s';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = context.isDark;
+    final bg = isDark ? AppColors.darkBg : AppColors.background;
+    final surface = isDark ? AppColors.darkSurface : AppColors.surface;
+    final textPrimary = isDark ? AppColors.darkText : AppColors.textPrimary;
+    final textSecondary = isDark ? AppColors.darkTextSec : AppColors.textSecondary;
+    final divider = isDark ? AppColors.darkDivider : AppColors.divider;
+
+    return Scaffold(
+      backgroundColor: bg,
+      body: SafeArea(
+        child: Column(
+          children: [
+            // شريط العنوان
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: bg,
+                border: Border(bottom: BorderSide(color: divider, width: 0.5)),
+              ),
+              child: Row(
+                children: [
+                  GestureDetector(
+                    onTap: () => Navigator.pop(context),
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: surface,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Icon(CupertinoIcons.xmark, size: 18, color: textPrimary),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Directionality(
+                      textDirection: TextDirection.rtl,
+                      child: Text(
+                        'تحميل الفيديو',
+                        style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w700,
+                          color: textPrimary,
+                          fontFamily: 'Tajawal',
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: _loading
+                  ? _buildLoading(textSecondary)
+                  : _error != null && !_downloading && !_done
+                      ? _buildError(textPrimary, textSecondary)
+                      : _buildContent(surface, textPrimary, textSecondary, divider, isDark),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLoading(Color textSecondary) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const CircularProgressIndicator(
+            valueColor: AlwaysStoppedAnimation(AppColors.primary),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'جاري جلب معلومات الفيديو...',
+            style: TextStyle(fontSize: 14, color: textSecondary, fontFamily: 'Tajawal'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildError(Color textPrimary, Color textSecondary) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(CupertinoIcons.exclamationmark_circle, color: AppColors.primary, size: 52),
+            const SizedBox(height: 16),
+            Text(
+              _error ?? 'خطأ غير معروف',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 14, color: textPrimary, fontFamily: 'Tajawal'),
+            ),
+            const SizedBox(height: 24),
+            GestureDetector(
+              onTap: _analyzeAndFetch,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                decoration: BoxDecoration(
+                  color: AppColors.primary,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Text(
+                  'إعادة المحاولة',
+                  style: TextStyle(color: Colors.white, fontSize: 15, fontFamily: 'Tajawal', fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildContent(Color surface, Color textPrimary, Color textSecondary, Color divider, bool isDark) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Directionality(
+        textDirection: TextDirection.rtl,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // الصورة المصغرة
+            if (_thumbnailUrl != null)
+              ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: AspectRatio(
+                  aspectRatio: 16 / 9,
+                  child: CachedNetworkImage(
+                    imageUrl: _thumbnailUrl!,
+                    fit: BoxFit.cover,
+                    placeholder: (_, __) => Container(
+                      color: surface,
+                      child: const Center(
+                        child: CircularProgressIndicator(
+                          valueColor: AlwaysStoppedAnimation(AppColors.primary),
+                        ),
+                      ),
+                    ),
+                    errorWidget: (_, __, ___) => Container(
+                      color: surface,
+                      child: const Icon(CupertinoIcons.video_camera_solid,
+                          color: AppColors.primary, size: 48),
+                    ),
+                  ),
+                ),
+              ),
+            if (_thumbnailUrl == null)
+              Container(
+                height: 160,
+                decoration: BoxDecoration(
+                  color: surface,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Center(
+                  child: Icon(
+                    _isDirectAudio ? CupertinoIcons.music_note : CupertinoIcons.video_camera_solid,
+                    color: AppColors.primary,
+                    size: 52,
+                  ),
+                ),
+              ),
+            const SizedBox(height: 16),
+
+            // العنوان والمعلومات
+            Text(
+              _title ?? 'بدون عنوان',
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w800,
+                color: textPrimary,
+                fontFamily: 'Tajawal',
+              ),
+            ),
+            if (_author != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                _author!,
+                style: TextStyle(fontSize: 13, color: textSecondary, fontFamily: 'Tajawal'),
+              ),
+            ],
+            if (_duration != null) ...[
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  Icon(CupertinoIcons.time, size: 13, color: textSecondary),
+                  const SizedBox(width: 4),
+                  Text(
+                    _formatDuration(_duration),
+                    style: TextStyle(fontSize: 13, color: textSecondary, fontFamily: 'Tajawal'),
+                  ),
+                ],
+              ),
+            ],
+            const SizedBox(height: 8),
+
+            // الرابط
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: surface,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: divider, width: 0.8),
+              ),
+              child: Row(
+                children: [
+                  Icon(CupertinoIcons.link, size: 13, color: textSecondary),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      widget.url,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textDirection: TextDirection.ltr,
+                      style: TextStyle(fontSize: 11, color: textSecondary, fontFamily: 'Tajawal'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            // شريط التقدم أو رسالة الإتمام
+            if (_downloading) ...[
+              Text(
+                'جاري التحميل... ${(_progress * 100).toStringAsFixed(1)}%',
+                style: TextStyle(fontSize: 14, color: textPrimary, fontFamily: 'Tajawal', fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 10),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: LinearProgressIndicator(
+                  value: _progress,
+                  backgroundColor: divider,
+                  valueColor: const AlwaysStoppedAnimation(AppColors.primary),
+                  minHeight: 10,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '${(_progress * 100).toStringAsFixed(0)}% مكتمل',
+                style: TextStyle(fontSize: 12, color: textSecondary, fontFamily: 'Tajawal'),
+              ),
+            ],
+
+            if (_done) ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.green.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: Colors.green.withValues(alpha: 0.3), width: 1),
+                ),
+                child: Column(
+                  children: [
+                    const Icon(CupertinoIcons.checkmark_circle_fill, color: Colors.green, size: 40),
+                    const SizedBox(height: 10),
+                    Text(
+                      'تم التحميل بنجاح!',
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.green,
+                        fontFamily: 'Tajawal',
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'تمت إضافة "${_savedFileName ?? _title ?? ''}" إلى قسم استمع',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 13, color: textSecondary, fontFamily: 'Tajawal'),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              GestureDetector(
+                onTap: () => Navigator.pop(context),
+                child: Container(
+                  width: double.infinity,
+                  height: 50,
+                  decoration: BoxDecoration(
+                    color: surface,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: divider, width: 0.8),
+                  ),
+                  alignment: Alignment.center,
+                  child: Text(
+                    'العودة',
+                    style: TextStyle(
+                      color: textPrimary,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      fontFamily: 'Tajawal',
+                    ),
+                  ),
+                ),
+              ),
+            ],
+
+            if (_error != null && (_downloading || _done)) ...[
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.red.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  _error!,
+                  style: const TextStyle(color: Colors.red, fontSize: 13, fontFamily: 'Tajawal'),
+                ),
+              ),
+            ],
+
+            // زر التحميل (يظهر فقط عندما لا يكون تحميل جارٍ ولم يكتمل)
+            if (!_downloading && !_done) ...[
+              GestureDetector(
+                onTap: _startDownload,
+                child: Container(
+                  width: double.infinity,
+                  height: 52,
+                  decoration: BoxDecoration(
+                    color: AppColors.primary,
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppColors.primary.withValues(alpha: 0.35),
+                        blurRadius: 16,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
+                  ),
+                  alignment: Alignment.center,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(CupertinoIcons.arrow_down_circle_fill, color: Colors.white, size: 22),
+                      const SizedBox(width: 10),
+                      Text(
+                        _isDirectAudio ? 'تحميل الصوت وإضافته لاستمع' : 'تحميل الفيديو وإضافته لاستمع',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          fontFamily: 'Tajawal',
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -2514,6 +3264,360 @@ class _DownloadSheet extends StatelessWidget {
             ),
             Icon(CupertinoIcons.chevron_left,
                 size: 14, color: textSecondary),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  MEDIA VIDEO BROWSER PAGE — استيراد مقاطع الفيديو فقط من وسائط الجهاز
+// ═══════════════════════════════════════════════════════════
+class MediaVideoBrowserPage extends StatefulWidget {
+  const MediaVideoBrowserPage({super.key});
+
+  @override
+  State<MediaVideoBrowserPage> createState() => _MediaVideoBrowserPageState();
+}
+
+class _MediaVideoBrowserPageState extends State<MediaVideoBrowserPage> {
+  List<PlatformFile> _pickedVideos = [];
+  bool _importing = false;
+
+  // دالة اختيار مقاطع الفيديو فقط من وسائط الجهاز
+  Future<void> _pickVideos() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        allowMultiple: true,
+        type: FileType.video, // تحديد اختيار مقاطع الفيديو فقط
+      );
+      if (result != null && result.files.isNotEmpty) {
+        setState(() => _pickedVideos = result.files);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('خطأ في فتح وسائط الجهاز: $e', textDirection: TextDirection.rtl),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  // دالة استيراد وتخزين مقاطع الفيديو المحددة إلى مجلد dndn ليظهر في صفحة استمع
+  Future<void> _importSelected() async {
+    if (_pickedVideos.isEmpty) return;
+    setState(() => _importing = true);
+    
+    final dir = await getApplicationDocumentsDirectory();
+    final destDir = Directory('${dir.path}/dndn');
+    if (!await destDir.exists()) await destDir.create(recursive: true);
+
+    int copied = 0;
+    for (final file in _pickedVideos) {
+      if (file.path == null) continue;
+      try {
+        final src = File(file.path!);
+        final name = file.name;
+        final dest = File('${destDir.path}/$name');
+        if (!await dest.exists()) {
+          await src.copy(dest.path);
+        }
+        copied++;
+        // توليد صورة مصغرة للفيديو المحلي
+        ThumbnailManager.generateLocalThumbnail(dest.path).catchError((_) {});
+      } catch (_) {}
+    }
+
+    // تحديث المستمع (Notifier) لتظهر الملفات فوراً في صفحة استمع
+    downloadCompleteNotifier.value = destDir.path;
+
+    if (mounted) {
+      setState(() => _importing = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('✅ تمت إضافة $copied فيديو إلى قسم استمع',
+              textDirection: TextDirection.rtl),
+          backgroundColor: Colors.green.shade700,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      );
+      Navigator.pop(context); // العودة للخلف بعد إتمام الاستيراد
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bg = isDark ? AppColors.darkBg : AppColors.background;
+    final surface = isDark ? AppColors.darkSurface : AppColors.surface;
+    final textPrimary = isDark ? AppColors.darkText : AppColors.textPrimary;
+    final textSecondary = isDark ? AppColors.darkTextSec : AppColors.textSecondary;
+    final divider = isDark ? AppColors.darkDivider : AppColors.divider;
+    final redLight = isDark ? AppColors.darkRedLight : AppColors.redLight;
+
+    return Scaffold(
+      backgroundColor: bg,
+      body: SafeArea(
+        child: Column(
+          children: [
+            // شريط العنوان العلوي (Header)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: bg,
+                border: Border(bottom: BorderSide(color: divider, width: 0.5)),
+              ),
+              child: Row(
+                children: [
+                  GestureDetector(
+                    onTap: () => Navigator.pop(context),
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: surface,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Icon(CupertinoIcons.xmark, size: 18, color: textPrimary),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'وسائط الجهاز (فيديو)',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        color: textPrimary,
+                        fontFamily: 'Tajawal',
+                      ),
+                    ),
+                  ),
+                  if (_pickedVideos.isNotEmpty)
+                    GestureDetector(
+                      onTap: _importing ? null : _importSelected,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: _importing
+                            ? const SizedBox(
+                                width: 16, height: 16,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: Colors.white))
+                            : Text(
+                                'تم (${_pickedVideos.length})',
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                    fontFamily: 'Tajawal'),
+                              ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            // محتوى الصفحة (قائمة الفيديوهات أو زر الاختيار المبدئي)
+            Expanded(
+              child: _pickedVideos.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Container(
+                            width: 80,
+                            height: 80,
+                            decoration: BoxDecoration(
+                              color: redLight,
+                              borderRadius: BorderRadius.circular(24),
+                            ),
+                            child: const Icon(CupertinoIcons.video_camera_solid,
+                                size: 38, color: AppColors.primary),
+                          ),
+                          const SizedBox(height: 20),
+                          Text(
+                            'اختر مقاطع فيديو من وسائط الجهاز',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontFamily: 'Tajawal',
+                              fontWeight: FontWeight.w700,
+                              color: textPrimary,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'سيتم عرض مقاطع الفيديو فقط لاستيرادها',
+                            style: TextStyle(
+                                fontSize: 13,
+                                fontFamily: 'Tajawal',
+                                color: textSecondary),
+                          ),
+                          const SizedBox(height: 32),
+                          GestureDetector(
+                            onTap: _pickVideos,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 28, vertical: 14),
+                              decoration: BoxDecoration(
+                                color: AppColors.primary,
+                                borderRadius: BorderRadius.circular(14),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: AppColors.primary.withValues(alpha: 0.35),
+                                    blurRadius: 16,
+                                    offset: const Offset(0, 6),
+                                  ),
+                                ],
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(CupertinoIcons.photo_on_rectangle,
+                                      color: Colors.white, size: 20),
+                                  SizedBox(width: 10),
+                                  Text(
+                                    'فتح معرض الفيديوهات',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w700,
+                                      fontFamily: 'Tajawal',
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : Column(
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                          child: GestureDetector(
+                            onTap: _pickVideos,
+                            child: Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              decoration: BoxDecoration(
+                                color: surface,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: divider, width: 0.8),
+                              ),
+                              alignment: Alignment.center,
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(CupertinoIcons.refresh, color: textSecondary, size: 18),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    'تعديل الاختيار / إضافة مقاطع أخرى',
+                                    style: TextStyle(
+                                        color: textSecondary,
+                                        fontSize: 14,
+                                        fontFamily: 'Tajawal',
+                                        fontWeight: FontWeight.w600),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: ListView.separated(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                            itemCount: _pickedVideos.length,
+                            separatorBuilder: (_, __) => const SizedBox(height: 6),
+                            itemBuilder: (context, index) {
+                              final file = _pickedVideos[index];
+                              final name = file.name;
+                              final ext = name.split('.').last.toLowerCase();
+                              return Container(
+                                decoration: BoxDecoration(
+                                  color: redLight,
+                                  borderRadius: BorderRadius.circular(14),
+                                  border: Border.all(
+                                    color: AppColors.primary.withValues(alpha: 0.3),
+                                    width: 0.8,
+                                  ),
+                                ),
+                                child: ListTile(
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                  leading: Container(
+                                    width: 42, height: 42,
+                                    decoration: BoxDecoration(
+                                      color: AppColors.primary,
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: const Icon(
+                                      CupertinoIcons.play_rectangle_fill,
+                                      color: Colors.white,
+                                      size: 20,
+                                    ),
+                                  ),
+                                  title: Text(
+                                    name.replaceAll(RegExp(r'\.\w+$'), ''),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 14,
+                                      fontFamily: 'Tajawal',
+                                      fontWeight: FontWeight.w500,
+                                      color: AppColors.primary,
+                                    ),
+                                  ),
+                                  subtitle: Text(
+                                    ext.toUpperCase(),
+                                    style: TextStyle(fontSize: 11, color: textSecondary),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+            ),
+            // الزر السفلي العائم عند اختيار ملفات
+            if (_pickedVideos.isNotEmpty)
+              Container(
+                padding: EdgeInsets.fromLTRB(16, 12, 16, MediaQuery.of(context).padding.bottom + 12),
+                decoration: BoxDecoration(
+                  color: bg,
+                  border: Border(top: BorderSide(color: divider, width: 0.5)),
+                ),
+                child: GestureDetector(
+                  onTap: _importing ? null : _importSelected,
+                  child: Container(
+                    width: double.infinity,
+                    height: 52,
+                    decoration: BoxDecoration(
+                      color: AppColors.primary,
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    alignment: Alignment.center,
+                    child: _importing
+                        ? const CircularProgressIndicator(color: Colors.white)
+                        : Text(
+                            'استيراد ${_pickedVideos.length} فيديو إلى صفحة استمع',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                              fontFamily: 'Tajawal',
+                            ),
+                          ),
+                  ),
+                ),
+              ),
           ],
         ),
       ),

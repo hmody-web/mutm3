@@ -109,7 +109,6 @@ class _ListenPageState extends State<ListenPage> {
   }
 
   Future<void> _deleteItem(LocalMediaItem item) async {
-    // Confirm dialog
     final confirm = await showCupertinoDialog<bool>(
       context: context,
       builder: (_) => CupertinoAlertDialog(
@@ -470,7 +469,7 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
               child: GestureDetector(
                 onTap: () {
                   _closeSwipe();
-                  widget.onDelete();
+                  Future.microtask(() => widget.onDelete());
                 },
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),

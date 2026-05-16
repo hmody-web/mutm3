@@ -1689,26 +1689,19 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
 
   Widget _buildTopBar() {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       child: Row(
         children: [
-          const Spacer(),
-          // زر الإعدادات فقط
+          // زر الإعدادات — يسار العلوي
           GestureDetector(
             onTap: () {
               _showSettingsSheet(context);
               _resetTimer();
             },
-            child: Container(
-              padding: const EdgeInsets.all(7),
-              decoration: BoxDecoration(
-                color: Colors.black45,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Icon(CupertinoIcons.settings,
-                  color: Colors.white, size: 16),
-            ),
+            child: const Icon(CupertinoIcons.settings,
+                color: Colors.white, size: 24),
           ),
+          const Spacer(),
         ],
       ),
     );
@@ -1938,18 +1931,17 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
                               _resetTimer();
                             },
                             child: Container(
-                              width: 52,
-                              height: 52,
+                              width: 64,
+                              height: 64,
                               decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.15),
+                                color: Colors.black.withOpacity(0.45),
                                 shape: BoxShape.circle,
-                                border: Border.all(color: Colors.white24, width: 1),
                               ),
                               child: const Icon(CupertinoIcons.backward_end_fill,
-                                  color: Colors.white, size: 22),
+                                  color: Colors.white, size: 26),
                             ),
                           ),
-                          const SizedBox(width: 24),
+                          const SizedBox(width: 28),
 
                           // تشغيل / إيقاف
                           StreamBuilder<bool>(
@@ -1962,35 +1954,24 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
                                   _resetTimer();
                                 },
                                 child: Container(
-                                  width: 70,
-                                  height: 70,
+                                  width: 80,
+                                  height: 80,
                                   decoration: BoxDecoration(
-                                    gradient: const LinearGradient(
-                                      colors: [AppColors.primary, AppColors.primaryDark],
-                                      begin: Alignment.topLeft,
-                                      end: Alignment.bottomRight,
-                                    ),
+                                    color: Colors.black.withOpacity(0.5),
                                     shape: BoxShape.circle,
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: AppColors.primary.withOpacity(0.55),
-                                        blurRadius: 24,
-                                        spreadRadius: 3,
-                                      ),
-                                    ],
                                   ),
                                   child: Icon(
                                     playing
                                         ? CupertinoIcons.pause_fill
                                         : CupertinoIcons.play_fill,
                                     color: Colors.white,
-                                    size: 30,
+                                    size: 36,
                                   ),
                                 ),
                               );
                             },
                           ),
-                          const SizedBox(width: 24),
+                          const SizedBox(width: 28),
 
                           // زر التالي
                           GestureDetector(
@@ -1999,15 +1980,14 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
                               _resetTimer();
                             },
                             child: Container(
-                              width: 52,
-                              height: 52,
+                              width: 64,
+                              height: 64,
                               decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.15),
+                                color: Colors.black.withOpacity(0.45),
                                 shape: BoxShape.circle,
-                                border: Border.all(color: Colors.white24, width: 1),
                               ),
                               child: const Icon(CupertinoIcons.forward_end_fill,
-                                  color: Colors.white, size: 22),
+                                  color: Colors.white, size: 26),
                             ),
                           ),
                         ],
@@ -2030,20 +2010,60 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
                                     ? pos.inMilliseconds / dur.inMilliseconds
                                     : 0.0;
                                 final display = _dragging ? _dragValue : progress;
+                                final displayPos = _dragging
+                                    ? Duration(milliseconds: (_dragValue * dur.inMilliseconds).toInt())
+                                    : pos;
                                 return Column(
                                   children: [
+                                    // ── صف الوقت وزر ملء الشاشة ──
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                      child: Row(
+                                        children: [
+                                          // وقت بصيغة pill داكنة
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                            decoration: BoxDecoration(
+                                              color: Colors.black54,
+                                              borderRadius: BorderRadius.circular(20),
+                                            ),
+                                            child: Text(
+                                              '${_fmt(displayPos)} / ${_fmt(dur)}',
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                            ),
+                                          ),
+                                          const Spacer(),
+                                          // زر ملء الشاشة — يمين
+                                          GestureDetector(
+                                            onTap: () {
+                                              _toggleFullScreen();
+                                              _resetTimer();
+                                            },
+                                            child: const Icon(
+                                              CupertinoIcons.fullscreen,
+                                              color: Colors.white,
+                                              size: 22,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    // ── شريط التقدم مع thumb يكبر عند السحب ──
                                     SliderTheme(
                                       data: SliderThemeData(
                                         trackHeight: 3,
-                                        thumbShape: const RoundSliderThumbShape(
-                                            enabledThumbRadius: 7),
+                                        thumbShape: RoundSliderThumbShape(
+                                            enabledThumbRadius: _dragging ? 10 : 6),
                                         overlayShape: const RoundSliderOverlayShape(
-                                            overlayRadius: 14),
-                                        activeTrackColor: AppColors.primary,
+                                            overlayRadius: 0),
+                                        activeTrackColor: Colors.white,
                                         inactiveTrackColor: Colors.white30,
                                         thumbColor: Colors.white,
-                                        overlayColor:
-                                            AppColors.primary.withOpacity(0.3),
+                                        overlayColor: Colors.transparent,
                                       ),
                                       child: Slider(
                                         value: display.clamp(0.0, 1.0),
@@ -2058,60 +2078,10 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
                                             setState(() => _dragValue = v),
                                         onChangeEnd: (v) {
                                           setState(() => _dragging = false);
-                                          final ms =
-                                              (v * dur.inMilliseconds).toInt();
-                                          widget.onSeek(
-                                              Duration(milliseconds: ms));
+                                          final ms = (v * dur.inMilliseconds).toInt();
+                                          widget.onSeek(Duration(milliseconds: ms));
                                           _startHideTimer();
                                         },
-                                      ),
-                                    ),
-                                    Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 4),
-                                      child: Row(
-                                        mainAxisAlignment:
-                                            MainAxisAlignment.spaceBetween,
-                                        children: [
-                                          Text(
-                                            _fmt(_dragging
-                                                ? Duration(
-                                                    milliseconds: (_dragValue *
-                                                            dur.inMilliseconds)
-                                                        .toInt())
-                                                : pos),
-                                            style: const TextStyle(
-                                                color: Colors.white70,
-                                                fontSize: 11),
-                                          ),
-                                          Text(
-                                            _fmt(dur),
-                                            style: const TextStyle(
-                                                color: Colors.white70,
-                                                fontSize: 11),
-                                          ),
-                                          // زر ملء الشاشة يمين شريط الوقت
-                                          GestureDetector(
-                                            onTap: () {
-                                              _toggleFullScreen();
-                                              _resetTimer();
-                                            },
-                                            child: Container(
-                                              padding: const EdgeInsets.all(5),
-                                              decoration: BoxDecoration(
-                                                color: Colors.black38,
-                                                borderRadius: BorderRadius.circular(6),
-                                              ),
-                                              child: Icon(
-                                                _isFullScreen
-                                                    ? CupertinoIcons.fullscreen_exit
-                                                    : CupertinoIcons.fullscreen,
-                                                color: Colors.white,
-                                                size: 14,
-                                              ),
-                                            ),
-                                          ),
-                                        ],
                                       ),
                                     ),
                                   ],
@@ -2664,49 +2634,44 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
                   ),
                   child: Column(
                     children: [
-                      // ── الشريط العلوي ── (إعدادات + عنوان فقط بدون سهم)
+                      // ── الشريط العلوي ── إعدادات يسار + عنوان يمين
                       Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
-                            // العنوان + الفنان — يسار
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(title,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 14,
-                                          fontFamily: 'Tajawal',
-                                          fontWeight: FontWeight.w700)),
-                                  Text(artist,
-                                      style: const TextStyle(
-                                          color: Colors.white70,
-                                          fontSize: 12,
-                                          fontFamily: 'Tajawal')),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            // زر الإعدادات — أقصى اليمين
+                            // زر الإعدادات — أقصى اليسار
                             GestureDetector(
                               onTap: () {
                                 _showSettingsSheet(context);
                                 _resetTimer();
                               },
-                              child: Container(
-                                padding: const EdgeInsets.all(7),
-                                decoration: BoxDecoration(
-                                  color: Colors.black45,
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: const Icon(CupertinoIcons.settings,
-                                    color: Colors.white, size: 16),
+                              child: const Icon(CupertinoIcons.settings,
+                                  color: Colors.white, size: 26),
+                            ),
+                            const SizedBox(width: 16),
+                            // العنوان + الفنان — يمين
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(title,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      textDirection: TextDirection.rtl,
+                                      style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 15,
+                                          fontFamily: 'Tajawal',
+                                          fontWeight: FontWeight.w700)),
+                                  Text(artist,
+                                      textDirection: TextDirection.rtl,
+                                      style: const TextStyle(
+                                          color: Colors.white70,
+                                          fontSize: 12,
+                                          fontFamily: 'Tajawal')),
+                                ],
                               ),
                             ),
                           ],
@@ -2722,14 +2687,13 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
                           GestureDetector(
                             onTap: () { widget.onPrev(); _resetTimer(); },
                             child: Container(
-                              width: 56, height: 56,
+                              width: 60, height: 60,
                               decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.15),
+                                color: Colors.black.withOpacity(0.45),
                                 shape: BoxShape.circle,
-                                border: Border.all(color: Colors.white24, width: 1),
                               ),
                               child: const Icon(CupertinoIcons.backward_end_fill,
-                                  color: Colors.white, size: 24),
+                                  color: Colors.white, size: 26),
                             ),
                           ),
                           const SizedBox(width: 28),
@@ -2740,25 +2704,14 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
                               return GestureDetector(
                                 onTap: () { widget.onPlayPause(); _resetTimer(); },
                                 child: Container(
-                                  width: 76, height: 76,
+                                  width: 80, height: 80,
                                   decoration: BoxDecoration(
-                                    gradient: const LinearGradient(
-                                      colors: [AppColors.primary, AppColors.primaryDark],
-                                      begin: Alignment.topLeft,
-                                      end: Alignment.bottomRight,
-                                    ),
+                                    color: Colors.black.withOpacity(0.5),
                                     shape: BoxShape.circle,
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: AppColors.primary.withOpacity(0.6),
-                                        blurRadius: 28,
-                                        spreadRadius: 4,
-                                      ),
-                                    ],
                                   ),
                                   child: Icon(
                                     playing ? CupertinoIcons.pause_fill : CupertinoIcons.play_fill,
-                                    color: Colors.white, size: 32,
+                                    color: Colors.white, size: 36,
                                   ),
                                 ),
                               );
@@ -2768,14 +2721,13 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
                           GestureDetector(
                             onTap: () { widget.onNext(); _resetTimer(); },
                             child: Container(
-                              width: 56, height: 56,
+                              width: 60, height: 60,
                               decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.15),
+                                color: Colors.black.withOpacity(0.45),
                                 shape: BoxShape.circle,
-                                border: Border.all(color: Colors.white24, width: 1),
                               ),
                               child: const Icon(CupertinoIcons.forward_end_fill,
-                                  color: Colors.white, size: 24),
+                                  color: Colors.white, size: 26),
                             ),
                           ),
                         ],
@@ -2785,7 +2737,7 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
 
                       // ── شريط التقدم + زر خروج fullscreen أسفل يمين ──
                       Padding(
-                        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
                         child: StreamBuilder<Duration?>(
                           stream: widget.audioPlayer.durationStream,
                           builder: (_, durSnap) {
@@ -2798,17 +2750,22 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
                                     ? pos.inMilliseconds / dur.inMilliseconds
                                     : 0.0;
                                 final display = _dragging ? _dragValue : progress;
+                                final displayPos = _dragging
+                                    ? Duration(milliseconds: (_dragValue * dur.inMilliseconds).toInt())
+                                    : pos;
                                 return Column(
                                   children: [
+                                    // شريط التقدم الأحمر مع thumb يكبر عند السحب
                                     SliderTheme(
                                       data: SliderThemeData(
-                                        trackHeight: 4,
-                                        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
-                                        overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
+                                        trackHeight: 3,
+                                        thumbShape: RoundSliderThumbShape(
+                                            enabledThumbRadius: _dragging ? 10 : 6),
+                                        overlayShape: const RoundSliderOverlayShape(overlayRadius: 0),
                                         activeTrackColor: AppColors.primary,
                                         inactiveTrackColor: Colors.white30,
-                                        thumbColor: Colors.white,
-                                        overlayColor: AppColors.primary.withOpacity(0.3),
+                                        thumbColor: AppColors.primary,
+                                        overlayColor: Colors.transparent,
                                       ),
                                       child: Slider(
                                         value: display.clamp(0.0, 1.0),
@@ -2828,36 +2785,31 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
                                         },
                                       ),
                                     ),
+                                    // صف الوقت + زر الخروج
                                     Padding(
                                       padding: const EdgeInsets.symmetric(horizontal: 4),
                                       child: Row(
-                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                         children: [
+                                          // الوقت يسار
                                           Text(
-                                            _fmt(_dragging
-                                                ? Duration(milliseconds: (_dragValue * dur.inMilliseconds).toInt())
-                                                : pos),
-                                            style: const TextStyle(color: Colors.white70, fontSize: 11),
+                                            '${_fmt(displayPos)} / ${_fmt(dur)}',
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.w500,
+                                            ),
                                           ),
-                                          Text(_fmt(dur),
-                                              style: const TextStyle(color: Colors.white70, fontSize: 11)),
-                                          // زر الخروج من ملء الشاشة
+                                          const Spacer(),
+                                          // زر الخروج من ملء الشاشة — يمين
                                           GestureDetector(
                                             onTap: () {
                                               Navigator.of(context).pop();
                                               _resetTimer();
                                             },
-                                            child: Container(
-                                              padding: const EdgeInsets.all(6),
-                                              decoration: BoxDecoration(
-                                                color: Colors.black38,
-                                                borderRadius: BorderRadius.circular(7),
-                                              ),
-                                              child: const Icon(
-                                                CupertinoIcons.fullscreen_exit,
-                                                color: Colors.white,
-                                                size: 16,
-                                              ),
+                                            child: const Icon(
+                                              CupertinoIcons.fullscreen_exit,
+                                              color: Colors.white,
+                                              size: 22,
                                             ),
                                           ),
                                         ],

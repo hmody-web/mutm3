@@ -1,0 +1,490 @@
+import 'main.dart';
+import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:path_provider/path_provider.dart';
+// ═══════════════════════════════════════════
+// استيراد الكلاسات المشتركة من player_service.dart
+// ═══════════════════════════════════════════
+// (AppColors, ThemeNotifier, AppTheme,
+//  ThumbnailManager, _downloadCompleteNotifier)
+
+
+// ═══════════════════════════════════════════════════════════
+//  PAGE 3 — الإعدادات
+// ═══════════════════════════════════════════════════════════
+class SettingsPage extends StatefulWidget {
+  const SettingsPage({super.key});
+
+  @override
+  State<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends State<SettingsPage> {
+  bool _backgroundPlay = true;
+  bool _stopOnClose = false;
+  String _downloadQuality = 'medium';
+  String _downloadPath = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPrefs();
+  }
+
+  Future<void> _loadPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final dir = await getApplicationDocumentsDirectory();
+    setState(() {
+      _backgroundPlay = prefs.getBool('backgroundPlay') ?? true;
+      _stopOnClose = prefs.getBool('stopOnClose') ?? false;
+      _downloadQuality = prefs.getString('downloadQuality') ?? 'medium';
+      _downloadPath = '${dir.path}/dndn';
+    });
+  }
+
+  Future<void> _savePref(String key, dynamic value) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (value is bool) await prefs.setBool(key, value);
+    if (value is String) await prefs.setString(key, value);
+  }
+
+  Future<void> _clearDownloads() async {
+    final confirm = await showCupertinoDialog<bool>(
+      context: context,
+      builder: (_) => CupertinoAlertDialog(
+        title: const Text('حذف جميع التنزيلات'),
+        content: const Text('هل أنت متأكد؟ سيتم حذف جميع الملفات المحملة.'),
+        actions: [
+          CupertinoDialogAction(
+            isDestructiveAction: true,
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('حذف'),
+          ),
+          CupertinoDialogAction(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('إلغاء'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    try {
+      final dir = Directory(_downloadPath);
+      if (await dir.exists()) await dir.delete(recursive: true);
+      await dir.create();
+      downloadCompleteNotifier.value = _downloadPath;
+    } catch (_) {}
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: context.appBg,
+      body: CustomScrollView(
+        slivers: [
+          SliverToBoxAdapter(
+            child: Container(
+              padding: EdgeInsets.only(
+                top: MediaQuery.of(context).padding.top + 16,
+                left: 20,
+                right: 20,
+                bottom: 24,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                      Text(
+                        'الإعدادات',
+                        style: TextStyle(
+                          fontSize: 28,
+                          fontFamily: 'Tajawal',
+                          fontWeight: FontWeight.w700,
+                          color: context.appText,
+                          letterSpacing: -0.5,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color.fromARGB(255, 53, 53, 53), Color.fromARGB(255, 102, 75, 75)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Row(
+                          children: [
+                            // Logo in settings card
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(14),
+                              child: Image.asset(
+                                'assets/images/logo.png',
+                                width: 52,
+                                height: 52,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) => Container(
+                                  width: 52,
+                                  height: 52,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white24,
+                                    borderRadius: BorderRadius.circular(14),
+                                  ),
+                                  child: const Icon(CupertinoIcons.music_note_2,
+                                      color: Colors.white, size: 28),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 14),
+                            const Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text('دندن',
+                                    style: TextStyle(
+                                        color: Colors.white,
+                                        fontFamily: 'Tajawal',
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.w700)),
+                                Text('الإصدار 2.1.0',
+                                    style: TextStyle(
+                                        color: Colors.white70,
+                                        fontFamily: 'Tajawal',
+                                        fontSize: 13)),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                ],
+              ),
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Column(
+                    children: [
+                      _settingsSection('التشغيل', [
+                        _switchTile(
+                          'التشغيل في الخلفية',
+                          'يبقى يعمل عند إغلاق التطبيق',
+                          CupertinoIcons.play_circle_fill,
+                          _backgroundPlay,
+                          (v) {
+                            setState(() => _backgroundPlay = v);
+                            _savePref('backgroundPlay', v);
+                          },
+                        ),
+                        _switchTile(
+                          'إيقاف عند الإغلاق',
+                          'يتوقف عند إغلاق شاشة التطبيق',
+                          CupertinoIcons.stop_circle_fill,
+                          _stopOnClose,
+                          (v) {
+                            setState(() => _stopOnClose = v);
+                            _savePref('stopOnClose', v);
+                          },
+                        ),
+                      ]),
+                      const SizedBox(height: 16),
+                      _settingsSection('المظهر', [
+                        ValueListenableBuilder<ThemeMode>(
+                          valueListenable: ThemeNotifier.instance,
+                          builder: (_, mode, __) {
+                            final isDarkNow = mode == ThemeMode.dark;
+                            return _switchTile(
+                              'الوضع الداكن',
+                              'تغيير مظهر التطبيق للوضع الداكن',
+                              CupertinoIcons.moon_fill,
+                              isDarkNow,
+                              (v) => ThemeNotifier.instance.toggle(v),
+                            );
+                          },
+                        ),
+                      ]),
+                      const SizedBox(height: 16),
+                      _settingsSection('التحميل', [
+                        _infoTile(
+                            'مسار التحميل',
+                            _downloadPath.split('/').last,
+                            CupertinoIcons.folder_fill),
+                        _qualityTile(),
+                      ]),
+                      const SizedBox(height: 16),
+                      _settingsSection('الإدارة', [
+                        _actionTile(
+                          'حذف جميع التنزيلات',
+                          'مسح كل الملفات المحملة',
+                          CupertinoIcons.trash_fill,
+                          Colors.red,
+                          _clearDownloads,
+                        ),
+                      ]),
+                      const SizedBox(height: 16),
+
+GestureDetector(
+  onTap: () async {
+    final uri = Uri.parse('https://scrptaty.com');
+
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
+    }
+  },
+  child: Container(
+    width: double.infinity,
+    padding: const EdgeInsets.all(16),
+    decoration: BoxDecoration(
+      color: context.isDark
+          ? AppColors.darkSurface
+          : AppColors.surface,
+      borderRadius: BorderRadius.circular(20),
+      border: Border.all(
+        color: context.isDark
+            ? AppColors.darkDivider
+            : AppColors.divider,
+        width: 0.5,
+      ),
+    ),
+    child: Row(
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: ColorFiltered(
+            colorFilter: const ColorFilter.mode(
+              Color(0xFFE53935),
+              BlendMode.srcIn,
+            ),
+            child: Image.asset(
+              'assets/images/scrptaty.png',
+              width: 58,
+              height: 58,
+              fit: BoxFit.cover,
+            ),
+          ),
+        ),
+
+        const SizedBox(width: 14),
+
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'المطور سكربتاتي',
+                style: TextStyle(
+                  color: context.appText,
+                  fontFamily: 'Tajawal',
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+
+              const SizedBox(height: 4),
+
+              Text(
+                'لتطوير وتصميم التطبيقات',
+                style: TextStyle(
+                  color: context.appTextSec,
+                  fontFamily: 'Tajawal',
+                  fontSize: 13,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  ),
+),
+                      const SizedBox(height: 160),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+  }
+
+  Widget _settingsSection(String title, List<Widget> children) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(right: 4, bottom: 8),
+          child: Text(
+            title,
+            style: TextStyle(
+              fontFamily: 'Tajawal',
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: isDark ? AppColors.darkTextSec : AppColors.textSecondary,
+            ),
+          ),
+        ),
+        Container(
+          decoration: BoxDecoration(
+            color: isDark ? AppColors.darkSurface : AppColors.surface,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+                color: isDark ? AppColors.darkDivider : AppColors.divider,
+                width: 0.5),
+          ),
+          child: Column(
+            children: children.map((child) {
+              final index = children.indexOf(child);
+              return Column(
+                children: [
+                  child,
+                  if (index < children.length - 1)
+                    Divider(
+                        height: 1,
+                        color: isDark ? AppColors.darkDivider : AppColors.divider,
+                        indent: 16,
+                        endIndent: 16),
+                ],
+              );
+            }).toList(),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _switchTile(String title, String subtitle, IconData icon, bool value,
+      Function(bool) onChanged) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return ListTile(
+      contentPadding:
+          const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      leading: Container(
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(
+          color: isDark ? AppColors.darkRedLight : AppColors.redLight,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Icon(icon, color: AppColors.primary, size: 18),
+      ),
+      title: Text(title,
+          style: TextStyle(
+              fontFamily: 'Tajawal',
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: isDark ? AppColors.darkText : AppColors.textPrimary)),
+      subtitle: Text(subtitle,
+          style: TextStyle(
+              fontFamily: 'Tajawal',
+              fontSize: 12,
+              color: isDark ? AppColors.darkTextSec : AppColors.textSecondary)),
+      trailing:
+          CupertinoSwitch(value: value, onChanged: onChanged, activeColor: AppColors.primary),
+    );
+  }
+
+  Widget _infoTile(String title, String value, IconData icon) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return ListTile(
+      contentPadding:
+          const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      leading: Container(
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(
+          color: isDark ? AppColors.darkRedLight : AppColors.redLight,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Icon(icon, color: AppColors.primary, size: 18),
+      ),
+      title: Text(title,
+          style: TextStyle(
+              fontFamily: 'Tajawal',
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: isDark ? AppColors.darkText : AppColors.textPrimary)),
+      trailing: Text(value,
+          style: TextStyle(
+              fontFamily: 'Tajawal',
+              fontSize: 13,
+              color: isDark ? AppColors.darkTextSec : AppColors.textSecondary)),
+    );
+  }
+
+  Widget _qualityTile() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return ListTile(
+      contentPadding:
+          const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      leading: Container(
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(
+          color: isDark ? AppColors.darkRedLight : AppColors.redLight,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: const Icon(CupertinoIcons.dial_fill,
+            color: AppColors.primary, size: 18),
+      ),
+      title: Text('جودة التحميل',
+          style: TextStyle(
+              fontFamily: 'Tajawal',
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: isDark ? AppColors.darkText : AppColors.textPrimary)),
+      trailing: CupertinoSlidingSegmentedControl<String>(
+        groupValue: _downloadQuality,
+        thumbColor: AppColors.primary,
+        children: const {
+          'high': Padding(
+              padding: EdgeInsets.symmetric(horizontal: 8),
+              child: Text('عالية', style: TextStyle(fontSize: 11, fontFamily: 'Tajawal'))),
+          'medium': Padding(
+              padding: EdgeInsets.symmetric(horizontal: 8),
+              child: Text('متوسطة', style: TextStyle(fontSize: 11, fontFamily: 'Tajawal'))),
+        },
+        onValueChanged: (v) {
+          if (v != null) {
+            setState(() => _downloadQuality = v);
+            _savePref('downloadQuality', v);
+          }
+        },
+      ),
+    );
+  }
+
+  Widget _actionTile(String title, String subtitle, IconData icon, Color color,
+      VoidCallback onTap) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return ListTile(
+      contentPadding:
+          const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      leading: Container(
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Icon(icon, color: color, size: 18),
+      ),
+      title: Text(title,
+          style: TextStyle(
+              fontFamily: 'Tajawal',
+              fontSize: 14, fontWeight: FontWeight.w500, color: color)),
+      subtitle: Text(subtitle,
+          style: TextStyle(
+              fontFamily: 'Tajawal',
+              fontSize: 12,
+              color: isDark ? AppColors.darkTextSec : AppColors.textSecondary)),
+      onTap: onTap,
+    );
+  }
+}

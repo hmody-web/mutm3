@@ -5,16 +5,11 @@ import 'package:flutter/cupertino.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:path_provider/path_provider.dart';
+
 // ═══════════════════════════════════════════
 // استيراد الكلاسات المشتركة من player_service.dart
 // ═══════════════════════════════════════════
-// (AppColors, ThemeNotifier, AppTheme,
-//  ThumbnailManager, _downloadCompleteNotifier)
 
-
-// ═══════════════════════════════════════════════════════════
-//  PAGE 3 — الإعدادات
-// ═══════════════════════════════════════════════════════════
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
 
@@ -96,69 +91,28 @@ class _SettingsPageState extends State<SettingsPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                      Text(
-                        'الإعدادات',
-                        style: TextStyle(
-                          fontSize: 28,
-                          fontFamily: 'Tajawal',
-                          fontWeight: FontWeight.w700,
-                          color: context.appText,
-                          letterSpacing: -0.5,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [Color.fromARGB(255, 53, 53, 53), Color.fromARGB(255, 102, 75, 75)],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
+                  // تم استبدال نص "الإعدادات" بالصورة وجعلها في المنتصف
+                  Center(
+                    child: Image.asset(
+                      'assets/images/jna7.png',
+                      width: MediaQuery.of(context).size.width * 4, // تأخذ 70% من عرض الشاشة لتبدو مستطيلة ومتناسقة
+                      height: 60, // ارتفاع مناسب للشكل المستطيل
+                      fit: BoxFit.contain, // المحافظة على أبعاد الصورة بدون تشويه
+                      errorBuilder: (_, __, ___) => const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 20),
+                        child: Text(
+                          'الإعدادات',
+                          style: TextStyle(
+                            fontSize: 24,
+                            fontFamily: 'Tajawal',
+                            fontWeight: FontWeight.w700,
                           ),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Row(
-                          children: [
-                            // Logo in settings card
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(14),
-                              child: Image.asset(
-                                'assets/images/logo.png',
-                                width: 52,
-                                height: 52,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) => Container(
-                                  width: 52,
-                                  height: 52,
-                                  decoration: BoxDecoration(
-                                    color: Colors.white24,
-                                    borderRadius: BorderRadius.circular(14),
-                                  ),
-                                  child: const Icon(CupertinoIcons.music_note_2,
-                                      color: Colors.white, size: 28),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 14),
-                            const Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text('دندن',
-                                    style: TextStyle(
-                                        color: Colors.white,
-                                        fontFamily: 'Tajawal',
-                                        fontSize: 20,
-                                        fontWeight: FontWeight.w700)),
-                                Text('الإصدار 2.1.0',
-                                    style: TextStyle(
-                                        color: Colors.white70,
-                                        fontFamily: 'Tajawal',
-                                        fontSize: 13)),
-                              ],
-                            ),
-                          ],
                         ),
                       ),
+                    ),
+                  ),
+                  const SizedBox(height: 2), // زيادة المسافة قليلاً للتناسق
+              
                 ],
               ),
             ),
@@ -166,151 +120,145 @@ class _SettingsPageState extends State<SettingsPage> {
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Column(
-                    children: [
-                      _settingsSection('التشغيل', [
-                        _switchTile(
-                          'التشغيل في الخلفية',
-                          'يبقى يعمل عند إغلاق التطبيق',
-                          CupertinoIcons.play_circle_fill,
-                          _backgroundPlay,
-                          (v) {
-                            setState(() => _backgroundPlay = v);
-                            _savePref('backgroundPlay', v);
-                          },
+              child: Column(
+                children: [
+                  _settingsSection('التشغيل', [
+                    _switchTile(
+                      'التشغيل في الخلفية',
+                      'يبقى يعمل عند إغلاق التطبيق',
+                      CupertinoIcons.play_circle_fill,
+                      _backgroundPlay,
+                      (v) {
+                        setState(() => _backgroundPlay = v);
+                        _savePref('backgroundPlay', v);
+                      },
+                    ),
+                    _switchTile(
+                      'إيقاف عند الإغلاق',
+                      'يتوقف عند إغلاق شاشة التطبيق',
+                      CupertinoIcons.stop_circle_fill,
+                      _stopOnClose,
+                      (v) {
+                        setState(() => _stopOnClose = v);
+                        _savePref('stopOnClose', v);
+                      },
+                    ),
+                  ]),
+                  const SizedBox(height: 16),
+                  _settingsSection('المظهر', [
+                    ValueListenableBuilder<ThemeMode>(
+                      valueListenable: ThemeNotifier.instance,
+                      builder: (_, mode, __) {
+                        final isDarkNow = mode == ThemeMode.dark;
+                        return _switchTile(
+                          'الوضع الداكن',
+                          'تغيير مظهر التطبيق للوضع الداكن',
+                          CupertinoIcons.moon_fill,
+                          isDarkNow,
+                          (v) => ThemeNotifier.instance.toggle(v),
+                        );
+                      },
+                    ),
+                  ]),
+                  const SizedBox(height: 16),
+                  _settingsSection('التحميل', [
+                    _infoTile(
+                        'مسار التحميل',
+                        _downloadPath.split('/').last,
+                        CupertinoIcons.folder_fill),
+                    _qualityTile(),
+                  ]),
+                  const SizedBox(height: 16),
+                  _settingsSection('الإدارة', [
+                    _actionTile(
+                      'حذف جميع التنزيلات',
+                      'مسح كل الملفات المحملة',
+                      CupertinoIcons.trash_fill,
+                      Colors.red,
+                      _clearDownloads,
+                    ),
+                  ]),
+                  const SizedBox(height: 16),
+                  GestureDetector(
+                    onTap: () async {
+                      final uri = Uri.parse('https://scrptaty.com');
+                      if (await canLaunchUrl(uri)) {
+                        await launchUrl(
+                          uri,
+                          mode: LaunchMode.externalApplication,
+                        );
+                      }
+                    },
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: context.isDark
+                            ? AppColors.darkSurface
+                            : AppColors.surface,
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: context.isDark
+                              ? AppColors.darkDivider
+                              : AppColors.divider,
+                          width: 0.5,
                         ),
-                        _switchTile(
-                          'إيقاف عند الإغلاق',
-                          'يتوقف عند إغلاق شاشة التطبيق',
-                          CupertinoIcons.stop_circle_fill,
-                          _stopOnClose,
-                          (v) {
-                            setState(() => _stopOnClose = v);
-                            _savePref('stopOnClose', v);
-                          },
-                        ),
-                      ]),
-                      const SizedBox(height: 16),
-                      _settingsSection('المظهر', [
-                        ValueListenableBuilder<ThemeMode>(
-                          valueListenable: ThemeNotifier.instance,
-                          builder: (_, mode, __) {
-                            final isDarkNow = mode == ThemeMode.dark;
-                            return _switchTile(
-                              'الوضع الداكن',
-                              'تغيير مظهر التطبيق للوضع الداكن',
-                              CupertinoIcons.moon_fill,
-                              isDarkNow,
-                              (v) => ThemeNotifier.instance.toggle(v),
-                            );
-                          },
-                        ),
-                      ]),
-                      const SizedBox(height: 16),
-                      _settingsSection('التحميل', [
-                        _infoTile(
-                            'مسار التحميل',
-                            _downloadPath.split('/').last,
-                            CupertinoIcons.folder_fill),
-                        _qualityTile(),
-                      ]),
-                      const SizedBox(height: 16),
-                      _settingsSection('الإدارة', [
-                        _actionTile(
-                          'حذف جميع التنزيلات',
-                          'مسح كل الملفات المحملة',
-                          CupertinoIcons.trash_fill,
-                          Colors.red,
-                          _clearDownloads,
-                        ),
-                      ]),
-                      const SizedBox(height: 16),
-
-GestureDetector(
-  onTap: () async {
-    final uri = Uri.parse('https://scrptaty.com');
-
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(
-        uri,
-        mode: LaunchMode.externalApplication,
-      );
-    }
-  },
-  child: Container(
-    width: double.infinity,
-    padding: const EdgeInsets.all(16),
-    decoration: BoxDecoration(
-      color: context.isDark
-          ? AppColors.darkSurface
-          : AppColors.surface,
-      borderRadius: BorderRadius.circular(20),
-      border: Border.all(
-        color: context.isDark
-            ? AppColors.darkDivider
-            : AppColors.divider,
-        width: 0.5,
-      ),
-    ),
-    child: Row(
-      children: [
-        ClipRRect(
-          borderRadius: BorderRadius.circular(16),
-          child: ColorFiltered(
-            colorFilter: const ColorFilter.mode(
-              Color(0xFFE53935),
-              BlendMode.srcIn,
-            ),
-            child: Image.asset(
-              'assets/images/scrptaty.png',
-              width: 58,
-              height: 58,
-              fit: BoxFit.cover,
-            ),
-          ),
-        ),
-
-        const SizedBox(width: 14),
-
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'المطور سكربتاتي',
-                style: TextStyle(
-                  color: context.appText,
-                  fontFamily: 'Tajawal',
-                  fontSize: 17,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-
-              const SizedBox(height: 4),
-
-              Text(
-                'لتطوير وتصميم التطبيقات',
-                style: TextStyle(
-                  color: context.appTextSec,
-                  fontFamily: 'Tajawal',
-                  fontSize: 13,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    ),
-  ),
-),
-                      const SizedBox(height: 160),
-                    ],
+                      ),
+                      child: Row(
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(16),
+                            child: ColorFiltered(
+                              colorFilter: const ColorFilter.mode(
+                                Color(0xFFE53935),
+                                BlendMode.srcIn,
+                              ),
+                              child: Image.asset(
+                                'assets/images/scrptaty.png',
+                                width: 58,
+                                height: 58,
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  ' سكربتاتي',
+                                  style: TextStyle(
+                                    color: context.appText,
+                                    fontFamily: 'Tajawal',
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  ' فريق مطوري تطبيق دندن  ',
+                                  style: TextStyle(
+                                    color: context.appTextSec,
+                                    fontFamily: 'Tajawal',
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
-                ),
+                  const SizedBox(height: 160),
+                ],
               ),
-            ],
+            ),
           ),
-        );
+        ],
+      ),
+    );
   }
 
   Widget _settingsSection(String title, List<Widget> children) {

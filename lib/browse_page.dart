@@ -29,7 +29,7 @@ import 'package:http/http.dart' as http;
 import 'listen_page.dart';
 import 'browse_page.dart';
 import 'settings_page.dart';
-// تعريف مؤقت للكلاسات المفقودة - انسخ هذا الكود كما هو
+import 'download_service.dart';
 class ManifestCache {
   static final Map<String, StreamManifest> _cache = {};
   static final Map<String, Future<StreamManifest>> _pending = {};
@@ -199,40 +199,93 @@ class _AdSlideshowCard extends StatefulWidget {
 
 class _AdSlideshowCardState extends State<_AdSlideshowCard>
     with SingleTickerProviderStateMixin {
-  final PageController _pageCtrl = PageController();
+  PageController _pageCtrl = PageController();
   int _currentPage = 0;
   Timer? _autoTimer;
   List<AdSlide> _slides = [];
   bool _isLoading = true;
   String? _error;
 
+  static const _kAdsCache = 'ads_slides_cache_json';
+  static const _kAdsPage  = 'ads_slides_current_page';
+  static const _kAdsFetch = 'ads_slides_last_fetch_ms';
+  // مدة صلاحية الكاش: 30 دقيقة
+  static const _kCacheTtlMs = 30 * 60 * 1000;
+
   @override
   void initState() {
     super.initState();
-    _fetchAds();
+    _loadFromCacheThenFetch();
   }
 
-  Future<void> _fetchAds() async {
+  /// 1) يعرض الكاش المحلي فوراً إن وُجد، ثم يحدّث من الشبكة في الخلفية
+  Future<void> _loadFromCacheThenFetch() async {
+    final prefs = await SharedPreferences.getInstance();
+    final cachedJson  = prefs.getString(_kAdsCache);
+    final cachedPage  = prefs.getInt(_kAdsPage) ?? 0;
+    final lastFetchMs = prefs.getInt(_kAdsFetch) ?? 0;
+
+    if (cachedJson != null) {
+      try {
+        final List<dynamic> data = jsonDecode(cachedJson);
+        final slides = data.map((item) => AdSlide.fromJson(item)).toList();
+        if (slides.isNotEmpty && mounted) {
+          // ← تحديد الصفحة الأخيرة المحفوظة
+          final startPage = cachedPage.clamp(0, slides.length - 1);
+          _pageCtrl = PageController(initialPage: startPage);
+          setState(() {
+            _slides      = slides;
+            _currentPage = startPage;
+            _isLoading   = false;
+          });
+          _startAutoSlide();
+        }
+      } catch (_) {}
+    }
+
+    // تحديث من الشبكة إذا انتهت مدة الكاش أو لا يوجد كاش
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (cachedJson == null || (now - lastFetchMs) > _kCacheTtlMs) {
+      await _fetchAdsFromNetwork(prefs);
+    }
+  }
+
+  Future<void> _fetchAdsFromNetwork(SharedPreferences prefs) async {
     try {
       final uri = Uri.parse('https://scrptaty.com/dndn/index.php?json');
       final response = await http.get(uri).timeout(const Duration(seconds: 10));
-      
+
       if (response.statusCode == 200) {
         final List<dynamic> data = jsonDecode(response.body);
+        // حفظ البيانات الجديدة في الكاش
+        await prefs.setString(_kAdsCache, response.body);
+        await prefs.setInt(_kAdsFetch, DateTime.now().millisecondsSinceEpoch);
+
         if (!mounted) return;
+        final newSlides = data.map((item) => AdSlide.fromJson(item)).toList();
         setState(() {
-          _slides = data.map((item) => AdSlide.fromJson(item)).toList();
+          _slides    = newSlides;
           _isLoading = false;
+          _error     = null;
         });
-        _startAutoSlide();
+        if (_autoTimer == null) _startAutoSlide();
       }
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        _error = 'خطأ: $e';
-        _isLoading = false;
-      });
+      // إذا لم يكن هناك كاش سابق نعرض الخطأ
+      if (_slides.isEmpty) {
+        setState(() {
+          _error     = 'خطأ: $e';
+          _isLoading = false;
+        });
+      }
     }
+  }
+
+  /// يُحفظ رقم الصفحة الحالية عند كل تغيير
+  Future<void> _saveCurrentPage(int page) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_kAdsPage, page);
   }
 
   void _startAutoSlide() {
@@ -312,6 +365,7 @@ class _AdSlideshowCardState extends State<_AdSlideshowCard>
               itemCount: _slides.length,
               onPageChanged: (i) {
                 setState(() => _currentPage = i);
+                _saveCurrentPage(i);
                 _startAutoSlide();
               },
               itemBuilder: (context, index) {
@@ -926,6 +980,8 @@ onTap: () {
   }
 }
 
+
+
 // ═══════════════════════════════════════════════════════════
 //  URL DOWNLOAD BOX — بوكس إدخال الرابط مع لصق وبحث
 // ═══════════════════════════════════════════════════════════
@@ -1103,7 +1159,7 @@ child: TextField(
           Directionality(
             textDirection: TextDirection.rtl,
             child: Text(
-              'يدعم يوتيوب وروابط MP4/MP3 المباشرة',
+              'يدعم يوتيوب • TikTok • Instagram • روابط MP4/MP3 المباشرة',
               style: TextStyle(
                 fontSize: 11,
                 color: textSecondary,
@@ -1160,13 +1216,67 @@ class _UrlDownloadPageState extends State<UrlDownloadPage> {
     return YoutubePlayer.convertUrlToId(url);
   }
 
-  bool _isDirectVideoUrl(String url) {
-    final lower = url.toLowerCase();
-    return lower.endsWith('.mp4') || lower.endsWith('.mkv') ||
-           lower.endsWith('.webm') || lower.endsWith('.mov') ||
-           lower.contains('.mp4?') || lower.contains('.webm?');
-  }
+ bool _isDirectVideoUrl(String url) {
+  final lower = url.toLowerCase();
+  return lower.contains('instagram.com') ||
+         lower.contains('tiktok.com') ||
+         lower.contains('facebook.com') ||
+         lower.contains('fb.watch') ||
+         lower.contains('twitter.com') ||
+         lower.contains('x.com') ||
+         lower.endsWith('.mp4') || 
+         lower.endsWith('.mkv') || 
+         lower.endsWith('.webm') || 
+         lower.endsWith('.mov') || 
+         lower.contains('.mp4?') || 
+         lower.contains('.webm?');
+}
+Future<String?> _extractVideoFromHtml(String url) async {
+  try {
+    final response = await http.get(
+      Uri.parse(url),
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+      },
+    ).timeout(const Duration(seconds: 12));
 
+    if (response.statusCode == 200) {
+      final htmlContent = response.body;
+
+      // الفحص عن وسوم الميتا og:video المعتمدة في انستغرام وفيسبوك
+      final ogVideoRegex = RegExp(r'<meta[^>]*property="og:video"[^>]*content="([^"]+)"');
+      final ogMatch = ogVideoRegex.firstMatch(htmlContent);
+      if (ogMatch != null && ogMatch.groupCount >= 1) {
+        return ogMatch.group(1)!.replaceAll('&amp;', '&');
+      }
+
+      // فحص وسم og:video:url البديل
+      final ogVideoUrlRegex = RegExp(r'<meta[^>]*property="og:video:url"[^>]*content="([^"]+)"');
+      final ogUrlMatch = ogVideoUrlRegex.firstMatch(htmlContent);
+      if (ogUrlMatch != null && ogUrlMatch.groupCount >= 1) {
+        return ogUrlMatch.group(1)!.replaceAll('&amp;', '&');
+      }
+
+      // البحث عن أي رابط mp4 صريح مدمج داخل كود الجافا سكريبت بالصفحة
+      final mp4Regex = RegExp(r'(https?://[^\s"<>]+?\.mp4[^\s"<>]*?)');
+      final mp4Match = mp4Regex.firstMatch(htmlContent);
+      if (mp4Match != null && mp4Match.groupCount >= 1) {
+        return mp4Match.group(1)!.replaceAll('\\/', '/');
+      }
+
+      // البحث عن وسوم الفيديو src العادية للمواقع الأخرى
+      final videoSrcRegex = RegExp(r'<video[^>]*src="([^"]+)"');
+      final srcMatch = videoSrcRegex.firstMatch(htmlContent);
+      if (srcMatch != null && srcMatch.groupCount >= 1) {
+        return srcMatch.group(1);
+      }
+    }
+  } catch (e) {
+    debugPrint('خطأ في الفحص الذكي: $e');
+  }
+  return null;
+}
   bool _isDirectAudioUrl(String url) {
     final lower = url.toLowerCase();
     return lower.endsWith('.mp3') || lower.endsWith('.m4a') ||
@@ -1174,27 +1284,118 @@ class _UrlDownloadPageState extends State<UrlDownloadPage> {
            lower.endsWith('.flac') || lower.endsWith('.wav');
   }
 
-  Future<void> _analyzeAndFetch() async {
-    setState(() { _loading = true; _error = null; });
-    try {
-      final url = widget.url;
-      _videoId = _extractYoutubeId(url);
-      _isYoutube = _videoId != null;
-      _isDirectVideo = !_isYoutube && _isDirectVideoUrl(url);
-      _isDirectAudio = !_isYoutube && !_isDirectVideo && _isDirectAudioUrl(url);
+Future<void> _analyzeAndFetch() async {
+  setState(() {
+    _loading = true;
+    _error = null;
+  });
 
-      if (_isYoutube) {
-        await _fetchYoutubeInfo(_videoId!);
-      } else if (_isDirectVideo || _isDirectAudio) {
-        await _fetchDirectInfo(url);
-      } else {
-        // حاول كـ YouTube أو عرض خطأ
-        throw Exception('الرابط غير مدعوم. يرجى استخدام رابط يوتيوب أو رابط مباشر لملف فيديو/صوت.');
+  try {
+    final url = widget.url.trim();
+    _videoId = _extractYoutubeId(url);
+    _isYoutube = _videoId != null;
+
+    // ── يوتيوب: المسار القديم يعمل بشكل مثالي ──
+    if (_isYoutube) {
+      await _fetchYoutubeInfo(_videoId!);
+      return;
+    }
+
+    // ── TikTok و Instagram: نستخدم DownloadService أولاً ──
+    final isSocialMedia = url.contains('tiktok.com') ||
+        url.contains('instagram.com') ||
+        url.contains('instagr.am');
+
+    if (isSocialMedia) {
+      if (mounted) {
+        setState(() { _title = 'جاري استخراج الفيديو...'; });
       }
-    } catch (e) {
-      if (mounted) setState(() { _error = e.toString().replaceAll('Exception: ', ''); _loading = false; });
+
+      // المحاولة الأولى: DownloadService (APIs خارجية)
+      final downloadService = DownloadService();
+      String? extracted = await downloadService.extractVideoUrl(url);
+
+      // المحاولة الثانية: سحب ذكي من HTML إن فشلت الـ APIs
+      if (extracted == null || extracted.isEmpty) {
+        extracted = await _extractVideoFromHtml(url);
+      }
+
+      // المحاولة الثالثة: getDirectUrlFromTikTok للـ TikTok تحديداً
+      if ((extracted == null || extracted.isEmpty) && url.contains('tiktok.com')) {
+        extracted = await downloadService.getDirectUrlFromTikTok(url);
+      }
+
+      if (extracted != null && extracted.isNotEmpty) {
+        _isDirectVideo = true;
+        // نحدد عنوان المنصة
+        final platform = url.contains('tiktok.com') ? 'TikTok' : 'Instagram';
+        if (mounted) {
+          setState(() {
+            _title = 'فيديو من $platform';
+            _author = platform;
+            _downloadUrl = extracted;
+            _loading = false;
+          });
+        }
+      } else {
+        throw Exception(
+          'تعذر استخراج الفيديو تلقائياً.\n'
+          'قد يكون الحساب خاصاً أو يتطلب تسجيل دخول.',
+        );
+      }
+      return;
+    }
+
+    // ── فيسبوك / تويتر / X ──
+    final isFacebook = url.contains('facebook.com') || url.contains('fb.watch');
+    final isTwitter  = url.contains('twitter.com') || url.contains('x.com');
+
+    if (isFacebook || isTwitter) {
+      if (mounted) setState(() { _title = 'جاري استخراج الفيديو...'; });
+      final extracted = await _extractVideoFromHtml(url);
+      if (extracted != null && extracted.isNotEmpty) {
+        _isDirectVideo = true;
+        final platform = isFacebook ? 'Facebook' : 'X (Twitter)';
+        if (mounted) {
+          setState(() {
+            _title = 'فيديو من $platform';
+            _author = platform;
+            _downloadUrl = extracted;
+            _loading = false;
+          });
+        }
+      } else {
+        throw Exception('تعذر استخراج الفيديو من هذه المنصة.');
+      }
+      return;
+    }
+
+    // ── روابط مباشرة (mp4 / mp3 / mkv …) ──
+    _isDirectVideo = _isDirectVideoUrl(url);
+    _isDirectAudio = !_isDirectVideo && _isDirectAudioUrl(url);
+
+    if (_isDirectVideo || _isDirectAudio) {
+      await _fetchDirectInfo(url);
+      return;
+    }
+
+    // ── محاولة أخيرة: فحص HTML لأي رابط غير معروف ──
+    final fallbackUrl = await _extractVideoFromHtml(url);
+    if (fallbackUrl != null && fallbackUrl.isNotEmpty) {
+      _isDirectVideo = true;
+      await _fetchDirectInfo(fallbackUrl);
+    } else {
+      throw Exception('الرابط غير مدعوم أو لم يُعثر على فيديو بداخله.');
+    }
+  } catch (e) {
+    if (mounted) {
+      setState(() {
+        _error = e.toString().replaceAll('Exception: ', '');
+        _loading = false;
+      });
     }
   }
+}
 
   Future<void> _fetchYoutubeInfo(String videoId) async {
     final yt = YoutubeExplode();

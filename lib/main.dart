@@ -435,6 +435,8 @@ class AudioPlayerService {
   bool _handlingIndexChange = false;
   // true = أوقف المستخدم التشغيل يدوياً → لا نُعيد التشغيل تلقائياً بعد الانقطاع
   bool _userPaused = false;
+  // يمنع تشغيل أغنيتين في نفس الوقت — إذا كان هناك طلب جارٍ نتجاهل أي طلب جديد
+  bool _isSwitching = false;
 
   Future<void> init() async {
     final session = await AudioSession.instance;
@@ -509,6 +511,7 @@ class AudioPlayerService {
     final idx = currentIndex.value;
     final list = playlist.value;
     _userPaused = false; // انتقال تلقائي → أعد التشغيل دائماً
+    _isSwitching = false; // أعد تعيين القفل عند الانتقال التلقائي
     if (player.loopMode == LoopMode.one) {
       player.seek(Duration.zero);
       player.play();
@@ -538,6 +541,15 @@ class AudioPlayerService {
   /// ─── الدالة المحورية: تشغيل ملف مع ConcatenatingAudioSource لدعم MediaSession ───
   Future<void> _playSingleFile(List<LocalMediaItem> list, int index) async {
     if (list.isEmpty || index < 0 || index >= list.length) return;
+
+    // ── منع التعارض: إذا كان هناك تبديل جارٍ، انتظر حتى ينتهي ──
+    // هذا يمنع حالة race condition عند الضغط السريع على أغنية ثانية
+    if (_isSwitching) {
+      debugPrint('AudioPlayerService: تجاهل الطلب — تبديل جارٍ');
+      return;
+    }
+    _isSwitching = true;
+
     final item = list[index];
 
     // ① حدّث القيم المرئية فوراً
@@ -546,49 +558,43 @@ class AudioPlayerService {
     isVisible.value = true;
     _handlingIndexChange = true;
 
-    // ① بناء tag للأغنية الحالية مع الصورة المصغرة قبل بدء التشغيل
-    // لضمان ظهور الصورة في إشعار الخلفية وشاشة القفل فوراً
-    final tag = await _buildTag(item);
-
     try {
       // ── pause() بدلاً من stop() ──
-      // stop() يُلغي الـ AVAudioSession ويمسح MPNowPlayingInfoCenter مما يُطفئ
-      // ضوابط شاشة القفل والخلفية. pause()+seek() يبقيان الـ session نشطاً
-      // ويسمحان باستكمال التشغيل فور استدعاء setAudioSource الجديد.
       if (player.playing) await player.pause();
 
-      // ② بناء ConcatenatingAudioSource بـ [prev?, current, next?]
-      // هذا يُفعّل أزرار التالي والسابق في الإشعار وشاشة القفل وBluetooth
+      // ② بناء tags بالتوازي باستخدام Future.wait لتسريع العملية وعدم حجب الـ UI
       final hasPrev = index > 0;
       final hasNext = index < list.length - 1;
 
-      // دالة مساعدة محلية لبناء MediaItem مع الصورة للأغاني المجاورة
-      Future<MediaItem> buildNeighborTag(LocalMediaItem neighbor) async {
+      Future<MediaItem> buildTag(LocalMediaItem it) async {
         Uri? artUri;
-        final localThumb = await ThumbnailManager.getLocalThumbnail(neighbor.path);
+        final localThumb = await ThumbnailManager.getLocalThumbnail(it.path);
         if (localThumb != null) {
           artUri = Uri.file(localThumb);
-        } else if (neighbor.thumbnailUrl != null) {
-          artUri = Uri.parse(neighbor.thumbnailUrl!);
+        } else if (it.thumbnailUrl != null) {
+          artUri = Uri.parse(it.thumbnailUrl!);
         }
         return MediaItem(
-          id: neighbor.path,
-          title: neighbor.title.replaceAll(RegExp(r'\.\w+$'), ''),
+          id: it.path,
+          title: it.title.replaceAll(RegExp(r'\.\w+$'), ''),
           artist: 'دندن',
           artUri: artUri,
         );
       }
 
+      // بناء كل الـ tags بالتوازي — أسرع بكثير من await واحدة تلو الأخرى
+      final tagFutures = <Future<MediaItem>>[
+        if (hasPrev) buildTag(list[index - 1]),
+        buildTag(item),
+        if (hasNext) buildTag(list[index + 1]),
+      ];
+      final tags = await Future.wait(tagFutures);
+
+      int tagIdx = 0;
       final sources = <AudioSource>[];
-      if (hasPrev) {
-        final prevTag = await buildNeighborTag(list[index - 1]);
-        sources.add(AudioSource.file(list[index - 1].path, tag: prevTag));
-      }
-      sources.add(AudioSource.file(item.path, tag: tag));
-      if (hasNext) {
-        final nextTag = await buildNeighborTag(list[index + 1]);
-        sources.add(AudioSource.file(list[index + 1].path, tag: nextTag));
-      }
+      if (hasPrev) sources.add(AudioSource.file(list[index - 1].path, tag: tags[tagIdx++]));
+      sources.add(AudioSource.file(item.path, tag: tags[tagIdx++]));
+      if (hasNext) sources.add(AudioSource.file(list[index + 1].path, tag: tags[tagIdx]));
 
       final initialIdx = hasPrev ? 1 : 0;
       final concat = ConcatenatingAudioSource(children: sources);
@@ -601,30 +607,28 @@ class AudioPlayerService {
       );
 
       _handlingIndexChange = false;
+      _isSwitching = false; // ← أفرج عن القفل قبل play() حتى يستجيب الـ UI
       await player.play();
 
-      // ③ تحديث artwork بشكل آمن — بدون إعادة setAudioSource
-      // نُولّد الصورة في الخلفية فقط للتخزين المحلي (ThumbnailManager)
-      // حتى تكون جاهزة للمرة القادمة. لا نُعيد تحميل الـ source أبداً
-      // لأن ذلك كان يُسبب إطفاء الأغنية عند الإيقاف المؤقت من الخلفية.
+      // ③ توليد الصور في الخلفية — لا يحجب شيئاً
       Future(() async {
         try {
           if (currentIndex.value != index) return;
-          // توليد الصورة وتخزينها محلياً إن لم تكن موجودة
           await ThumbnailManager.generateLocalThumbnail(item.path);
-          // توليد صور الأغاني المجاورة في الخلفية
           if (hasPrev) await ThumbnailManager.generateLocalThumbnail(list[index - 1].path);
           if (hasNext) await ThumbnailManager.generateLocalThumbnail(list[index + 1].path);
         } catch (_) {}
       });
     } catch (e) {
       _handlingIndexChange = false;
+      _isSwitching = false;
       debugPrint('AudioPlayerService._playSingleFile error: $e');
     }
   }
 
   Future<void> playList(List<LocalMediaItem> items, int startIndex) async {
     _userPaused = false; // تشغيل جديد → إلغاء حالة الإيقاف اليدوي
+    _isSwitching = false; // إعادة تعيين القفل عند بدء قائمة جديدة
     final idx = startIndex.clamp(0, items.length - 1);
     await _playSingleFile(List.unmodifiable(items), idx);
   }
@@ -633,6 +637,8 @@ class AudioPlayerService {
     _userPaused = false;
     final list = playlist.value;
     if (list.isEmpty) return;
+    // إذا ضغط المستخدم على نفس الأغنية الحالية — تجاهل
+    if (index == currentIndex.value && !_isSwitching) return;
     await _playSingleFile(list, index);
   }
 
@@ -650,6 +656,7 @@ class AudioPlayerService {
 
   Future<void> playNext() async {
     _userPaused = false;
+    _isSwitching = false; // السماح بالانتقال للتالي دائماً
     final idx = currentIndex.value;
     final list = playlist.value;
     if (idx < list.length - 1) {
@@ -659,6 +666,7 @@ class AudioPlayerService {
 
   Future<void> playPrevious() async {
     _userPaused = false;
+    _isSwitching = false; // السماح بالانتقال للسابق دائماً
     final pos = player.position;
     if (pos.inSeconds > 3) {
       await player.seek(Duration.zero);
@@ -2954,13 +2962,22 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
   void _onTrackChange() {
     _positionSub?.cancel();
     _playingSub?.cancel();
-    _videoCtrl?.pause();
-    _videoCtrl?.dispose();
+
+    // ── تحرير الـ video controller القديم بشكل آمن في الخلفية ──
+    // dispose() المباشر على الـ UI thread يُحجب الواجهة — نُشغّله في microtask
+    final oldCtrl = _videoCtrl;
     _videoCtrl = null;
-    // أعلم _ImmersiveFullScreenPage فوراً بأن الـ controller تغيّر (null = تحميل)
     _videoCtrlNotifier.value = null;
-    // تعيين حالة الانتقال لمنع ظهور عناصر التحكم القديمة
+    Future.microtask(() async {
+      try {
+        await oldCtrl?.pause();
+        oldCtrl?.dispose();
+      } catch (_) {}
+    });
+
     final item = audioService.currentItem;
+
+    // تحديث UI فوراً بدون انتظار
     if (mounted) {
       setState(() {
         _isSwitching = true;
@@ -2968,16 +2985,20 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
         _videoInitialized = false;
       });
     }
+
     if (item == null) {
-      // لا يوجد عنصر حالي — أوقف الانتقال فوراً
       if (mounted) setState(() => _isSwitching = false);
       return;
     }
-    // لا نُحمّل الـ thumbnail للفيديوهات — نبقى على أسود 16:9 حتى يجهز الفيديو
-    if (!item.isVideo) {
-      _loadThumb(); // ستُوقف _isSwitching عند الانتهاء
-    }
-    _initVideoIfNeeded();
+
+    // نُشغّل العمليات الثقيلة بعد frame واحد حتى لا يتجمد الـ UI
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (!item.isVideo) {
+        _loadThumb();
+      }
+      _initVideoIfNeeded();
+    });
   }
 
   Future<void> _initVideoIfNeeded() async {
@@ -3897,4 +3918,4 @@ class _PlaylistTileState extends State<_PlaylistTile> {
       ),
     );
   }
-} 
+}

@@ -1692,104 +1692,11 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: Row(
         children: [
-          // زر مستوى الصوت
+          const Spacer(),
+          // زر الإعدادات فقط
           GestureDetector(
             onTap: () {
-              setState(() {
-                _showVolumeBar = !_showVolumeBar;
-                _showSpeedOptions = false;
-              });
-              _resetTimer();
-            },
-            child: Container(
-              padding: const EdgeInsets.all(7),
-              decoration: BoxDecoration(
-                color: _showVolumeBar ? AppColors.primary : Colors.black45,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Icon(
-                widget.volume == 0
-                    ? CupertinoIcons.speaker_slash_fill
-                    : widget.volume < 1.0
-                        ? CupertinoIcons.speaker_1_fill
-                        : CupertinoIcons.speaker_3_fill,
-                color: Colors.white,
-                size: 16,
-              ),
-            ),
-          ),
-
-          // شريط الصوت المنسدل
-          if (_showVolumeBar) ...[
-            const SizedBox(width: 6),
-            Expanded(
-              child: SliderTheme(
-                data: const SliderThemeData(
-                  trackHeight: 2,
-                  thumbShape: RoundSliderThumbShape(enabledThumbRadius: 5),
-                  overlayShape: RoundSliderOverlayShape(overlayRadius: 10),
-                  activeTrackColor: Colors.white,
-                  inactiveTrackColor: Colors.white30,
-                  thumbColor: Colors.white,
-                  overlayColor: Colors.white24,
-                ),
-                child: Slider(
-                  value: widget.volume.clamp(0.0, 3.0),
-                  min: 0,
-                  max: 3.0,
-                  onChanged: (v) {
-                    widget.onVolumeChange(v);
-                    _resetTimer();
-                  },
-                ),
-              ),
-            ),
-            SizedBox(
-              width: 34,
-              child: Text(
-                '${(widget.volume * 100).toInt()}%',
-                style: const TextStyle(
-                    color: Colors.white70, fontSize: 10, fontFamily: 'Tajawal'),
-                textAlign: TextAlign.end,
-              ),
-            ),
-          ] else
-            const Spacer(),
-
-          const SizedBox(width: 6),
-
-          // زر السرعة
-          GestureDetector(
-            onTap: () {
-              setState(() {
-                _showSpeedOptions = !_showSpeedOptions;
-                _showVolumeBar = false;
-              });
-              _resetTimer();
-            },
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
-              decoration: BoxDecoration(
-                color: _showSpeedOptions ? AppColors.primary : Colors.black45,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                widget.speed == 1.0 ? '1×' : '${widget.speed}×',
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 11,
-                    fontFamily: 'Tajawal',
-                    fontWeight: FontWeight.w700),
-              ),
-            ),
-          ),
-
-          const SizedBox(width: 6),
-
-          // زر ملء الشاشة
-          GestureDetector(
-            onTap: () {
-              _toggleFullScreen();
+              _showSettingsSheet(context);
               _resetTimer();
             },
             child: Container(
@@ -1798,13 +1705,8 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
                 color: Colors.black45,
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Icon(
-                _isFullScreen
-                    ? CupertinoIcons.fullscreen_exit
-                    : CupertinoIcons.fullscreen,
-                color: Colors.white,
-                size: 16,
-              ),
+              child: const Icon(CupertinoIcons.settings,
+                  color: Colors.white, size: 16),
             ),
           ),
         ],
@@ -1969,7 +1871,36 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
               ),
             ),
 
-            // ── طبقة التحكم ──
+            // ── طبقة double-tap (نصف يسار تقديم، نصف يمين رجوع) ──
+            Positioned.fill(
+              child: Row(
+                children: [
+                  Expanded(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.translucent,
+                      onDoubleTap: () {
+                        final pos = widget.audioPlayer.position;
+                        widget.onSeek(pos + const Duration(seconds: 10));
+                        _resetTimer();
+                      },
+                    ),
+                  ),
+                  Expanded(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.translucent,
+                      onDoubleTap: () {
+                        final pos = widget.audioPlayer.position;
+                        final back = pos - const Duration(seconds: 10);
+                        widget.onSeek(back < Duration.zero ? Duration.zero : back);
+                        _resetTimer();
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // ── طبقة التحكم (controls overlay) ──
             AnimatedOpacity(
               opacity: _showControls ? 1.0 : 0.0,
               duration: const Duration(milliseconds: 200),
@@ -1991,62 +1922,34 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
                   ),
                   child: Column(
                     children: [
-                      // ── الشريط العلوي: صوت + سرعة + ملء ──
+                      // ── الشريط العلوي: إعدادات فقط ──
                       _buildTopBar(),
-
-                      // ── لوحة خيارات السرعة ──
-                      if (_showSpeedOptions) _buildSpeedPanel(),
 
                       const Spacer(),
 
-                      // ── الوسط: ترجيع + تشغيل + تقديم ──
+                      // ── الوسط: السابق + تشغيل + التالي ──
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          // زر السابق 10 ثواني
+                          // زر السابق
                           GestureDetector(
                             onTap: () {
-                              final pos = widget.audioPlayer.position;
-                              final back = pos - const Duration(seconds: 10);
-                              widget.onSeek(back < Duration.zero ? Duration.zero : back);
+                              widget.onPrev();
                               _resetTimer();
                             },
                             child: Container(
-                              width: 40,
-                              height: 40,
-                              decoration: const BoxDecoration(
-                                color: Colors.black38,
-                                shape: BoxShape.circle,
-                              ),
-                              child: const Icon(CupertinoIcons.gobackward_10,
-                                  color: Colors.white, size: 20),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-
-                          // زر عشوائي
-                          GestureDetector(
-                            onTap: () {
-                              setState(() => _isShuffle = !_isShuffle);
-                              _resetTimer();
-                            },
-                            child: Container(
-                              width: 40,
-                              height: 40,
+                              width: 52,
+                              height: 52,
                               decoration: BoxDecoration(
-                                color: _isShuffle
-                                    ? AppColors.primary.withOpacity(0.7)
-                                    : Colors.black45,
+                                color: Colors.white.withOpacity(0.15),
                                 shape: BoxShape.circle,
+                                border: Border.all(color: Colors.white24, width: 1),
                               ),
-                              child: Icon(
-                                CupertinoIcons.shuffle,
-                                color: _isShuffle ? Colors.white : Colors.white70,
-                                size: 18,
-                              ),
+                              child: const Icon(CupertinoIcons.backward_end_fill,
+                                  color: Colors.white, size: 22),
                             ),
                           ),
-                          const SizedBox(width: 14),
+                          const SizedBox(width: 24),
 
                           // تشغيل / إيقاف
                           StreamBuilder<bool>(
@@ -2059,16 +1962,20 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
                                   _resetTimer();
                                 },
                                 child: Container(
-                                  width: 64,
-                                  height: 64,
+                                  width: 70,
+                                  height: 70,
                                   decoration: BoxDecoration(
-                                    color: AppColors.primary,
+                                    gradient: const LinearGradient(
+                                      colors: [AppColors.primary, AppColors.primaryDark],
+                                      begin: Alignment.topLeft,
+                                      end: Alignment.bottomRight,
+                                    ),
                                     shape: BoxShape.circle,
                                     boxShadow: [
                                       BoxShadow(
                                         color: AppColors.primary.withOpacity(0.55),
-                                        blurRadius: 20,
-                                        spreadRadius: 2,
+                                        blurRadius: 24,
+                                        spreadRadius: 3,
                                       ),
                                     ],
                                   ),
@@ -2077,56 +1984,30 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
                                         ? CupertinoIcons.pause_fill
                                         : CupertinoIcons.play_fill,
                                     color: Colors.white,
-                                    size: 28,
+                                    size: 30,
                                   ),
                                 ),
                               );
                             },
                           ),
-                          const SizedBox(width: 14),
+                          const SizedBox(width: 24),
 
-                          // زر تكرار
+                          // زر التالي
                           GestureDetector(
                             onTap: () {
-                              setState(() => _isRepeat = !_isRepeat);
-                              widget.audioPlayer.setLoopMode(
-                                  _isRepeat ? LoopMode.off : LoopMode.one);
+                              widget.onNext();
                               _resetTimer();
                             },
                             child: Container(
-                              width: 40,
-                              height: 40,
+                              width: 52,
+                              height: 52,
                               decoration: BoxDecoration(
-                                color: _isRepeat
-                                    ? AppColors.primary.withOpacity(0.7)
-                                    : Colors.black45,
+                                color: Colors.white.withOpacity(0.15),
                                 shape: BoxShape.circle,
+                                border: Border.all(color: Colors.white24, width: 1),
                               ),
-                              child: Icon(
-                                CupertinoIcons.repeat,
-                                color: _isRepeat ? Colors.white : Colors.white70,
-                                size: 18,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-
-                          // زر التالي 10 ثواني
-                          GestureDetector(
-                            onTap: () {
-                              final pos = widget.audioPlayer.position;
-                              widget.onSeek(pos + const Duration(seconds: 10));
-                              _resetTimer();
-                            },
-                            child: Container(
-                              width: 40,
-                              height: 40,
-                              decoration: const BoxDecoration(
-                                color: Colors.black38,
-                                shape: BoxShape.circle,
-                              ),
-                              child: const Icon(CupertinoIcons.goforward_10,
-                                  color: Colors.white, size: 20),
+                              child: const Icon(CupertinoIcons.forward_end_fill,
+                                  color: Colors.white, size: 22),
                             ),
                           ),
                         ],
@@ -2134,9 +2015,9 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
 
                       const Spacer(),
 
-                      // ── شريط التقدم السفلي ──
+                      // ── شريط التقدم السفلي + زر ملء الشاشة ──
                       Padding(
-                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
                         child: StreamBuilder<Duration?>(
                           stream: widget.audioPlayer.durationStream,
                           builder: (_, durSnap) {
@@ -2209,6 +2090,27 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
                                                 color: Colors.white70,
                                                 fontSize: 11),
                                           ),
+                                          // زر ملء الشاشة يمين شريط الوقت
+                                          GestureDetector(
+                                            onTap: () {
+                                              _toggleFullScreen();
+                                              _resetTimer();
+                                            },
+                                            child: Container(
+                                              padding: const EdgeInsets.all(5),
+                                              decoration: BoxDecoration(
+                                                color: Colors.black38,
+                                                borderRadius: BorderRadius.circular(6),
+                                              ),
+                                              child: Icon(
+                                                _isFullScreen
+                                                    ? CupertinoIcons.fullscreen_exit
+                                                    : CupertinoIcons.fullscreen,
+                                                color: Colors.white,
+                                                size: 14,
+                                              ),
+                                            ),
+                                          ),
                                         ],
                                       ),
                                     ),
@@ -2239,6 +2141,158 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
         child: videoContent,
       ),
     );
+  }
+
+  void _showSettingsSheet(BuildContext ctx) {
+    _hideTimer?.cancel();
+    double localVolume = widget.volume;
+    double localSpeed = widget.speed;
+    bool localRepeat = _isRepeat;
+    bool localShuffle = _isShuffle;
+
+    showModalBottomSheet(
+      context: ctx,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => StatefulBuilder(
+        builder: (_, setSheet) => Container(
+          decoration: const BoxDecoration(
+            color: Color(0xFF1C1C1E),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 36),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 36, height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.white24,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // ── مستوى الصوت ──
+              Row(children: [
+                const Icon(CupertinoIcons.speaker_3_fill, color: Colors.white70, size: 18),
+                const SizedBox(width: 8),
+                const Text('مستوى الصوت',
+                    style: TextStyle(color: Colors.white70, fontFamily: 'Tajawal', fontSize: 13)),
+              ]),
+              const SizedBox(height: 6),
+              Row(children: [
+                Expanded(
+                  child: SliderTheme(
+                    data: const SliderThemeData(
+                      trackHeight: 3,
+                      thumbShape: RoundSliderThumbShape(enabledThumbRadius: 7),
+                      activeTrackColor: AppColors.primary,
+                      inactiveTrackColor: Colors.white24,
+                      thumbColor: Colors.white,
+                    ),
+                    child: Slider(
+                      value: localVolume.clamp(0.0, 3.0),
+                      min: 0, max: 3.0,
+                      onChanged: (v) {
+                        setSheet(() => localVolume = v);
+                        widget.onVolumeChange(v);
+                      },
+                    ),
+                  ),
+                ),
+                SizedBox(
+                  width: 40,
+                  child: Text('${(localVolume * 100).toInt()}%',
+                      style: const TextStyle(color: Colors.white70, fontSize: 11, fontFamily: 'Tajawal'),
+                      textAlign: TextAlign.end),
+                ),
+              ]),
+
+              const Divider(color: Colors.white12, height: 20),
+
+              // ── سرعة التشغيل ──
+              Row(children: [
+                const Icon(CupertinoIcons.speedometer, color: Colors.white70, size: 18),
+                const SizedBox(width: 8),
+                const Text('سرعة التشغيل',
+                    style: TextStyle(color: Colors.white70, fontFamily: 'Tajawal', fontSize: 13)),
+              ]),
+              const SizedBox(height: 6),
+              Row(children: [
+                Expanded(
+                  child: SliderTheme(
+                    data: const SliderThemeData(
+                      trackHeight: 3,
+                      thumbShape: RoundSliderThumbShape(enabledThumbRadius: 7),
+                      activeTrackColor: AppColors.primary,
+                      inactiveTrackColor: Colors.white24,
+                      thumbColor: Colors.white,
+                    ),
+                    child: Slider(
+                      value: localSpeed.clamp(0.5, 2.0),
+                      min: 0.5, max: 2.0,
+                      divisions: 30,
+                      onChanged: (v) {
+                        final r = (v * 20).round() / 20.0;
+                        setSheet(() => localSpeed = r);
+                        widget.onSpeedChange(r);
+                      },
+                    ),
+                  ),
+                ),
+                SizedBox(
+                  width: 40,
+                  child: Text('${localSpeed.toStringAsFixed(2)}×',
+                      style: const TextStyle(color: Colors.white70, fontSize: 11, fontFamily: 'Tajawal'),
+                      textAlign: TextAlign.end),
+                ),
+              ]),
+
+              const Divider(color: Colors.white12, height: 20),
+
+              // ── تكرار الفيديو ──
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(CupertinoIcons.repeat, color: Colors.white70, size: 20),
+                title: const Text('تكرار الفيديو',
+                    style: TextStyle(color: Colors.white, fontFamily: 'Tajawal', fontSize: 15)),
+                trailing: CupertinoSwitch(
+                  value: localRepeat,
+                  activeColor: AppColors.primary,
+                  onChanged: (v) {
+                    setSheet(() => localRepeat = v);
+                    setState(() => _isRepeat = v);
+                    widget.audioPlayer.setLoopMode(v ? LoopMode.one : LoopMode.off);
+                  },
+                ),
+              ),
+
+              const Divider(color: Colors.white12, height: 1),
+
+              // ── تشغيل عشوائي ──
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(CupertinoIcons.shuffle, color: Colors.white70, size: 20),
+                title: const Text('تشغيل عشوائي',
+                    style: TextStyle(color: Colors.white, fontFamily: 'Tajawal', fontSize: 15)),
+                trailing: CupertinoSwitch(
+                  value: localShuffle,
+                  activeColor: AppColors.primary,
+                  onChanged: (v) {
+                    setSheet(() => localShuffle = v);
+                    setState(() => _isShuffle = v);
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ).then((_) => _startHideTimer());
   }
 }
 
@@ -2533,43 +2587,45 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
               ),
             ),
 
-            // ── double tap: يمين=رجوع، يسار=تقديم ──
-            Row(
-              children: [
-                // يسار الشاشة → تقديم 10 ثواني
-                Expanded(
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.translucent,
-                    onDoubleTap: () {
-                      final pos = widget.audioPlayer.position;
-                      widget.onSeek(pos + const Duration(seconds: 10));
-                      setState(() => _doubleTapHint = '⏩ +10');
-                      _doubleTapHintTimer?.cancel();
-                      _doubleTapHintTimer = Timer(const Duration(milliseconds: 700), () {
-                        if (mounted) setState(() => _doubleTapHint = null);
-                      });
-                      _resetTimer();
-                    },
+            // ── double tap: يمين=رجوع، يسار=تقديم (كل نصف الشاشة) ──
+            Positioned.fill(
+              child: Row(
+                children: [
+                  // نصف الشاشة اليسار → تقديم 10 ثواني
+                  Expanded(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.translucent,
+                      onDoubleTap: () {
+                        final pos = widget.audioPlayer.position;
+                        widget.onSeek(pos + const Duration(seconds: 10));
+                        setState(() => _doubleTapHint = '⏩ +10');
+                        _doubleTapHintTimer?.cancel();
+                        _doubleTapHintTimer = Timer(const Duration(milliseconds: 700), () {
+                          if (mounted) setState(() => _doubleTapHint = null);
+                        });
+                        _resetTimer();
+                      },
+                    ),
                   ),
-                ),
-                // يمين الشاشة → رجوع 10 ثواني
-                Expanded(
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.translucent,
-                    onDoubleTap: () {
-                      final pos = widget.audioPlayer.position;
-                      final back = pos - const Duration(seconds: 10);
-                      widget.onSeek(back < Duration.zero ? Duration.zero : back);
-                      setState(() => _doubleTapHint = '⏪ -10');
-                      _doubleTapHintTimer?.cancel();
-                      _doubleTapHintTimer = Timer(const Duration(milliseconds: 700), () {
-                        if (mounted) setState(() => _doubleTapHint = null);
-                      });
-                      _resetTimer();
-                    },
+                  // نصف الشاشة اليمين → رجوع 10 ثواني
+                  Expanded(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.translucent,
+                      onDoubleTap: () {
+                        final pos = widget.audioPlayer.position;
+                        final back = pos - const Duration(seconds: 10);
+                        widget.onSeek(back < Duration.zero ? Duration.zero : back);
+                        setState(() => _doubleTapHint = '⏪ -10');
+                        _doubleTapHintTimer?.cancel();
+                        _doubleTapHintTimer = Timer(const Duration(milliseconds: 700), () {
+                          if (mounted) setState(() => _doubleTapHint = null);
+                        });
+                        _resetTimer();
+                      },
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
 
             // ── مؤشر double tap ──
@@ -2608,44 +2664,33 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
                   ),
                   child: Column(
                     children: [
-                      // ── الشريط العلوي ──
+                      // ── الشريط العلوي ── (إعدادات + عنوان فقط بدون سهم)
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
-                            // زر رجوع يسار
-                            GestureDetector(
-                              onTap: () => Navigator.of(context).pop(),
-                              child: Container(
-                                padding: const EdgeInsets.all(7),
-                                decoration: BoxDecoration(
-                                  color: Colors.black45,
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: const Icon(CupertinoIcons.chevron_down,
-                                    color: Colors.white, size: 16),
+                            // العنوان + الفنان — يسار
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(title,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 14,
+                                          fontFamily: 'Tajawal',
+                                          fontWeight: FontWeight.w700)),
+                                  Text(artist,
+                                      style: const TextStyle(
+                                          color: Colors.white70,
+                                          fontSize: 12,
+                                          fontFamily: 'Tajawal')),
+                                ],
                               ),
-                            ),
-                            const Spacer(),
-                            // العنوان + الفنان — يمين
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(title,
-                                    style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 14,
-                                        fontFamily: 'Tajawal',
-                                        fontWeight: FontWeight.w700),
-                                    overflow: TextOverflow.ellipsis),
-                                Text(artist,
-                                    style: const TextStyle(
-                                        color: Colors.white70,
-                                        fontSize: 12,
-                                        fontFamily: 'Tajawal')),
-                              ],
                             ),
                             const SizedBox(width: 10),
                             // زر الإعدادات — أقصى اليمين
@@ -2677,14 +2722,17 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
                           GestureDetector(
                             onTap: () { widget.onPrev(); _resetTimer(); },
                             child: Container(
-                              width: 48, height: 48,
-                              decoration: const BoxDecoration(
-                                  color: Colors.black38, shape: BoxShape.circle),
+                              width: 56, height: 56,
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.15),
+                                shape: BoxShape.circle,
+                                border: Border.all(color: Colors.white24, width: 1),
+                              ),
                               child: const Icon(CupertinoIcons.backward_end_fill,
-                                  color: Colors.white, size: 22),
+                                  color: Colors.white, size: 24),
                             ),
                           ),
-                          const SizedBox(width: 20),
+                          const SizedBox(width: 28),
                           StreamBuilder<bool>(
                             stream: widget.audioPlayer.playingStream,
                             builder: (_, snap) {
@@ -2692,35 +2740,42 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
                               return GestureDetector(
                                 onTap: () { widget.onPlayPause(); _resetTimer(); },
                                 child: Container(
-                                  width: 64, height: 64,
+                                  width: 76, height: 76,
                                   decoration: BoxDecoration(
-                                    color: AppColors.primary,
+                                    gradient: const LinearGradient(
+                                      colors: [AppColors.primary, AppColors.primaryDark],
+                                      begin: Alignment.topLeft,
+                                      end: Alignment.bottomRight,
+                                    ),
                                     shape: BoxShape.circle,
                                     boxShadow: [
                                       BoxShadow(
-                                        color: AppColors.primary.withOpacity(0.55),
-                                        blurRadius: 20,
-                                        spreadRadius: 2,
+                                        color: AppColors.primary.withOpacity(0.6),
+                                        blurRadius: 28,
+                                        spreadRadius: 4,
                                       ),
                                     ],
                                   ),
                                   child: Icon(
                                     playing ? CupertinoIcons.pause_fill : CupertinoIcons.play_fill,
-                                    color: Colors.white, size: 28,
+                                    color: Colors.white, size: 32,
                                   ),
                                 ),
                               );
                             },
                           ),
-                          const SizedBox(width: 20),
+                          const SizedBox(width: 28),
                           GestureDetector(
                             onTap: () { widget.onNext(); _resetTimer(); },
                             child: Container(
-                              width: 48, height: 48,
-                              decoration: const BoxDecoration(
-                                  color: Colors.black38, shape: BoxShape.circle),
+                              width: 56, height: 56,
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.15),
+                                shape: BoxShape.circle,
+                                border: Border.all(color: Colors.white24, width: 1),
+                              ),
                               child: const Icon(CupertinoIcons.forward_end_fill,
-                                  color: Colors.white, size: 22),
+                                  color: Colors.white, size: 24),
                             ),
                           ),
                         ],
@@ -2728,9 +2783,9 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
 
                       const Spacer(),
 
-                      // ── شريط التقدم مرفوع مع margins ──
+                      // ── شريط التقدم + زر خروج fullscreen أسفل يمين ──
                       Padding(
-                        padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+                        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
                         child: StreamBuilder<Duration?>(
                           stream: widget.audioPlayer.durationStream,
                           builder: (_, durSnap) {
@@ -2747,9 +2802,9 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
                                   children: [
                                     SliderTheme(
                                       data: SliderThemeData(
-                                        trackHeight: 3,
-                                        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
-                                        overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
+                                        trackHeight: 4,
+                                        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
+                                        overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
                                         activeTrackColor: AppColors.primary,
                                         inactiveTrackColor: Colors.white30,
                                         thumbColor: Colors.white,
@@ -2786,6 +2841,25 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
                                           ),
                                           Text(_fmt(dur),
                                               style: const TextStyle(color: Colors.white70, fontSize: 11)),
+                                          // زر الخروج من ملء الشاشة
+                                          GestureDetector(
+                                            onTap: () {
+                                              Navigator.of(context).pop();
+                                              _resetTimer();
+                                            },
+                                            child: Container(
+                                              padding: const EdgeInsets.all(6),
+                                              decoration: BoxDecoration(
+                                                color: Colors.black38,
+                                                borderRadius: BorderRadius.circular(7),
+                                              ),
+                                              child: const Icon(
+                                                CupertinoIcons.fullscreen_exit,
+                                                color: Colors.white,
+                                                size: 16,
+                                              ),
+                                            ),
+                                          ),
                                         ],
                                       ),
                                     ),
@@ -2960,7 +3034,9 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
   @override
   Widget build(BuildContext context) {
     final isDark = context.isDark;
-    final bgColor = isDark ? const Color(0xFF0D0D0D) : const Color(0xFFF2F2F7);
+    final bgColor = isDark
+        ? const Color(0xFF0A0A0F)
+        : const Color(0xFFF0F0F5);
     final textColor = isDark ? Colors.white : const Color(0xFF1A1A1A);
     final subColor = isDark ? Colors.white54 : Colors.black45;
     final controlBg = isDark ? Colors.white12 : Colors.black.withOpacity(0.07);
@@ -2984,34 +3060,49 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                   GestureDetector(
                     onTap: () => Navigator.pop(context),
                     child: Container(
-                      padding: const EdgeInsets.all(8),
+                      padding: const EdgeInsets.all(9),
                       decoration: BoxDecoration(
                         color: controlBg,
                         borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: isDark ? Colors.white.withOpacity(0.10) : Colors.black.withOpacity(0.08),
+                          width: 0.5,
+                        ),
                       ),
                       child: Icon(CupertinoIcons.chevron_down,
                           color: textColor, size: 20),
                     ),
                   ),
                   const Spacer(),
-                  Text(
-                    'يُشغَّل الآن',
-                    style: TextStyle(
-                      color: textColor,
-                      fontSize: 14,
-                      fontFamily: 'Tajawal',
-                      fontWeight: FontWeight.w600,
-                    ),
+                  Column(
+                    children: [
+                      Text(
+                        'يُشغَّل الآن',
+                        style: TextStyle(
+                          color: textColor,
+                          fontSize: 13,
+                          fontFamily: 'Tajawal',
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.3,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Container(
+                        width: 24, height: 2.5,
+                        decoration: BoxDecoration(
+                          color: AppColors.primary,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ],
                   ),
                   const Spacer(),
-                  const SizedBox(width: 36),
+                  const SizedBox(width: 38),
                 ],
               ),
             ),
 
             // ── Video / Artwork ──
-            // الفيديو: دائماً 16:9 أسود أثناء التحميل → فيديو بعد الجهوزية
-            // الصوت:  صورة مربعة مع thumbnail أو أيقونة
             ValueListenableBuilder<int>(
               valueListenable: audioService.currentIndex,
               builder: (_, idx, __) {
@@ -3019,91 +3110,147 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                 final isVideo = item?.isVideo == true;
 
                 if (isVideo) {
-                  // ── وضع الفيديو: نسبة 16:9 ثابتة دائماً، لا thumbnail إطلاقاً ──
-                  return AspectRatio(
-                    aspectRatio: (_videoInitialized && _videoCtrl != null &&
-                            _videoCtrl!.value.aspectRatio > 0)
-                        ? _videoCtrl!.value.aspectRatio
-                        : 16 / 9,
-                    child: Container(
-                      color: Colors.black,
-                      child: _videoInitialized && _videoCtrl != null
-                          ? _VideoPlayerWidget(
-                              ctrl: _videoCtrl!,
-                              audioPlayer: audioService.player,
-                              onSeek: (pos) {
-                                audioService.player.seek(pos);
-                                _videoCtrl?.seekTo(pos);
-                              },
-                              onPlayPause: () {
-                                if (audioService.player.playing) {
-                                  audioService.pauseByUser();
-                                } else {
-                                  audioService.playByUser();
-                                }
-                              },
-                              onNext: () => audioService.playNext(),
-                              onPrev: () => audioService.playPrevious(),
-                              speed: _speed,
-                              volume: _volume,
-                              onSpeedChange: _setSpeed,
-                              onVolumeChange: _setVolume,
-                            )
-                          // أثناء التحميل: مؤشر دوران فقط على خلفية سوداء 16:9
-                          : const Center(
-                              child: SizedBox(
-                                width: 36,
-                                height: 36,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2.5,
-                                  valueColor: AlwaysStoppedAnimation(Colors.white38),
+                  return Container(
+                    decoration: BoxDecoration(
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(isDark ? 0.5 : 0.15),
+                          blurRadius: 30,
+                          offset: const Offset(0, 10),
+                        ),
+                      ],
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: AspectRatio(
+                        aspectRatio: (_videoInitialized && _videoCtrl != null &&
+                                _videoCtrl!.value.aspectRatio > 0)
+                            ? _videoCtrl!.value.aspectRatio
+                            : 16 / 9,
+                        child: Container(
+                          color: Colors.black,
+                          child: _videoInitialized && _videoCtrl != null
+                              ? _VideoPlayerWidget(
+                                  ctrl: _videoCtrl!,
+                                  audioPlayer: audioService.player,
+                                  onSeek: (pos) {
+                                    audioService.player.seek(pos);
+                                    _videoCtrl?.seekTo(pos);
+                                  },
+                                  onPlayPause: () {
+                                    if (audioService.player.playing) {
+                                      audioService.pauseByUser();
+                                    } else {
+                                      audioService.playByUser();
+                                    }
+                                  },
+                                  onNext: () => audioService.playNext(),
+                                  onPrev: () => audioService.playPrevious(),
+                                  speed: _speed,
+                                  volume: _volume,
+                                  onSpeedChange: _setSpeed,
+                                  onVolumeChange: _setVolume,
+                                )
+                              : const Center(
+                                  child: SizedBox(
+                                    width: 36,
+                                    height: 36,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2.5,
+                                      valueColor: AlwaysStoppedAnimation(Colors.white38),
+                                    ),
+                                  ),
                                 ),
-                              ),
-                            ),
+                        ),
+                      ),
                     ),
                   );
                 }
 
-                // ── وضع الصوت: صورة مربعة مع thumbnail أو أيقونة ──
+                // ── وضع الصوت: صورة مربعة مع ظل رائع ──
                 return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 36, vertical: 8),
                   child: AspectRatio(
                     aspectRatio: 1,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(24),
-                      child: _thumbPath != null
-                          ? Image.file(
-                              File(_thumbPath!),
-                              fit: BoxFit.cover,
-                              width: double.infinity,
-                            )
-                          : Container(
-                              width: double.infinity,
-                              decoration: BoxDecoration(
-                                gradient: LinearGradient(
-                                  colors: [
-                                    AppColors.primary.withOpacity(0.8),
-                                    AppColors.primaryDark,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(28),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.primary.withOpacity(0.25),
+                            blurRadius: 40,
+                            spreadRadius: 5,
+                            offset: const Offset(0, 12),
+                          ),
+                          BoxShadow(
+                            color: Colors.black.withOpacity(isDark ? 0.5 : 0.12),
+                            blurRadius: 20,
+                            offset: const Offset(0, 6),
+                          ),
+                        ],
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(28),
+                        child: _thumbPath != null
+                            ? Image.file(
+                                File(_thumbPath!),
+                                fit: BoxFit.cover,
+                                width: double.infinity,
+                              )
+                            : Container(
+                                width: double.infinity,
+                                decoration: const BoxDecoration(
+                                  gradient: LinearGradient(
+                                    colors: [
+                                      Color(0xFFE8272A),
+                                      Color(0xFF8B1010),
+                                      Color(0xFF3D0505),
+                                    ],
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                  ),
+                                ),
+                                child: Stack(
+                                  alignment: Alignment.center,
+                                  children: [
+                                    // دوائر زخرفية خلف الأيقونة
+                                    Positioned(
+                                      top: -20, right: -20,
+                                      child: Container(
+                                        width: 120, height: 120,
+                                        decoration: BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          color: Colors.white.withOpacity(0.05),
+                                        ),
+                                      ),
+                                    ),
+                                    Positioned(
+                                      bottom: -30, left: -30,
+                                      child: Container(
+                                        width: 160, height: 160,
+                                        decoration: BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          color: Colors.white.withOpacity(0.04),
+                                        ),
+                                      ),
+                                    ),
+                                    Icon(
+                                      CupertinoIcons.music_note_2,
+                                      color: Colors.white.withOpacity(0.6),
+                                      size: 80,
+                                    ),
                                   ],
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
                                 ),
                               ),
-                              child: Icon(
-                                CupertinoIcons.music_note_2,
-                                color: Colors.white.withOpacity(0.5),
-                                size: 80,
-                              ),
-                            ),
+                      ),
                     ),
                   ),
                 );
               },
             ),
-
             // ── Track Info ──
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 6),
               child: ValueListenableBuilder<int>(
                 valueListenable: audioService.currentIndex,
                 builder: (_, __, ___) {
@@ -3113,27 +3260,36 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                     textDirection: TextDirection.rtl,
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      // ── User Logo (يمين التايتل في RTL) ──
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: Image.asset(
-                          'assets/images/logo.png',
-                          width: 46,
-                          height: 46,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => Container(
-                            width: 46,
-                            height: 46,
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                colors: [AppColors.primary, AppColors.primaryDark],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                              ),
-                              borderRadius: BorderRadius.circular(12),
+                      // ── Logo / أيقونة ──
+                      Container(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(12),
+                          boxShadow: [
+                            BoxShadow(
+                              color: AppColors.primary.withOpacity(0.2),
+                              blurRadius: 8,
+                              offset: const Offset(0, 3),
                             ),
-                            child: const Icon(CupertinoIcons.music_note_2,
-                                color: Colors.white, size: 22),
+                          ],
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(12),
+                          child: Image.asset(
+                            'assets/images/logo.png',
+                            width: 46, height: 46, fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => Container(
+                              width: 46, height: 46,
+                              decoration: BoxDecoration(
+                                gradient: const LinearGradient(
+                                  colors: [AppColors.primary, AppColors.primaryDark],
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                ),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: const Icon(CupertinoIcons.music_note_2,
+                                  color: Colors.white, size: 22),
+                            ),
                           ),
                         ),
                       ),
@@ -3148,11 +3304,23 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                               textColor: textColor,
                               maxCharsBeforeScroll: 27,
                             ),
-                            const SizedBox(height: 4),
-                            Text(
-                              'دندن',
-                              style: TextStyle(
-                                  color: subColor, fontSize: 14, fontFamily: 'Tajawal'),
+                            const SizedBox(height: 3),
+                            Row(
+                              children: [
+                                Container(
+                                  width: 6, height: 6,
+                                  decoration: const BoxDecoration(
+                                    color: AppColors.primary,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 5),
+                                Text(
+                                  'دندن',
+                                  style: TextStyle(
+                                      color: subColor, fontSize: 13, fontFamily: 'Tajawal'),
+                                ),
+                              ],
                             ),
                           ],
                         ),
@@ -3163,39 +3331,93 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
               ),
             ),
 
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
 
             // ── أزرار التشغيل (للصوت فقط — الفيديو له تحكم داخلي) ──
             if (!_isSwitching && !(_videoInitialized && _videoCtrl != null)) ...[
+              // شريط تقدم الصوت
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: StreamBuilder<Duration?>(
+                  stream: audioService.player.durationStream,
+                  builder: (_, durSnap) {
+                    return StreamBuilder<Duration>(
+                      stream: audioService.player.positionStream,
+                      builder: (_, posSnap) {
+                        final dur = durSnap.data ?? Duration.zero;
+                        final pos = posSnap.data ?? Duration.zero;
+                        final progress = dur.inMilliseconds > 0
+                            ? pos.inMilliseconds / dur.inMilliseconds
+                            : 0.0;
+                        return Column(
+                          children: [
+                            SliderTheme(
+                              data: SliderThemeData(
+                                trackHeight: 4,
+                                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
+                                overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
+                                activeTrackColor: AppColors.primary,
+                                inactiveTrackColor: isDark ? Colors.white.withOpacity(0.15) : Colors.black12,
+                                thumbColor: Colors.white,
+                                overlayColor: AppColors.primary.withOpacity(0.2),
+                                trackShape: const RoundedRectSliderTrackShape(),
+                              ),
+                              child: Slider(
+                                value: progress.clamp(0.0, 1.0),
+                                onChanged: (v) {
+                                  final ms = (v * dur.inMilliseconds).toInt();
+                                  audioService.player.seek(Duration(milliseconds: ms));
+                                },
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    '${pos.inMinutes.remainder(60).toString().padLeft(2,'0')}:${pos.inSeconds.remainder(60).toString().padLeft(2,'0')}',
+                                    style: TextStyle(color: subColor, fontSize: 11, fontFamily: 'Tajawal'),
+                                  ),
+                                  Text(
+                                    '${dur.inMinutes.remainder(60).toString().padLeft(2,'0')}:${dur.inSeconds.remainder(60).toString().padLeft(2,'0')}',
+                                    style: TextStyle(color: subColor, fontSize: 11, fontFamily: 'Tajawal'),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+
+              const SizedBox(height: 8),
+
+              // أزرار السابق + تشغيل + التالي
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // Repeat
-                  GestureDetector(
-                    onTap: () {
-                      setState(() => _isRepeat = !_isRepeat);
-                      audioService.player.setLoopMode(
-                          _isRepeat ? LoopMode.one : LoopMode.off);
-                    },
-                    child: Container(
-                      width: 40, height: 40,
-                      decoration: BoxDecoration(
-                        color: _isRepeat ? AppColors.primary.withOpacity(0.2) : controlBg,
-                        shape: BoxShape.circle,
-                      ),
-                      child: Icon(CupertinoIcons.repeat,
-                          color: _isRepeat ? AppColors.primary : subColor, size: 20),
-                    ),
-                  ),
                   // السابق
                   GestureDetector(
                     onTap: () => audioService.playPrevious(),
                     child: Container(
-                      width: 52, height: 52,
-                      decoration: BoxDecoration(color: controlBg, shape: BoxShape.circle),
-                      child: Icon(CupertinoIcons.backward_end_fill, color: textColor, size: 26),
+                      width: 56, height: 56,
+                      decoration: BoxDecoration(
+                        color: controlBg,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: isDark ? Colors.white.withOpacity(0.10) : Colors.black.withOpacity(0.08),
+                          width: 1,
+                        ),
+                      ),
+                      child: Icon(CupertinoIcons.backward_end_fill,
+                          color: textColor, size: 24),
                     ),
                   ),
+                  const SizedBox(width: 20),
                   // تشغيل / إيقاف
                   StreamBuilder<bool>(
                     stream: audioService.player.playingStream,
@@ -3206,127 +3428,79 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                             ? audioService.pauseByUser()
                             : audioService.playByUser(),
                         child: Container(
-                          width: 72, height: 72,
+                          width: 76, height: 76,
                           decoration: BoxDecoration(
-                            color: AppColors.primary,
+                            gradient: const LinearGradient(
+                              colors: [AppColors.primary, AppColors.primaryDark],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
                             shape: BoxShape.circle,
-                            boxShadow: [BoxShadow(
-                              color: AppColors.primary.withOpacity(0.45),
-                              blurRadius: 24, offset: const Offset(0, 8),
-                            )],
+                            boxShadow: [
+                              BoxShadow(
+                                color: AppColors.primary.withOpacity(0.5),
+                                blurRadius: 28,
+                                spreadRadius: 2,
+                                offset: const Offset(0, 6),
+                              ),
+                            ],
                           ),
                           child: Icon(
                             playing ? CupertinoIcons.pause_fill : CupertinoIcons.play_fill,
-                            color: Colors.white, size: 32,
+                            color: Colors.white, size: 34,
                           ),
                         ),
                       );
                     },
                   ),
+                  const SizedBox(width: 20),
                   // التالي
                   GestureDetector(
                     onTap: () => audioService.playNext(),
                     child: Container(
-                      width: 52, height: 52,
-                      decoration: BoxDecoration(color: controlBg, shape: BoxShape.circle),
-                      child: Icon(CupertinoIcons.forward_end_fill, color: textColor, size: 26),
+                      width: 56, height: 56,
+                      decoration: BoxDecoration(
+                        color: controlBg,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: isDark ? Colors.white.withOpacity(0.10) : Colors.black.withOpacity(0.08),
+                          width: 1,
+                        ),
+                      ),
+                      child: Icon(CupertinoIcons.forward_end_fill,
+                          color: textColor, size: 24),
                     ),
-                  ),
-                  // Shuffle placeholder
-                  Container(
-                    width: 40, height: 40,
-                    decoration: BoxDecoration(color: controlBg, shape: BoxShape.circle),
-                    child: Icon(CupertinoIcons.shuffle, color: subColor, size: 20),
                   ),
                 ],
               ),
-
-              const SizedBox(height: 12),
-
-              // Volume
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 28),
-                child: Row(
-                  children: [
-                    Icon(
-                      _volume == 0 ? CupertinoIcons.speaker_slash_fill :
-                      _volume < 1.0 ? CupertinoIcons.speaker_1_fill :
-                      CupertinoIcons.speaker_3_fill,
-                      color: subColor, size: 18,
-                    ),
-                    Expanded(
-                      child: SliderTheme(
-                        data: SliderThemeData(
-                          trackHeight: 3,
-                          thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
-                          overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
-                          activeTrackColor: AppColors.primary.withOpacity(0.8),
-                          inactiveTrackColor: isDark ? Colors.white12 : Colors.black12,
-                          thumbColor: AppColors.primary,
-                          overlayColor: AppColors.primary.withOpacity(0.15),
-                        ),
-                        child: Slider(
-                          value: _volume, min: 0, max: 3.0,
-                          onChanged: _setVolume,
-                        ),
-                      ),
-                    ),
-                    Text('${(_volume * 100).toInt()}%',
-                        style: TextStyle(color: subColor, fontSize: 11, fontFamily: 'Tajawal')),
-                  ],
-                ),
-              ),
-
-              // Speed
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 4),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(CupertinoIcons.speedometer, color: subColor, size: 16),
-                    const SizedBox(width: 8),
-                    for (final s in [0.5, 0.75, 1.0, 1.25, 1.5, 2.0])
-                      GestureDetector(
-                        onTap: () => _setSpeed(s),
-                        child: Container(
-                          margin: const EdgeInsets.symmetric(horizontal: 3),
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: _speed == s ? AppColors.primary : controlBg,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            s == 1.0 ? '1×' : '${s}×',
-                            style: TextStyle(
-                              color: _speed == s ? Colors.white : subColor,
-                              fontSize: 11, fontFamily: 'Tajawal', fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
             ], // end audio-only
 
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
 
-            // ── فاصل أنيق بين المشغل وقائمة التشغيل ──
+            // ── فاصل أنيق ──
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: Container(
-                height: 0.6,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      Colors.transparent,
-                      AppColors.primary.withOpacity(0.4),
-                      AppColors.primary.withOpacity(0.4),
-                      Colors.transparent,
-                    ],
-                    stops: const [0.0, 0.25, 0.75, 1.0],
+              child: Row(
+                children: [
+                  Container(height: 0.5, width: 24,
+                      color: isDark ? Colors.white.withOpacity(0.10) : Colors.black.withOpacity(0.08)),
+                  Expanded(
+                    child: Container(
+                      height: 0.5,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [
+                            Colors.transparent,
+                            AppColors.primary.withOpacity(0.5),
+                            Colors.transparent,
+                          ],
+                        ),
+                      ),
+                    ),
                   ),
-                ),
+                  Container(height: 0.5, width: 24,
+                      color: isDark ? Colors.white.withOpacity(0.10) : Colors.black.withOpacity(0.08)),
+                ],
               ),
             ),
 
@@ -3338,16 +3512,23 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 4),
-                    child: Text(
-                      'قائمة التشغيل',
-                      style: TextStyle(
-                        color: subColor, fontSize: 13,
-                        fontFamily: 'Tajawal', fontWeight: FontWeight.w600,
-                      ),
+                    padding: const EdgeInsets.fromLTRB(24, 4, 24, 4),
+                    child: Row(
+                      children: [
+                        Icon(CupertinoIcons.music_note_list,
+                            size: 14, color: AppColors.primary),
+                        const SizedBox(width: 6),
+                        Text(
+                          'قائمة التشغيل',
+                          style: TextStyle(
+                            color: subColor, fontSize: 13,
+                            fontFamily: 'Tajawal', fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 4),
                   Expanded(
                     child: ValueListenableBuilder<List<LocalMediaItem>>(
                       valueListenable: audioService.playlist,
@@ -4791,6 +4972,137 @@ class _PatternPainter extends CustomPainter {
   }
 }
 // ═══════════════════════════════════════════════════════════
+//  BACKGROUND WITH REPEATED PATTERN - صورة متكررة تملأ الصفحة
+// ═══════════════════════════════════════════════════════════
+
+/// Widget يرسم خلفية متكررة من صورة واحدة مع إمكانية التدوير والشفافية
+class RepeatingPatternBackground extends StatelessWidget {
+  final double opacity;
+  final double rotationDegrees;
+  final double patternWidth;
+  final double patternHeight;
+
+  const RepeatingPatternBackground({
+    super.key,
+    required this.opacity,
+    required this.rotationDegrees,
+    this.patternWidth = 100,    // عرض كل تكرار
+    this.patternHeight = 100,   // ارتفاع كل تكرار
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return FutureBuilder<ui.Image?>(
+          future: _loadImage(),
+          builder: (context, snapshot) {
+            if (snapshot.hasData && snapshot.data != null) {
+              return CustomPaint(
+                size: Size(constraints.maxWidth, constraints.maxHeight),
+                painter: _RepeatingPatternPainter(
+                  image: snapshot.data!,
+                  opacity: opacity,
+                  rotationRad: rotationDegrees * -30.4 / 180,
+                  patternWidth: patternWidth,
+                  patternHeight: patternHeight,
+                ),
+              );
+            }
+            // إذا لم تتحمل الصورة بعد، نعرض Container فارغ
+            return Container(color: Colors.transparent);
+          },
+        );
+      },
+    );
+  }
+
+  Future<ui.Image?> _loadImage() async {
+    try {
+      final completer = Completer<ui.Image>();
+      final assetImage = AssetImage('assets/images/bg.png');
+      final stream = assetImage.resolve(ImageConfiguration());
+
+      stream.addListener(
+        ImageStreamListener((info, _) {
+          completer.complete(info.image);
+        }, onError: (error, stackTrace) {
+          completer.completeError(error);
+        }),
+      );
+
+      return await completer.future;
+    } catch (e) {
+      debugPrint('خطأ في تحميل صورة الخلفية: $e');
+      return null;
+    }
+  }
+}
+
+/// Painter المسؤول عن رسم النقش المتكرر
+class _RepeatingPatternPainter extends CustomPainter {
+  final ui.Image image;
+  final double opacity;
+  final double rotationRad;
+  final double patternWidth;
+  final double patternHeight;
+
+  _RepeatingPatternPainter({
+    required this.image,
+    required this.opacity,
+    required this.rotationRad,
+    required this.patternWidth,
+    required this.patternHeight,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = Colors.white.withOpacity(opacity)
+      ..filterQuality = FilterQuality.medium;
+
+    canvas.save();
+
+    // نقل نقطة الرسم إلى مركز الصفحة
+    canvas.translate(size.width / 2, size.height / 2);
+    // تدوير الخلفية بأكملها
+    canvas.rotate(rotationRad);
+    // إعادة النقطة إلى الزاوية العلوية اليسرى
+    canvas.translate(-size.width / 1, -size.height / 1);
+
+    // حساب عدد التكرارات المطلوبة لتغطية الصفحة بالكامل
+    final cols = (size.width / patternWidth).ceil() + 5;
+    final rows = (size.height / patternHeight).ceil() + 5;
+
+    // رسم الصور بشكل متكرر
+    for (int row = 0; row <= rows; row++) {
+      for (int col = 0; col <= cols; col++) {
+        final dx = col * patternWidth;
+        final dy = row * patternHeight;
+
+        final rect = Rect.fromLTWH(dx, dy, patternWidth, patternHeight);
+        canvas.drawImageRect(
+          image,
+          Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
+          rect,
+          paint,
+        );
+      }
+    }
+
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _RepeatingPatternPainter oldDelegate) {
+    return oldDelegate.image != image ||
+        oldDelegate.opacity != opacity ||
+        oldDelegate.rotationRad != rotationRad ||
+        oldDelegate.patternWidth != patternWidth ||
+        oldDelegate.patternHeight != patternHeight;
+  }
+}
+// ═══════════════════════════════════════════════════════════
 //  PAGE 2 — تصفح (Browse)
 // ═══════════════════════════════════════════════════════════
 class BrowsePage extends StatelessWidget {
@@ -4798,227 +5110,241 @@ class BrowsePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = context.isDark;
+    final bgColor = isDark ? AppColors.darkBg : AppColors.background;
+    
     return Scaffold(
-      backgroundColor: context.appBg,
-      body: CustomScrollView(
-        slivers: [
-          SliverToBoxAdapter(
-            child: Container(
-              padding: EdgeInsets.only(
-                top: MediaQuery.of(context).padding.top + 16,
-                left: 20,
-                right: 20,
-                bottom: 20,
-              ),
-              child: Text(
-                'تصفح',
-                style: TextStyle(
-                  fontSize: 28,
-                  fontFamily: 'Tajawal',
-                  fontWeight: FontWeight.w700,
-                  color: context.appText,
-                  letterSpacing: -0.5,
-                ),
-              ),
-            ),
+      backgroundColor: bgColor,
+      body: Stack(
+        children: [
+          // ── الخلفية المتكررة (شفافية 0.1، دوران 300 درجة) ──
+          const RepeatingPatternBackground(
+            opacity: 0.03,
+            rotationDegrees: 300,
+            patternWidth: 120,   // عرض كل تكرار
+            patternHeight: 120,  // ارتفاع كل تكرار
           ),
-          // ── كرت الإعلانات (السلايد شو) ──
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: const _AdSlideshowCard(),
-            ),
-          ),
-          const SliverToBoxAdapter(child: SizedBox(height: 16)),
-          // ── يوتيوب كرت ──
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: GestureDetector(
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    CupertinoPageRoute(builder: (_) => const SearchPage()),
-                  );
-                },
+          
+          // ── المحتوى الأصلي (فوق الخلفية) ──
+          CustomScrollView(
+            slivers: [
+              SliverToBoxAdapter(
                 child: Container(
-                  height: 45,
-                  decoration: BoxDecoration(
-                    color: const Color.fromARGB(255, 228, 48, 51),
-                    borderRadius: BorderRadius.circular(18),
-                    boxShadow: [
-                      BoxShadow(
-                        color: AppColors.primary.withOpacity(0.35),
-                        blurRadius: 16,
-                        offset: const Offset(0, 6),
-                      ),
-                    ],
+                  padding: EdgeInsets.only(
+                    top: MediaQuery.of(context).padding.top + 16,
+                    left: 20,
+                    right: 20,
+                    bottom: 20,
                   ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(18),
-                    child: Stack(
-                      children: [
-                        const _RotatedRepeatedPattern(
-                          opacity: 0.1,
-                          angleDegrees: -32,
-                          patternSize: 170,
-                          imagePath: 'assets/images/yt-bg.png',
-                        ),
-                        const Center(
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(CupertinoIcons.play_rectangle_fill,
-                                  color: Colors.white, size: 24),
-                              SizedBox(width: 8),
-                              Text(
-                                'يوتيوب',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: 0.5,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
+                  child: Text(
+                    'تصفح',
+                    style: TextStyle(
+                      fontSize: 28,
+                      fontFamily: 'Tajawal',
+                      fontWeight: FontWeight.w700,
+                      color: context.appText,
+                      letterSpacing: -0.5,
                     ),
                   ),
                 ),
               ),
-            ),
-          ),
-          const SliverToBoxAdapter(child: SizedBox(height: 14)),
-          // ── كرت وسائط الجهاز (الجديد) ──
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: GestureDetector(
-                onTap: () {
-                  // TODO: أضف الرابط أو الوظيفة المطلوبة عند الضغط على الكرت
-                  // يمكنك فتح صفحة لعرض الصور أو مقاطع الوسائط المختلفة
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('سيتم إضافة صفحة وسائط الجهاز قريباً', textDirection: TextDirection.rtl),
-                      backgroundColor: Colors.green,
-                      behavior: SnackBarBehavior.floating,
-                      duration: Duration(seconds: 2),
-                    ),
-                  );
-                },
-                child: Container(
-                  height: 45,
-                  decoration: BoxDecoration(
-                    color: const Color.fromARGB(255, 43, 160, 140), // لون أخضر
-                    borderRadius: BorderRadius.circular(18),
-                    boxShadow: [
-                      BoxShadow(
-                        color: const Color.fromARGB(255, 67, 160, 137).withOpacity(0.1),
-                        blurRadius: 16,
-                        offset: const Offset(0, 6),
-                      ),
-                    ],
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(18),
-                    child: Stack(
-                      children: [
-                        const _RotatedRepeatedPattern(
-                          opacity: 0.1,
-                          angleDegrees: -32,
-                          patternSize: 170,
-                          imagePath: 'assets/images/img-bg.png', // الخلفية الجديدة
-                        ),
-                        const Center(
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(CupertinoIcons.photo_fill, // أيقونة الوسائط (صور/فيديو)
-                                  color: Colors.white, size: 22),
-                              SizedBox(width: 8),
-                              Text(
-                                'وسائط الجهاز',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: 0.5,
-                                ),
-                              ),
-                            ],
+              // ── كرت الإعلانات (السلايد شو) ──
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: const _AdSlideshowCard(),
+                ),
+              ),
+              const SliverToBoxAdapter(child: SizedBox(height: 16)),
+              // ── يوتيوب كرت ──
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: GestureDetector(
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        CupertinoPageRoute(builder: (_) => const SearchPage()),
+                      );
+                    },
+                    child: Container(
+                      height: 45,
+                      decoration: BoxDecoration(
+                        color: const Color.fromARGB(255, 233, 18, 18),
+                        borderRadius: BorderRadius.circular(18),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.primary.withOpacity(0.35),
+                            blurRadius: 16,
+                            offset: const Offset(0, 6),
                           ),
+                        ],
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(18),
+                        child: Stack(
+                          children: [
+                            const _RotatedRepeatedPattern(
+                              opacity: 0.1,
+                              angleDegrees: -32,
+                              patternSize: 170,
+                              imagePath: 'assets/images/yt-bg.png',
+                            ),
+                            const Center(
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(CupertinoIcons.play_rectangle_fill,
+                                      color: Colors.white, size: 24),
+                                  SizedBox(width: 8),
+                                  Text(
+                                    'يوتيوب',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 0.5,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                         ),
-                      ],
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-          ),
-          const SliverToBoxAdapter(child: SizedBox(height: 14)),
-          // ── ملفات الجهاز (الكرت الأزرق الأصلي) ──
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: GestureDetector(
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    CupertinoPageRoute(builder: (_) => const FileBrowserPage()),
-                  );
-                },
-                child: Container(
-                  height: 45,
-                  decoration: BoxDecoration(
-                    color: const Color.fromARGB(255, 51, 124, 189),
-                    borderRadius: BorderRadius.circular(18),
-                    boxShadow: [
-                      BoxShadow(
-                        color: const Color(0xFF1E88E5).withOpacity(0.35),
-                        blurRadius: 16,
-                        offset: const Offset(0, 6),
-                      ),
-                    ],
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(18),
-                    child: Stack(
-                      children: [
-                        const _RotatedRepeatedPattern(
-                          opacity: 0.1,
-                          angleDegrees: -32,
-                          patternSize: 170,
-                          imagePath: 'assets/images/files-bg.png',
+              const SliverToBoxAdapter(child: SizedBox(height: 14)),
+              // ── كرت وسائط الجهاز ──
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: GestureDetector(
+                    onTap: () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('سيتم إضافة صفحة وسائط الجهاز قريباً', textDirection: TextDirection.rtl),
+                          backgroundColor: Colors.green,
+                          behavior: SnackBarBehavior.floating,
+                          duration: Duration(seconds: 2),
                         ),
-                        const Center(
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(CupertinoIcons.folder_fill,
-                                  color: Colors.white, size: 22),
-                              SizedBox(width: 8),
-                              Text(
-                                'ملفات الجهاز',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: 0.5,
-                                ),
-                              ),
-                            ],
+                      );
+                    },
+                    child: Container(
+                      height: 45,
+                      decoration: BoxDecoration(
+                        color: const Color.fromARGB(255, 160, 105, 43),
+                        borderRadius: BorderRadius.circular(18),
+                        boxShadow: [
+                          BoxShadow(
+                            color: const Color.fromARGB(255, 160, 120, 67).withOpacity(0.1),
+                            blurRadius: 16,
+                            offset: const Offset(0, 6),
                           ),
+                        ],
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(18),
+                        child: Stack(
+                          children: [
+                            const _RotatedRepeatedPattern(
+                              opacity: 0.1,
+                              angleDegrees: -32,
+                              patternSize: 170,
+                              imagePath: 'assets/images/img-bg.png',
+                            ),
+                            const Center(
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(CupertinoIcons.photo_fill,
+                                      color: Colors.white, size: 22),
+                                  SizedBox(width: 8),
+                                  Text(
+                                    'وسائط الجهاز',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 0.5,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                         ),
-                      ],
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
+              const SliverToBoxAdapter(child: SizedBox(height: 14)),
+              // ── ملفات الجهاز ──
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: GestureDetector(
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        CupertinoPageRoute(builder: (_) => const FileBrowserPage()),
+                      );
+                    },
+                    child: Container(
+                      height: 45,
+                      decoration: BoxDecoration(
+                        color: const Color.fromARGB(255, 15, 117, 212),
+                        borderRadius: BorderRadius.circular(18),
+                        boxShadow: [
+                          BoxShadow(
+                            color: const Color(0xFF1E88E5).withOpacity(0.35),
+                            blurRadius: 16,
+                            offset: const Offset(0, 6),
+                          ),
+                        ],
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(18),
+                        child: Stack(
+                          children: [
+                            const _RotatedRepeatedPattern(
+                              opacity: 0.1,
+                              angleDegrees: -32,
+                              patternSize: 170,
+                              imagePath: 'assets/images/files-bg.png',
+                            ),
+                            const Center(
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(CupertinoIcons.folder_fill,
+                                      color: Colors.white, size: 22),
+                                  SizedBox(width: 8),
+                                  Text(
+                                    'ملفات الجهاز',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 0.5,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SliverToBoxAdapter(child: SizedBox(height: 140)),
+            ],
           ),
-          const SliverToBoxAdapter(child: SizedBox(height: 140)),
         ],
       ),
     );
@@ -6345,7 +6671,7 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
                           value: _downloadProgress > 0
                               ? _downloadProgress
                               : null,
-                          backgroundColor: isDark ? Colors.white10 : Colors.white,
+                          backgroundColor: isDark ? Colors.white.withOpacity(0.10) : Colors.white,
                           valueColor: const AlwaysStoppedAnimation(
                               AppColors.primary),
                           minHeight: 4,

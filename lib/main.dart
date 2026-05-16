@@ -2482,7 +2482,7 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
               // ── مشاركة الشاشة ──
               ListTile(
                 contentPadding: EdgeInsets.zero,
-                leading: const Icon(CupertinoIcons.airplayvideo, color: Colors.white70, size: 20),
+                leading: const Icon(CupertinoIcons.arrow_turn_up_right, color: Colors.white70, size: 20),
                 title: const Text('مشاركة الشاشة',
                     style: TextStyle(color: Colors.white, fontFamily: 'Tajawal', fontSize: 15)),
                 onTap: () => Navigator.pop(_),
@@ -2497,8 +2497,8 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
   @override
   Widget build(BuildContext context) {
     final item = audioService.currentItem;
-    final title = item?.title ?? '';
-    final artist = item?.artist ?? 'دندن';
+    final title = item?.title.replaceAll(RegExp(r'\.\w+$'), '') ?? '';
+    const artist = 'دندن';
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: const SystemUiOverlayStyle(

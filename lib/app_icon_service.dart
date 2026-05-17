@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'package:flutter/services.dart';
-import 'package:flutter_dynamic_icon/flutter_dynamic_icon.dart';
-
+import 'package:flutter_dynamic_icon_plus/flutter_dynamic_icon_plus.dart';
 // ─────────────────────────────────────────────
 //  APP ICON SERVICE — تغيير أيقونة التطبيق حسب الثيم
 // ─────────────────────────────────────────────
@@ -39,23 +38,26 @@ class AppIconService {
   }
 
   /// تغيير الأيقونة على iOS
-  Future<void> _updateIconIOS({required bool isDark}) async {
-    try {
-      final bool supported = await FlutterDynamicIcon.supportsAlternateIcons;
-      if (!supported) return;
+ Future<void> _updateIconIOS({required bool isDark}) async {
+  try {
+    final bool supported =
+        await FlutterDynamicIconPlus.supportsAlternateIcons;
 
-      if (isDark) {
-        // تغيير للأيقونة الداكنة
-        await FlutterDynamicIcon.setAlternateIconName(_darkIcon);
-      } else {
-        // العودة للأيقونة الافتراضية
-        await FlutterDynamicIcon.setAlternateIconName(null);
-      }
-    } on PlatformException {
-      // الجهاز لا يدعم تغيير الأيقونة
+    if (!supported) return;
+
+    if (isDark) {
+      await FlutterDynamicIconPlus.setAlternateIconName(
+        iconName: _darkIcon,
+      );
+    } else {
+      await FlutterDynamicIconPlus.setAlternateIconName(
+        iconName: null,
+      );
     }
+  } on PlatformException {
+    //
   }
-
+}
   /// تغيير الأيقونة على Android عبر activity-alias
   Future<void> _updateIconAndroid({required bool isDark}) async {
     try {

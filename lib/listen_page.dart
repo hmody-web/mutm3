@@ -163,7 +163,7 @@ class _ListenPageState extends State<ListenPage> {
       }
     } else {
       // iOS — طلب مباشر للصور
-      status = await Permission.photos.request();
+      status = await Permission.photosAddOnly.request();
     }
 
     if (!mounted) return;

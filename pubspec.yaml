@@ -25,7 +25,6 @@ dependencies:
   shared_preferences: ^2.3.3
   cupertino_icons: ^1.0.8
   flutter_launcher_icons: ^0.13.1
-  flutter_dynamic_icon: ^2.1.0
   video_thumbnail: ^0.5.3
   on_audio_query: ^2.9.0
   video_player: ^2.9.2
@@ -33,7 +32,7 @@ dependencies:
   url_launcher: ^6.3.0
   http: ^1.2.0
   vision_gallery_saver: ^3.0.0
-
+  flutter_dynamic_icon_plus: ^1.0.0
 dev_dependencies:
   flutter_test:
     sdk: flutter

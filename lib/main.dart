@@ -23,11 +23,13 @@ import 'package:video_thumbnail/video_thumbnail.dart';
 import 'package:on_audio_query/on_audio_query.dart';
 import 'app_icon_service.dart';
 import 'dart:ui' as ui;
+import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'listen_page.dart';
 import 'browse_page.dart';
 import 'settings_page.dart';
+import 'package:flutter_dynamic_icon_plus/flutter_dynamic_icon_plus.dart';
 // ─────────────────────────────────────────────
 //  ENTRY POINT
 // ─────────────────────────────────────────────
@@ -3889,32 +3891,28 @@ class _IdleOverlayState extends State<_IdleOverlay>
     _resetTimer();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.translucent,
-      onTap: _onTap,
-      onPanDown: (_) => _onTap(),
-      child: Stack(
-        children: [
-          // منطقة شفافة تلتقط اللمس دائماً
-          Positioned.fill(child: const SizedBox.expand()),
-
-          // الـ Overlay نفسه
-          if (_visible)
-            Positioned.fill(
-              child: IgnorePointer(
-                ignoring: false,
-                child: FadeTransition(
-                  opacity: _fadeAnim,
-                  child: _IdleOverlayContent(),
-                ),
+@override
+Widget build(BuildContext context) {
+  return Listener(
+    behavior: HitTestBehavior.translucent,
+    onPointerDown: (_) => _onTap(),
+    onPointerMove: (_) => _onTap(),
+    child: Stack(
+      children: [
+        if (_visible)
+          Positioned.fill(
+            child: IgnorePointer(
+              ignoring: true,
+              child: FadeTransition(
+                opacity: _fadeAnim,
+                child: _IdleOverlayContent(),
               ),
             ),
-        ],
-      ),
-    );
-  }
+          ),
+      ],
+    ),
+  );
+}
 }
 
 // ─────────────────────────────────────────────
@@ -3986,34 +3984,42 @@ class _IdleOverlayContentState extends State<_IdleOverlayContent>
       builder: (ctx, constraints) {
         final totalH = constraints.maxHeight;
         // ارتفاع الـ overlay يبدأ من الأسفل وصولاً لـ 52% من الشاشة
-        const overlayFraction = 0.52;
+        const overlayFraction = 0.72;
 
         return Stack(
           children: [
             // ── الخلفية المتدرجة ──
-            Positioned(
-              bottom: 0,
-              left: 0,
-              right: 0,
-              height: totalH * overlayFraction,
-              child: Container(
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.bottomCenter,
-                    end: Alignment.topCenter,
-                    colors: [
-                      Color(0xFF9B0000),   // أحمر غامق قوي في الأسفل
-                      Color(0xCCE8272A),   // أحمر متوسط
-                      Color(0x88C0181B),   // أحمر فاتح
-                      Color(0x44A01015),   // شبه شفاف
-                      Colors.transparent, // شفاف تماماً في الأعلى
-                    ],
-                    stops: [0.0, 0.28, 0.55, 0.78, 1.0],
-                  ),
-                ),
-              ),
-            ),
-
+// ── الخلفية المتدرجة + Blur ──
+Positioned(
+  bottom: 0,
+  left: 0,
+  right: 0,
+  height: totalH * overlayFraction,
+  child: ClipRect(
+    child: BackdropFilter(
+      filter: ImageFilter.blur(
+        sigmaX: 5,
+        sigmaY: 5,
+      ),
+      child: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.bottomCenter,
+            end: Alignment.topCenter,
+            colors: [
+              Color(0xCC9B0000),
+              Color(0x99E8272A),
+              Color(0x66C0181B),
+              Color(0x33A01015),
+              Colors.transparent,
+            ],
+            stops: [0.0, 0.28, 0.55, 0.78, 1.0],
+          ),
+        ),
+      ),
+    ),
+  ),
+),
             // ── المحتوى في المنتصف-أسفل ──
             Positioned(
               bottom: totalH * 0.08,

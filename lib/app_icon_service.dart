@@ -1,6 +1,6 @@
 import 'dart:io';
 import 'package:flutter/services.dart';
-import 'package:flutter_dynamic_icon_plus/flutter_dynamic_icon_plus.dart';
+import 'package:flutter_dynamic_icon/flutter_dynamic_icon.dart';
 // ─────────────────────────────────────────────
 //  APP ICON SERVICE — تغيير أيقونة التطبيق حسب الثيم
 // ─────────────────────────────────────────────
@@ -41,18 +41,14 @@ class AppIconService {
  Future<void> _updateIconIOS({required bool isDark}) async {
   try {
     final bool supported =
-        await FlutterDynamicIconPlus.supportsAlternateIcons;
+        await FlutterDynamicIcon.supportsAlternateIcons;
 
     if (!supported) return;
 
     if (isDark) {
-      await FlutterDynamicIconPlus.setAlternateIconName(
-        iconName: _darkIcon,
-      );
+      await FlutterDynamicIcon.setAlternateIconName('dark');
     } else {
-      await FlutterDynamicIconPlus.setAlternateIconName(
-        iconName: null,
-      );
+      await FlutterDynamicIcon.setAlternateIconName(null);
     }
   } on PlatformException {
     //

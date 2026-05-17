@@ -28,7 +28,7 @@ import 'package:http/http.dart' as http;
 import 'listen_page.dart';
 import 'browse_page.dart';
 import 'settings_page.dart';
-import 'package:flutter_dynamic_icon_plus/flutter_dynamic_icon_plus.dart';
+import 'package:flutter_dynamic_icon/flutter_dynamic_icon.dart';
 // ─────────────────────────────────────────────
 //  ENTRY POINT
 // ─────────────────────────────────────────────

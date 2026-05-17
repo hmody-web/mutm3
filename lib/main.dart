@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
@@ -1476,7 +1477,8 @@ class _MiniPlayerState extends State<_MiniPlayer>
                                 icon: playing
                                     ? CupertinoIcons.pause_fill
                                     : CupertinoIcons.play_fill,
-                                size: 22,
+                                size: 28,
+                                btnSize: 44,
                                 isDark: isDark,
                                 onTap: () => playing
                                     ? audioService.pauseByUser()
@@ -1488,20 +1490,16 @@ class _MiniPlayerState extends State<_MiniPlayer>
 
                           // ── زر الإغلاق ──
                           _MiniBtn(
-  icon: CupertinoIcons.xmark,
-  isDark: isDark,
-  onTap: () async {
-
-    // ايقاف التشغيل
-    await audioService.player.stop();
-
-    // اخفاء المشغل الصغير
-    audioService.isVisible.value = false;
-
-    // حذف العنصر الحالي حتى يختفي اللون الاحمر
-    audioService.currentIndex.value = -1;
-  },
-),
+                            icon: CupertinoIcons.xmark,
+                            size: 22,
+                            btnSize: 40,
+                            isDark: isDark,
+                            onTap: () async {
+                              await audioService.player.stop();
+                              audioService.isVisible.value = false;
+                              audioService.currentIndex.value = -1;
+                            },
+                          ),
                         ],
                       ),
                     );
@@ -1584,18 +1582,31 @@ class _MiniBtn extends StatelessWidget {
   final IconData icon;
   final VoidCallback onTap;
   final double size;
+  final double btnSize;
   final bool isDark;
-  const _MiniBtn({required this.icon, required this.onTap, this.size = 20, this.isDark = true});
+  const _MiniBtn({
+    required this.icon,
+    required this.onTap,
+    this.size = 22,
+    this.btnSize = 40,
+    this.isDark = true,
+  });
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(6),
-        child: Icon(icon,
+      behavior: HitTestBehavior.opaque,
+      child: SizedBox(
+        width: btnSize,
+        height: btnSize,
+        child: Center(
+          child: Icon(
+            icon,
             color: isDark ? Colors.white : const Color(0xFF1A1A1A),
-            size: size),
+            size: size,
+          ),
+        ),
       ),
     );
   }
@@ -4024,7 +4035,7 @@ Positioned(
   height: totalH -
     ((MediaQuery.of(context).size.width * (9 / 16)) +
     MediaQuery.of(context).padding.top +
-    70),
+    71),
   child: ClipRect(
     child: BackdropFilter(
       filter: ImageFilter.blur(
@@ -4096,7 +4107,7 @@ Positioned(
   fontSize: 28,
   fontFamily: 'mzghrf',
   fontWeight: FontWeight.w100,
-  height: 1.35,
+  height: 2,
   leadingDistribution: TextLeadingDistribution.even,
   shadows: [
     Shadow(color: Colors.black54, blurRadius: 8),
@@ -4114,7 +4125,7 @@ Positioned(
   fontSize: 28,
   fontFamily: 'mzghrf',
   fontWeight: FontWeight.w100,
-  height: 1.35,
+  height: 2,
   leadingDistribution: TextLeadingDistribution.even,
   shadows: [
     Shadow(color: Colors.black54, blurRadius: 8),
@@ -4132,7 +4143,7 @@ Positioned(
   fontSize: 28,
   fontFamily: 'mzghrf',
   fontWeight: FontWeight.w100,
-  height: 1.35,
+  height: 2,
   leadingDistribution: TextLeadingDistribution.even,
   shadows: [
     Shadow(color: Colors.black54, blurRadius: 8),
@@ -4154,7 +4165,7 @@ Positioned(
   fontSize: 28,
   fontFamily: 'mzghrf',
   fontWeight: FontWeight.w100,
-  height: 1.35,
+  height: 2,
   leadingDistribution: TextLeadingDistribution.even,
   shadows: [
     Shadow(color: Colors.black54, blurRadius: 8),
@@ -4231,7 +4242,7 @@ Positioned(
 }
 
 // ─────────────────────────────────────────────
-//  _RealSoundWave — أمواج حقيقية تتفاعل مع الصوت
+//  _RealSoundWave — أمواج 60fps تتفاعل مع الصوت
 // ─────────────────────────────────────────────
 class _RealSoundWave extends StatefulWidget {
   const _RealSoundWave();
@@ -4241,134 +4252,124 @@ class _RealSoundWave extends StatefulWidget {
 }
 
 class _RealSoundWaveState extends State<_RealSoundWave>
-    with TickerProviderStateMixin {
-  late AnimationController _masterCtrl;
+    with SingleTickerProviderStateMixin {
 
-  // قيم الأشرطة الحالية والهدف (للـ lerp)
-  static const int _barCount = 26;
-  final List<double> _currentHeights = List.filled(_barCount, 0.08);
-  final List<double> _targetHeights = List.filled(_barCount, 0.08);
+  static const int _barCount = 18;
 
-  // بيانات الصوت الحقيقية من just_audio
-  StreamSubscription<Duration>? _posSub;
-  StreamSubscription<bool>? _playingSub;
-  bool _isPlaying = false;
-  Duration _lastPosition = Duration.zero;
-  Duration _prevPosition = Duration.zero;
-  int _samePositionCount = 0;
+  // الأرتفاع الحالي لكل شريط (يتحرك بـ lerp ناعم)
+  final List<double> _heights = List.filled(_barCount, 0.06);
 
-  // أرتفاعات الموجة الأساسية (نمط جمالي)
-  static const List<double> _waveProfile = [
-    0.20, 0.38, 0.55, 0.72, 0.85, 0.95, 0.88, 0.75,
-    0.92, 0.68, 0.98, 0.80, 0.96, 0.73, 0.90, 0.82,
-    0.97, 0.70, 0.88, 0.78, 0.93, 0.65, 0.82, 0.55, 0.35, 0.18,
+  // الـ seed الثابت لكل شريط — يعطي كل شريط شخصيته الخاصة
+  // أرقام أولية مختلفة لتردد مختلف لكل شريط
+  static const List<double> _freq1 = [
+    1.30, 1.85, 2.40, 1.60, 2.10, 1.45, 2.70, 1.90,
+    2.25, 1.55, 2.80, 1.75, 2.15, 1.40, 2.60, 1.95, 2.35, 1.65,
+  ];
+  static const List<double> _freq2 = [
+    3.10, 2.45, 3.70, 2.90, 3.30, 2.65, 3.85, 2.50,
+    3.15, 2.80, 3.50, 2.35, 3.75, 2.95, 3.20, 2.55, 3.60, 2.70,
+  ];
+  static const List<double> _phase0 = [
+    0.00, 0.70, 1.40, 2.10, 2.80, 0.35, 1.05, 1.75,
+    2.45, 3.15, 0.50, 1.20, 1.90, 2.60, 0.15, 0.85, 1.55, 2.25,
   ];
 
-  // seed عشوائي لكل بار (مرة واحدة فقط)
-  final List<double> _randomSeed = List.generate(
-    _barCount,
-    (i) => 0.5 + 0.5 * ((i * 7 + 3) % 11) / 11.0,
-  );
+  // تحكم التشغيل
+  late AnimationController _ticker;
+  StreamSubscription<bool>? _playingSub;
+  StreamSubscription<Duration>? _posSub;
 
-  double _wavePhase = 0.0;
+  bool _isPlaying = false;
+  double _songTime = 0.0;       // الزمن الحقيقي للأغنية بالثانية
+  double _animTime = 0.0;       // زمن الـ animation المتراكم (60fps)
+  DateTime? _lastTick;
 
   @override
   void initState() {
     super.initState();
 
-    _masterCtrl = AnimationController(
+    _ticker = AnimationController(
       vsync: this,
       duration: const Duration(days: 999),
-    )..addListener(_onTick)..forward();
+    )..addListener(_onFrame)..forward();
 
-    // الاستماع لـ positionStream — هذا هو المصدر الحقيقي للإيقاع
-    _posSub = audioService.player.positionStream.listen((pos) {
-      if (!mounted) return;
-      final delta = pos.inMilliseconds - _lastPosition.inMilliseconds;
-
-      // تحقق إذا الموقع يتقدم حقاً (يعني يشتغل)
-      if (delta > 0 && delta < 500) {
-        _isPlaying = true;
-        _samePositionCount = 0;
-        _generateTargetHeights(pos);
-      } else {
-        _samePositionCount++;
-        if (_samePositionCount > 3) _isPlaying = false;
-      }
-      _prevPosition = _lastPosition;
-      _lastPosition = pos;
-    });
-
+    // مزامنة حالة التشغيل
     _playingSub = audioService.player.playingStream.listen((playing) {
       if (!mounted) return;
-      if (!playing) {
-        _isPlaying = false;
-        _samePositionCount = 0;
-      }
+      _isPlaying = playing;
     });
+
+    // نأخذ الزمن الحقيقي من positionStream كـ seed للتنوع
+    _posSub = audioService.player.positionStream.listen((pos) {
+      if (!mounted) return;
+      _songTime = pos.inMilliseconds / 1000.0;
+      if (!_isPlaying) _isPlaying = audioService.player.playing;
+    });
+
+    // قراءة الحالة الابتدائية
+    _isPlaying = audioService.player.playing;
+    _songTime = audioService.player.position.inMilliseconds / 1000.0;
   }
 
-  void _generateTargetHeights(Duration position) {
-    // نستخدم الموضع الزمني كـ seed لتوليد أنماط مختلفة
-    final t = position.inMilliseconds / 1000.0;
-
-    for (int i = 0; i < _barCount; i++) {
-      // دمج موجات متعددة بترددات مختلفة
-      final wave1 = 0.5 + 0.5 * _sin(t * 2.8 + i * 0.42);
-      final wave2 = 0.5 + 0.5 * _sin(t * 4.1 + i * 0.67 + 1.2);
-      final wave3 = 0.5 + 0.5 * _sin(t * 1.7 + i * 0.29 + 2.4);
-
-      // دمج الموجات مع الـ profile الجمالي
-      final combined = (wave1 * 0.45 + wave2 * 0.35 + wave3 * 0.20);
-      final withProfile = combined * _waveProfile[i];
-
-      // إضافة تذبذب صغير لكل بار
-      final jitter = _randomSeed[i] * 0.15 * _sin(t * 8.0 + i * 1.8);
-
-      _targetHeights[i] = (withProfile + jitter).clamp(0.08, 1.0);
-    }
-  }
-
-  double _sin(double x) => (x % (2 * 3.14159265));
-
-  void _onTick() {
+  void _onFrame() {
     if (!mounted) return;
-    setState(() {
-      _wavePhase += 0.025;
 
-      if (_isPlaying) {
-        // lerp سريع نحو الهدف الحقيقي
-        for (int i = 0; i < _barCount; i++) {
-          _currentHeights[i] +=
-              (_targetHeights[i] - _currentHeights[i]) * 0.18;
+    // حساب delta time حقيقي (بالثانية) بين كل frame
+    final now = DateTime.now();
+    final dt = _lastTick == null
+        ? 0.016
+        : now.difference(_lastTick!).inMicroseconds / 1000000.0;
+    _lastTick = now;
+
+    // تراكم زمن الأنيميشن بسرعة مناسبة للحركة الجميلة
+    if (_isPlaying) {
+      _animTime += dt;
+    }
+
+    setState(() {
+      for (int i = 0; i < _barCount; i++) {
+        final double target;
+
+        if (_isPlaying) {
+          // ── وضع التشغيل: كل شريط له موجتان بترددات مختلفة ──
+          // الموجة الأولى: سريعة وحيّة (تمثل الإيقاع)
+          final w1 = math.sin(_animTime * _freq1[i] * math.pi + _phase0[i]);
+          // الموجة الثانية: بطيئة وعميقة (تمثل الهارمونيكس)
+          final w2 = math.sin(_animTime * _freq2[i] * 0.7 * math.pi + _phase0[i] + 1.3);
+          // موجة ثالثة مبنية على زمن الأغنية الحقيقي للتنوع
+          final w3 = math.sin(_songTime * 0.8 + i * 0.55 + _phase0[i] * 0.5);
+
+          // دمج الموجات: الأولى تسيطر، الثانية تضيف عمق، الثالثة تضيف تنوع
+          final combined = w1 * 0.55 + w2 * 0.30 + w3 * 0.15;
+
+          // تحويل من [-1,1] إلى [minH, 1.0]
+          // الأشرطة الوسطية لها سقف أعلى قليلاً
+          final center = (i - (_barCount - 1) / 2).abs() / ((_barCount - 1) / 2);
+          final maxH = 1.0 - center * 0.18;  // الوسط 100%، الأطراف 82%
+          final minH = 0.12;
+
+          target = minH + (combined * 0.5 + 0.5) * (maxH - minH);
+        } else {
+          // ── وضع الإيقاف: موجة هادئة جداً تنبض ببطء ──
+          final idle = math.sin(_animTime * 1.2 * math.pi + _phase0[i]);
+          target = 0.05 + (idle * 0.5 + 0.5) * 0.07;
         }
-      } else {
-        // وضع Idle: موجة هادئة صغيرة
-        for (int i = 0; i < _barCount; i++) {
-          final idleH = 0.08 +
-              0.06 *
-                  (0.5 +
-                      0.5 *
-                          _sinVal(_wavePhase + i * 0.38));
-          _currentHeights[i] += (idleH - _currentHeights[i]) * 0.12;
-        }
+
+        // Lerp ناعم جداً — سرعة مختلفة حسب الاتجاه
+        // عند الصعود أسرع (استجابة للإيقاع)، عند النزول أبطأ (ذيل ناعم)
+        final diff = target - _heights[i];
+        final lerpSpeed = diff > 0 ? 0.28 : 0.16;
+        _heights[i] += diff * lerpSpeed;
       }
     });
-  }
-
-  double _sinVal(double x) {
-    // تقريب sin بدون dart:math
-    final nx = x % (2 * 3.14159265);
-    final n2 = nx < 3.14159265 ? nx : nx - 2 * 3.14159265;
-    return n2 * (1.27324 - 0.40528 * n2.abs());
   }
 
   @override
   void dispose() {
-    _masterCtrl.removeListener(_onTick);
-    _masterCtrl.dispose();
-    _posSub?.cancel();
+    _ticker.removeListener(_onFrame);
+    _ticker.dispose();
     _playingSub?.cancel();
+    _posSub?.cancel();
     super.dispose();
   }
 
@@ -4376,9 +4377,8 @@ class _RealSoundWaveState extends State<_RealSoundWave>
   Widget build(BuildContext context) {
     return CustomPaint(
       painter: _WaveformPainter(
-        heights: _currentHeights,
+        heights: _heights,
         isPlaying: _isPlaying,
-        phase: _wavePhase,
       ),
       size: const Size(double.infinity, 72),
     );
@@ -4386,113 +4386,101 @@ class _RealSoundWaveState extends State<_RealSoundWave>
 }
 
 // ─────────────────────────────────────────────
-//  _WaveformPainter — الرسم الفعلي للأمواج
+//  _WaveformPainter — رسم الأمواج بـ CustomPainter
 // ─────────────────────────────────────────────
 class _WaveformPainter extends CustomPainter {
   final List<double> heights;
   final bool isPlaying;
-  final double phase;
 
-  _WaveformPainter({
+  const _WaveformPainter({
     required this.heights,
     required this.isPlaying,
-    required this.phase,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    final barCount = heights.length;
-    final totalWidth = size.width;
-    final totalHeight = size.height;
-    final barWidth = (totalWidth / barCount) * 0.55;
-    final gap = (totalWidth - barWidth * barCount) / (barCount + 1);
-    final centerY = totalHeight / 2;
+    const barCount = 18;
+    final totalW = size.width;
+    final totalH = size.height;
+    final centerY = totalH / 2;
+
+    // حساب عرض الشريط والمسافة بشكل متناسق
+    // نريد مسافة صغيرة ومتناسقة بين الأشرطة
+    const barW = 5.0;
+    const gap = 4.5;
+    final totalNeeded = barCount * barW + (barCount - 1) * gap;
+    final startX = (totalW - totalNeeded) / 2 + barW / 2;
 
     for (int i = 0; i < barCount; i++) {
-      final x = gap + i * (barWidth + gap) + barWidth / 2;
-      final barH = (heights[i] * totalHeight * 0.88).clamp(4.0, totalHeight * 0.92);
+      final x = startX + i * (barW + gap);
+      final rawH = heights[i].clamp(0.04, 1.0);
+      final barH = (rawH * totalH * 0.90).clamp(3.0, totalH * 0.92);
 
-      // لون متدرج لكل بار (أبيض → شفاف للأطراف)
-      final distFromCenter = ((i - barCount / 2).abs() / (barCount / 2));
-      final opacity = isPlaying
-          ? (1.0 - distFromCenter * 0.5).clamp(0.55, 1.0)
-          : (1.0 - distFromCenter * 0.6).clamp(0.3, 0.7);
-
-      // ظل ناعم خلف كل بار
-      final shadowPaint = Paint()
-        ..color = Colors.black.withOpacity(0.18 * opacity)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3);
-
-      final glowPaint = Paint()
-        ..shader = LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            Colors.white.withOpacity(opacity * 0.9),
-            Colors.white.withOpacity(opacity * 0.5),
-          ],
-        ).createShader(Rect.fromCenter(
-          center: Offset(x, centerY),
-          width: barWidth + 4,
-          height: barH + 4,
-        ));
-
-      final mainPaint = Paint()
-        ..shader = LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            Colors.white.withOpacity(opacity),
-            Colors.white.withOpacity(opacity * 0.75),
-          ],
-        ).createShader(Rect.fromCenter(
-          center: Offset(x, centerY),
-          width: barWidth,
-          height: barH,
-        ));
+      // شفافية: الوسط أكثر وضوحاً، الأطراف أخف قليلاً
+      final center = (i - (barCount - 1) / 2).abs() / ((barCount - 1) / 2);
+      final baseOpacity = isPlaying
+          ? (1.0 - center * 0.28).clamp(0.72, 1.0)
+          : (1.0 - center * 0.35).clamp(0.40, 0.65);
 
       final rect = RRect.fromRectAndRadius(
-        Rect.fromCenter(
-          center: Offset(x, centerY),
-          width: barWidth,
-          height: barH,
-        ),
-        Radius.circular(barWidth / 2),
+        Rect.fromCenter(center: Offset(x, centerY), width: barW, height: barH),
+        const Radius.circular(barW / 2),
       );
 
-      // رسم الظل أولاً
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromCenter(
-            center: Offset(x + 1, centerY + 1),
-            width: barWidth,
-            height: barH,
+      // ── Glow خفيف حول الشريط (فقط عند التشغيل) ──
+      if (isPlaying && rawH > 0.25) {
+        final glowOpacity = (rawH - 0.25) * 0.22 * baseOpacity;
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+            Rect.fromCenter(
+              center: Offset(x, centerY),
+              width: barW + 5,
+              height: barH + 4,
+            ),
+            const Radius.circular((barW + 5) / 2),
           ),
-          Radius.circular(barWidth / 2),
-        ),
-        shadowPaint,
-      );
+          Paint()
+            ..color = Colors.white.withOpacity(glowOpacity)
+            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3.5),
+        );
+      }
 
-      // رسم توهج خفيف
+      // ── الشريط الرئيسي بـ gradient أبيض ناعم ──
       canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromCenter(
-            center: Offset(x, centerY),
-            width: barWidth + 3,
-            height: barH + 3,
+        rect,
+        Paint()
+          ..shader = LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Colors.white.withOpacity(baseOpacity),
+              Colors.white.withOpacity(baseOpacity * 0.70),
+            ],
+          ).createShader(
+            Rect.fromCenter(center: Offset(x, centerY), width: barW, height: barH),
           ),
-          Radius.circular((barWidth + 3) / 2),
-        ),
-        glowPaint,
       );
 
-      // رسم الشريط الرئيسي
-      canvas.drawRRect(rect, mainPaint);
+      // ── خط لامع رفيع في المنتصف (يعطي إحساس بعمق) ──
+      if (barH > 10) {
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+            Rect.fromCenter(
+              center: Offset(x, centerY - barH * 0.12),
+              width: barW * 0.35,
+              height: barH * 0.30,
+            ),
+            const Radius.circular(2),
+          ),
+          Paint()..color = Colors.white.withOpacity(baseOpacity * 0.45),
+        );
+      }
     }
   }
 
   @override
-  bool shouldRepaint(_WaveformPainter old) => true;
+  bool shouldRepaint(_WaveformPainter old) =>
+      old.isPlaying != isPlaying || old.heights != heights;
 }
 
 // ─────────────────────────────────────────────
@@ -4503,7 +4491,7 @@ class _FallbackSoundWave extends StatelessWidget {
   Widget build(BuildContext context) {
     return const SizedBox(
       height: 72,
-      width: 220,
+      width: double.infinity,
       child: _RealSoundWave(),
     );
   }

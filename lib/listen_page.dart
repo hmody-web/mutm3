@@ -43,6 +43,20 @@ class ListenPage extends StatefulWidget {
 class _ListenPageState extends State<ListenPage> {
   List<LocalMediaItem> _localItems = [];
 
+  // ── البحث ──
+  bool _searchActive = false;
+  String _searchQuery = '';
+  final TextEditingController _searchCtrl = TextEditingController();
+  final FocusNode _searchFocus = FocusNode();
+
+  List<LocalMediaItem> get _filteredItems {
+    if (_searchQuery.isEmpty) return _localItems;
+    final q = _searchQuery.toLowerCase();
+    return _localItems
+        .where((e) => e.title.toLowerCase().contains(q))
+        .toList();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -60,6 +74,8 @@ class _ListenPageState extends State<ListenPage> {
   @override
   void dispose() {
     downloadCompleteNotifier.removeListener(_onDownloadComplete);
+    _searchCtrl.dispose();
+    _searchFocus.dispose();
     super.dispose();
   }
 
@@ -135,6 +151,125 @@ class _ListenPageState extends State<ListenPage> {
     _loadFiles();
   }
 
+  Future<void> _saveToGallery(LocalMediaItem item) async {
+    // ── طلب الصلاحيات ──
+    PermissionStatus status;
+    if (Platform.isAndroid) {
+      status = item.isVideo
+          ? await Permission.videos.request()
+          : await Permission.audio.request();
+      if (!status.isGranted) {
+        status = await Permission.storage.request();
+      }
+    } else {
+      status = await Permission.photos.request();
+    }
+
+    if (!mounted) return;
+
+    if (!status.isGranted) {
+      await showCupertinoDialog(
+        context: context,
+        builder: (_) => CupertinoAlertDialog(
+          title: const Text('صلاحية مطلوبة'),
+          content: const Text(
+              'يحتاج التطبيق إذن الوصول للمعرض. افتح الإعدادات ومنح الإذن.'),
+          actions: [
+            CupertinoDialogAction(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('إلغاء'),
+            ),
+            CupertinoDialogAction(
+              onPressed: () {
+                Navigator.pop(context);
+                openAppSettings();
+              },
+              child: const Text('الإعدادات'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
+    final sourceFile = File(item.path);
+    if (!await sourceFile.exists()) {
+      _showSnack('الملف غير موجود!');
+      return;
+    }
+
+    try {
+      if (Platform.isAndroid) {
+        // ── Android: نسخ للمجلد العام ثم مسح MediaStore ──
+        final destDir = item.isVideo
+            ? Directory('/storage/emulated/0/Movies/دندن')
+            : Directory('/storage/emulated/0/Music/دندن');
+
+        if (!await destDir.exists()) {
+          await destDir.create(recursive: true);
+        }
+
+        final destPath = '${destDir.path}/${item.title}';
+        await sourceFile.copy(destPath);
+
+        // مسح الملف في MediaStore حتى يظهر فوراً في الاستوديو
+        await _scanFile(destPath);
+
+        if (!mounted) return;
+        _showSnack(item.isVideo
+            ? '✅ تم الحفظ في الاستوديو — الفيديوهات'
+            : '✅ تم الحفظ في الاستوديو — الموسيقى');
+      } else {
+        // ── iOS: نسخ لمجلد مؤقت ثم محاولة إضافته لمكتبة الوسائط ──
+        final tempDir = await getTemporaryDirectory();
+        final tempPath = '${tempDir.path}/${item.title}';
+        await sourceFile.copy(tempPath);
+
+        // محاولة مسح الوسائط عبر on_audio_query
+        try {
+          final OnAudioQuery audioQuery = OnAudioQuery();
+          await audioQuery.scanMedia(tempPath);
+        } catch (_) {}
+
+        if (!mounted) return;
+        _showSnack('✅ تم الحفظ — افتح تطبيق الموسيقى لرؤيته');
+      }
+    } catch (e) {
+      if (!mounted) return;
+      _showSnack('خطأ: $e');
+    }
+  }
+
+  /// يطلب من Android فهرسة الملف في MediaStore فيظهر فوراً في الاستوديو
+  Future<void> _scanFile(String path) async {
+    try {
+      // on_audio_query موجود في المشروع — نستخدمه لمسح الملف
+      final OnAudioQuery audioQuery = OnAudioQuery();
+      await audioQuery.scanMedia(path);
+    } catch (_) {
+      // fallback عبر am broadcast
+      try {
+        await Process.run('am', [
+          'broadcast',
+          '-a', 'android.intent.action.MEDIA_SCANNER_SCAN_FILE',
+          '-d', 'file://$path',
+        ]);
+      } catch (_) {}
+    }
+  }
+
+  void _showSnack(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message,
+            style: const TextStyle(fontFamily: 'Tajawal', fontSize: 13)),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
   void _playAll(int startIndex) {
     audioService.playList(_localItems, startIndex);
   }
@@ -155,107 +290,276 @@ class _ListenPageState extends State<ListenPage> {
   }
 
   Widget _buildHeader() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return SliverToBoxAdapter(
-      child: Container(
-        padding: EdgeInsets.only(
-          top: MediaQuery.of(context).padding.top + 16,
-          left: 20,
-          right: 20,
-          bottom: 8,
-        ),
-        child: Row(
-          children: [
-            // Logo
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(14),
-                child: Image.asset(
-                  'assets/images/logo.png',
-                  width: 40,
-                  height: 40,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: AppColors.primary,
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: const Icon(
-                      CupertinoIcons.music_note,
-                      color: Colors.white,
-                      size: 24,
+      child: Column(
+        children: [
+          // ── شريط العنوان ──
+          Container(
+            padding: EdgeInsets.only(
+              top: MediaQuery.of(context).padding.top + 16,
+              left: 20,
+              right: 20,
+              bottom: 8,
+            ),
+            child: Row(
+              children: [
+                // Logo
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(14),
+                    child: Image.asset(
+                      'assets/images/logo.png',
+                      width: 40,
+                      height: 40,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: AppColors.primary,
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: const Icon(CupertinoIcons.music_note,
+                            color: Colors.white, size: 24),
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Text(
-              'دندن',
-              style: TextStyle(
-                fontSize: 28,
-                fontFamily: 'Tajawal',
-                fontWeight: FontWeight.w700,
-                color: context.appText,
-                letterSpacing: -0.5,
-              ),
-            ),
-            const Spacer(),
-            if (_localItems.isNotEmpty)
-              GestureDetector(
-                onTap: () => _playAll(0),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-                  decoration: BoxDecoration(
-                    color: AppColors.primary,
-                    borderRadius: BorderRadius.circular(10),
+                const SizedBox(width: 12),
+                Text(
+                  'دندن',
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontFamily: 'Tajawal',
+                    fontWeight: FontWeight.w700,
+                    color: context.appText,
+                    letterSpacing: -0.5,
                   ),
-                  child: const Row(
-                    children: [
-                      Icon(CupertinoIcons.play_fill, color: Colors.white, size: 14),
-                      SizedBox(width: 4),
-                      Text('تشغيل الكل',
-                          style: TextStyle(
-                              color: Colors.white,
+                ),
+                const Spacer(),
+
+                // ── زر البحث (بديل تشغيل الكل) ──
+                if (_localItems.isNotEmpty)
+                  GestureDetector(
+                    onTap: () {
+                      setState(() => _searchActive = !_searchActive);
+                      if (_searchActive) {
+                        Future.delayed(const Duration(milliseconds: 200), () {
+                          _searchFocus.requestFocus();
+                        });
+                      } else {
+                        _searchFocus.unfocus();
+                        _searchCtrl.clear();
+                        setState(() => _searchQuery = '');
+                      }
+                    },
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 250),
+                      curve: Curves.easeOutCubic,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 7),
+                      decoration: BoxDecoration(
+                        color: _searchActive
+                            ? AppColors.primary
+                            : context.appSurface,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: _searchActive
+                              ? AppColors.primary
+                              : (isDark
+                                  ? AppColors.darkDivider
+                                  : AppColors.divider),
+                          width: 0.8,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            _searchActive
+                                ? CupertinoIcons.xmark
+                                : CupertinoIcons.search,
+                            color: _searchActive
+                                ? Colors.white
+                                : context.appTextSec,
+                            size: 14,
+                          ),
+                          const SizedBox(width: 5),
+                          Text(
+                            _searchActive ? 'إغلاق' : 'بحث',
+                            style: TextStyle(
+                              color: _searchActive
+                                  ? Colors.white
+                                  : context.appTextSec,
                               fontSize: 12,
-                              fontWeight: FontWeight.w600)),
-                    ],
+                              fontFamily: 'Tajawal',
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                const SizedBox(width: 8),
+                GestureDetector(
+                  onTap: () => Navigator.push(
+                    context,
+                    CupertinoPageRoute(
+                        builder: (_) => const FileBrowserPage()),
+                  ).then((_) => _loadFiles()),
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: context.appSurface,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(CupertinoIcons.folder_fill,
+                        size: 18, color: context.appTextSec),
                   ),
                 ),
-              ),
-            const SizedBox(width: 8),
-            GestureDetector(
-              onTap: () => Navigator.push(
-                context,
-                CupertinoPageRoute(builder: (_) => const FileBrowserPage()),
-              ).then((_) => _loadFiles()),
-              child: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: context.appSurface,
-                  borderRadius: BorderRadius.circular(10),
+                const SizedBox(width: 8),
+                GestureDetector(
+                  onTap: _loadFiles,
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: context.appSurface,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(CupertinoIcons.refresh,
+                        size: 18, color: context.appTextSec),
+                  ),
                 ),
-                child: Icon(CupertinoIcons.folder_fill,
-                    size: 18, color: context.appTextSec),
+              ],
+            ),
+          ),
+
+          // ── شريط البحث المنسدل ──
+          AnimatedSize(
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOutCubic,
+            child: _searchActive
+                ? Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: isDark
+                            ? AppColors.darkSurface
+                            : AppColors.surface,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: AppColors.primary.withValues(alpha: 0.35),
+                          width: 1.2,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.primary.withValues(alpha: 0.10),
+                            blurRadius: 16,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        children: [
+                          const SizedBox(width: 14),
+                          Icon(
+                            CupertinoIcons.search,
+                            color: AppColors.primary.withValues(alpha: 0.7),
+                            size: 18,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: TextField(
+                              controller: _searchCtrl,
+                              focusNode: _searchFocus,
+                              textDirection: TextDirection.rtl,
+                              onChanged: (val) =>
+                                  setState(() => _searchQuery = val),
+                              style: TextStyle(
+                                fontFamily: 'Tajawal',
+                                fontSize: 15,
+                                color: context.appText,
+                              ),
+                              decoration: InputDecoration(
+                                hintText: 'ابحث في مكتبتك…',
+                                hintStyle: TextStyle(
+                                  fontFamily: 'Tajawal',
+                                  fontSize: 14,
+                                  color: context.appTextSec
+                                      .withValues(alpha: 0.6),
+                                ),
+                                border: InputBorder.none,
+                                contentPadding: const EdgeInsets.symmetric(
+                                    vertical: 14),
+                              ),
+                            ),
+                          ),
+                          if (_searchQuery.isNotEmpty)
+                            GestureDetector(
+                              onTap: () {
+                                _searchCtrl.clear();
+                                setState(() => _searchQuery = '');
+                                _searchFocus.requestFocus();
+                              },
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12),
+                                child: Container(
+                                  width: 20,
+                                  height: 20,
+                                  decoration: BoxDecoration(
+                                    color: isDark
+                                        ? AppColors.darkSurfaceAlt
+                                        : AppColors.surfaceAlt,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: Icon(
+                                    CupertinoIcons.xmark,
+                                    size: 11,
+                                    color: context.appTextSec,
+                                  ),
+                                ),
+                              ),
+                            )
+                          else
+                            const SizedBox(width: 14),
+                        ],
+                      ),
+                    ),
+                  )
+                : const SizedBox.shrink(),
+          ),
+
+          // ── عداد النتائج عند البحث ──
+          if (_searchActive && _searchQuery.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withValues(alpha: 0.10),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      '${_filteredItems.length} نتيجة',
+                      style: TextStyle(
+                        fontFamily: 'Tajawal',
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.primary,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(width: 8),
-            GestureDetector(
-              onTap: _loadFiles,
-              child: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: context.appSurface,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(CupertinoIcons.refresh,
-                    size: 18, color: context.appTextSec),
-              ),
-            ),
-          ],
-        ),
+        ],
       ),
     );
   }
@@ -289,7 +593,10 @@ class _ListenPageState extends State<ListenPage> {
               const SizedBox(height: 8),
               Text(
                 'حمّل مقاطع من تبويب تصفح',
-                style: TextStyle(fontSize: 14, fontFamily: 'Tajawal', color: context.appTextSec),
+                style: TextStyle(
+                    fontSize: 14,
+                    fontFamily: 'Tajawal',
+                    color: context.appTextSec),
               ),
               const SizedBox(height: 24),
               GestureDetector(
@@ -298,16 +605,19 @@ class _ListenPageState extends State<ListenPage> {
                   CupertinoPageRoute(builder: (_) => const FileBrowserPage()),
                 ),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                   decoration: BoxDecoration(
                     color: context.appSurface,
                     borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: context.appDivider, width: 0.8),
+                    border:
+                        Border.all(color: context.appDivider, width: 0.8),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(CupertinoIcons.folder_fill, size: 18, color: context.appText),
+                      Icon(CupertinoIcons.folder_fill,
+                          size: 18, color: context.appText),
                       const SizedBox(width: 8),
                       Text(
                         'استيراد من الجهاز',
@@ -328,21 +638,65 @@ class _ListenPageState extends State<ListenPage> {
       );
     }
 
+    final displayed = _filteredItems;
+
+    // ── لا توجد نتائج بحث ──
+    if (displayed.isEmpty) {
+      return SliverFillRemaining(
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: 72,
+                height: 72,
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Icon(CupertinoIcons.search,
+                    size: 34,
+                    color: AppColors.primary.withValues(alpha: 0.5)),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'لا توجد نتائج',
+                style: TextStyle(
+                    fontSize: 17,
+                    fontFamily: 'Tajawal',
+                    fontWeight: FontWeight.w600,
+                    color: context.appText),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'جرّب كلمة بحث مختلفة',
+                style: TextStyle(
+                    fontSize: 13,
+                    fontFamily: 'Tajawal',
+                    color: context.appTextSec),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return SliverPadding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       sliver: SliverList(
         delegate: SliverChildBuilderDelegate(
           (context, index) {
-            final item = _localItems[index];
+            final item = displayed[index];
             return _SwipeableMediaTile(
               key: ValueKey(item.path),
               item: item,
-              index: index,
+              index: _localItems.indexOf(item),
               allItems: _localItems,
               onDelete: () => _deleteItem(item),
+              onSave: () => _saveToGallery(item),
             );
           },
-          childCount: _localItems.length,
+          childCount: displayed.length,
         ),
       ),
     );
@@ -357,6 +711,7 @@ class _SwipeableMediaTile extends StatefulWidget {
   final int index;
   final List<LocalMediaItem> allItems;
   final VoidCallback onDelete;
+  final VoidCallback onSave;
 
   const _SwipeableMediaTile({
     super.key,
@@ -364,6 +719,7 @@ class _SwipeableMediaTile extends StatefulWidget {
     required this.index,
     required this.allItems,
     required this.onDelete,
+    required this.onSave,
   });
 
   @override
@@ -377,7 +733,7 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
   bool _revealed = false;
   String? _thumbPath;
 
-  static const double _revealWidth = 84.0;
+  static const double _revealWidth = 156.0; // زرّان: حذف + حفظ
 
   @override
   void initState() {
@@ -457,45 +813,89 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
     final currentPath = audioService.currentItem?.path;
     final isActive = currentPath == widget.item.path;
 
+    final showButtons = _dragOffset > _revealWidth * 0.5;
+
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       child: Stack(
-        clipBehavior: Clip.none,
+        clipBehavior: Clip.hardEdge,
         children: [
-          // ── زر الحذف خلف الكرت (جهة اليسار) ──
+          // ── الأزرار خلف الكرت (جهة اليمين في RTL) ──
           Positioned.fill(
             child: Align(
               alignment: Alignment.centerRight,
-              child: GestureDetector(
-                onTap: () {
-                  _closeSwipe();
-                  Future.microtask(() => widget.onDelete());
-                },
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  width: _dragOffset.clamp(0.0, _revealWidth),
-                  margin: const EdgeInsets.symmetric(vertical: 2),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFFD32F2F), Color(0xFFFF3B30)],
-                    ),
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: _dragOffset > _revealWidth * 0.6
-                      ? const Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(CupertinoIcons.trash_fill,
-                                color: Colors.white, size: 22),
-                            SizedBox(height: 3),
-                            Text('حذف',
-                                style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w700)),
-                          ],
-                        )
-                      : const SizedBox.shrink(),
+              child: SizedBox(
+                width: _dragOffset.clamp(0.0, _revealWidth),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    // زر الحفظ (أزرق)
+                    if (showButtons)
+                      Expanded(
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () {
+                            _closeSwipe();
+                            widget.onSave();
+                          },
+                          child: Container(
+                            margin: const EdgeInsets.symmetric(vertical: 2, horizontal: 2),
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                colors: [Color(0xFF1565C0), Color(0xFF2196F3)],
+                              ),
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: const Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(CupertinoIcons.arrow_down_to_line,
+                                    color: Colors.white, size: 18),
+                                SizedBox(height: 3),
+                                Text('حفظ',
+                                    style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w700)),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    // زر الحذف (أحمر)
+                    if (showButtons)
+                      Expanded(
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () {
+                            _closeSwipe();
+                            widget.onDelete();
+                          },
+                          child: Container(
+                            margin: const EdgeInsets.symmetric(vertical: 2, horizontal: 2),
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                colors: [Color(0xFFD32F2F), Color(0xFFFF3B30)],
+                              ),
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: const Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(CupertinoIcons.trash_fill,
+                                    color: Colors.white, size: 18),
+                                SizedBox(height: 3),
+                                Text('حذف',
+                                    style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w700)),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
               ),
             ),
@@ -503,7 +903,7 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
 
           // ── الكرت الرئيسي ──
           GestureDetector(
-            behavior: HitTestBehavior.opaque,
+            behavior: HitTestBehavior.translucent,
             onHorizontalDragUpdate: _onHorizontalDrag,
             onHorizontalDragEnd: _onDragEnd,
             onTap: () {

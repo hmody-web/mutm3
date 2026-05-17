@@ -1313,16 +1313,12 @@ Future<void> _analyzeAndFetch() async {
 
       // المحاولة الأولى: DownloadService (APIs خارجية)
       final downloadService = DownloadService();
-      String? extracted = await downloadService.extractVideoUrl(url);
+      final videoResult = await downloadService.extractVideoUrl(url);
+      String? extracted = videoResult?.url; // استخرج الـ URL من VideoResult
 
       // المحاولة الثانية: سحب ذكي من HTML إن فشلت الـ APIs
       if (extracted == null || extracted.isEmpty) {
         extracted = await _extractVideoFromHtml(url);
-      }
-
-      // المحاولة الثالثة: getDirectUrlFromTikTok للـ TikTok تحديداً
-      if ((extracted == null || extracted.isEmpty) && url.contains('tiktok.com')) {
-        extracted = await downloadService.getDirectUrlFromTikTok(url);
       }
 
       if (extracted != null && extracted.isNotEmpty) {

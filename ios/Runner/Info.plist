@@ -51,6 +51,11 @@
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>دندن يستخدم الشبكة للتحميل من يوتيوب</string>
 
+    <key>NSPhotoLibraryAddUsageDescription</key>
+    <string>يحتاج دندن إذنك لحفظ الوسائط في معرض الصور</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>يحتاج دندن إذنك للوصول لمعرض الصور</string>
+
 	<!-- السماح بمحتوى HTTP -->
 	<key>NSAppTransportSecurity</key>
 	<dict>

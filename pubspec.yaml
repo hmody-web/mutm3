@@ -32,6 +32,7 @@ dependencies:
   file_picker: ^8.1.4
   url_launcher: ^6.3.0
   http: ^1.2.0
+  vision_gallery_saver: ^3.0.0
 
 dev_dependencies:
   flutter_test:

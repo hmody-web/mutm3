@@ -1488,13 +1488,20 @@ class _MiniPlayerState extends State<_MiniPlayer>
 
                           // ── زر الإغلاق ──
                           _MiniBtn(
-                            icon: CupertinoIcons.xmark,
-                            isDark: isDark,
-                            onTap: () {
-                              audioService.pauseByUser();
-                              audioService.isVisible.value = false;
-                            },
-                          ),
+  icon: CupertinoIcons.xmark,
+  isDark: isDark,
+  onTap: () async {
+
+    // ايقاف التشغيل
+    await audioService.player.stop();
+
+    // اخفاء المشغل الصغير
+    audioService.isVisible.value = false;
+
+    // حذف العنصر الحالي حتى يختفي اللون الاحمر
+    audioService.currentIndex.value = -1;
+  },
+),
                         ],
                       ),
                     );
@@ -4014,7 +4021,10 @@ Positioned(
   bottom: 0,
   left: 0,
   right: 0,
-  height: totalH - (MediaQuery.of(context).size.width * (9 / 16)),
+  height: totalH -
+    ((MediaQuery.of(context).size.width * (9 / 16)) +
+    MediaQuery.of(context).padding.top +
+    70),
   child: ClipRect(
     child: BackdropFilter(
       filter: ImageFilter.blur(
@@ -4048,15 +4058,11 @@ Positioned(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // ── صورة تموج الصوت ──
-                  SizedBox(
+                  // ── أمواج الصوت الحقيقية ──
+                  const SizedBox(
                     height: 72,
-                    child: Image.asset(
-                      'assets/images/sound.gif',
-                      height: 72,
-                      fit: BoxFit.fitHeight,
-                      errorBuilder: (_, __, ___) => _FallbackSoundWave(),
-                    ),
+                    width: 220,
+                    child: _RealSoundWave(),
                   ),
 
                   const SizedBox(height: 16),
@@ -4086,14 +4092,16 @@ Positioned(
                                       softWrap: false,
                                       textDirection: TextDirection.rtl,
                                       style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 28,
-                                        fontFamily: 'mzghrf',
-                                        fontWeight: FontWeight.w800,
-                                        shadows: [
-                                          Shadow(color: Colors.black54, blurRadius: 8),
-                                        ],
-                                      ),
+  color: Colors.white,
+  fontSize: 28,
+  fontFamily: 'mzghrf',
+  fontWeight: FontWeight.w100,
+  height: 1.35,
+  leadingDistribution: TextLeadingDistribution.even,
+  shadows: [
+    Shadow(color: Colors.black54, blurRadius: 8),
+  ],
+),
                                     ),
                                     const SizedBox(width: 60),
                                     Text(
@@ -4102,14 +4110,16 @@ Positioned(
                                       softWrap: false,
                                       textDirection: TextDirection.rtl,
                                       style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 28,
-                                        fontFamily: 'mzghrf',
-                                        fontWeight: FontWeight.w800,
-                                        shadows: [
-                                          Shadow(color: Colors.black54, blurRadius: 8),
-                                        ],
-                                      ),
+  color: Colors.white,
+  fontSize: 28,
+  fontFamily: 'mzghrf',
+  fontWeight: FontWeight.w100,
+  height: 1.35,
+  leadingDistribution: TextLeadingDistribution.even,
+  shadows: [
+    Shadow(color: Colors.black54, blurRadius: 8),
+  ],
+),
                                     ),
                                     const SizedBox(width: 60),
                                     Text(
@@ -4118,14 +4128,16 @@ Positioned(
                                       softWrap: false,
                                       textDirection: TextDirection.rtl,
                                       style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 28,
-                                        fontFamily: 'mzghrf',
-                                        fontWeight: FontWeight.w800,
-                                        shadows: [
-                                          Shadow(color: Colors.black54, blurRadius: 8),
-                                        ],
-                                      ),
+  color: Colors.white,
+  fontSize: 28,
+  fontFamily: 'mzghrf',
+  fontWeight: FontWeight.w100,
+  height: 1.35,
+  leadingDistribution: TextLeadingDistribution.even,
+  shadows: [
+    Shadow(color: Colors.black54, blurRadius: 8),
+  ],
+),
                                     ),
                                     const SizedBox(width: 60),
                                   ],
@@ -4138,14 +4150,16 @@ Positioned(
                               textAlign: TextAlign.center,
                               textDirection: TextDirection.rtl,
                               style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 28,
-                                fontFamily: 'mzghrf',
-                                fontWeight: FontWeight.w800,
-                                shadows: [
-                                  Shadow(color: Colors.black54, blurRadius: 8),
-                                ],
-                              ),
+  color: Colors.white,
+  fontSize: 28,
+  fontFamily: 'mzghrf',
+  fontWeight: FontWeight.w100,
+  height: 1.35,
+  leadingDistribution: TextLeadingDistribution.even,
+  shadows: [
+    Shadow(color: Colors.black54, blurRadius: 8),
+  ],
+),
                             ),
                     ),
                   ),
@@ -4217,73 +4231,280 @@ Positioned(
 }
 
 // ─────────────────────────────────────────────
-//  Fallback Sound Wave — إذا لم يوجد sound.gif
+//  _RealSoundWave — أمواج حقيقية تتفاعل مع الصوت
 // ─────────────────────────────────────────────
-class _FallbackSoundWave extends StatefulWidget {
+class _RealSoundWave extends StatefulWidget {
+  const _RealSoundWave();
+
   @override
-  State<_FallbackSoundWave> createState() => _FallbackSoundWaveState();
+  State<_RealSoundWave> createState() => _RealSoundWaveState();
 }
 
-class _FallbackSoundWaveState extends State<_FallbackSoundWave>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _ctrl;
-  late Animation<double> _anim;
+class _RealSoundWaveState extends State<_RealSoundWave>
+    with TickerProviderStateMixin {
+  late AnimationController _masterCtrl;
 
-  static const int _barCount = 18;
-  static const List<double> _baseHeights = [
-    0.4, 0.7, 0.9, 0.6, 1.0, 0.75, 0.5, 0.85, 0.65,
-    0.95, 0.55, 0.8, 0.45, 0.7, 1.0, 0.6, 0.85, 0.5,
+  // قيم الأشرطة الحالية والهدف (للـ lerp)
+  static const int _barCount = 26;
+  final List<double> _currentHeights = List.filled(_barCount, 0.08);
+  final List<double> _targetHeights = List.filled(_barCount, 0.08);
+
+  // بيانات الصوت الحقيقية من just_audio
+  StreamSubscription<Duration>? _posSub;
+  StreamSubscription<bool>? _playingSub;
+  bool _isPlaying = false;
+  Duration _lastPosition = Duration.zero;
+  Duration _prevPosition = Duration.zero;
+  int _samePositionCount = 0;
+
+  // أرتفاعات الموجة الأساسية (نمط جمالي)
+  static const List<double> _waveProfile = [
+    0.20, 0.38, 0.55, 0.72, 0.85, 0.95, 0.88, 0.75,
+    0.92, 0.68, 0.98, 0.80, 0.96, 0.73, 0.90, 0.82,
+    0.97, 0.70, 0.88, 0.78, 0.93, 0.65, 0.82, 0.55, 0.35, 0.18,
   ];
+
+  // seed عشوائي لكل بار (مرة واحدة فقط)
+  final List<double> _randomSeed = List.generate(
+    _barCount,
+    (i) => 0.5 + 0.5 * ((i * 7 + 3) % 11) / 11.0,
+  );
+
+  double _wavePhase = 0.0;
 
   @override
   void initState() {
     super.initState();
-    _ctrl = AnimationController(
+
+    _masterCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 900),
-    )..repeat(reverse: true);
-    _anim = CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut);
+      duration: const Duration(days: 999),
+    )..addListener(_onTick)..forward();
+
+    // الاستماع لـ positionStream — هذا هو المصدر الحقيقي للإيقاع
+    _posSub = audioService.player.positionStream.listen((pos) {
+      if (!mounted) return;
+      final delta = pos.inMilliseconds - _lastPosition.inMilliseconds;
+
+      // تحقق إذا الموقع يتقدم حقاً (يعني يشتغل)
+      if (delta > 0 && delta < 500) {
+        _isPlaying = true;
+        _samePositionCount = 0;
+        _generateTargetHeights(pos);
+      } else {
+        _samePositionCount++;
+        if (_samePositionCount > 3) _isPlaying = false;
+      }
+      _prevPosition = _lastPosition;
+      _lastPosition = pos;
+    });
+
+    _playingSub = audioService.player.playingStream.listen((playing) {
+      if (!mounted) return;
+      if (!playing) {
+        _isPlaying = false;
+        _samePositionCount = 0;
+      }
+    });
+  }
+
+  void _generateTargetHeights(Duration position) {
+    // نستخدم الموضع الزمني كـ seed لتوليد أنماط مختلفة
+    final t = position.inMilliseconds / 1000.0;
+
+    for (int i = 0; i < _barCount; i++) {
+      // دمج موجات متعددة بترددات مختلفة
+      final wave1 = 0.5 + 0.5 * _sin(t * 2.8 + i * 0.42);
+      final wave2 = 0.5 + 0.5 * _sin(t * 4.1 + i * 0.67 + 1.2);
+      final wave3 = 0.5 + 0.5 * _sin(t * 1.7 + i * 0.29 + 2.4);
+
+      // دمج الموجات مع الـ profile الجمالي
+      final combined = (wave1 * 0.45 + wave2 * 0.35 + wave3 * 0.20);
+      final withProfile = combined * _waveProfile[i];
+
+      // إضافة تذبذب صغير لكل بار
+      final jitter = _randomSeed[i] * 0.15 * _sin(t * 8.0 + i * 1.8);
+
+      _targetHeights[i] = (withProfile + jitter).clamp(0.08, 1.0);
+    }
+  }
+
+  double _sin(double x) => (x % (2 * 3.14159265));
+
+  void _onTick() {
+    if (!mounted) return;
+    setState(() {
+      _wavePhase += 0.025;
+
+      if (_isPlaying) {
+        // lerp سريع نحو الهدف الحقيقي
+        for (int i = 0; i < _barCount; i++) {
+          _currentHeights[i] +=
+              (_targetHeights[i] - _currentHeights[i]) * 0.18;
+        }
+      } else {
+        // وضع Idle: موجة هادئة صغيرة
+        for (int i = 0; i < _barCount; i++) {
+          final idleH = 0.08 +
+              0.06 *
+                  (0.5 +
+                      0.5 *
+                          _sinVal(_wavePhase + i * 0.38));
+          _currentHeights[i] += (idleH - _currentHeights[i]) * 0.12;
+        }
+      }
+    });
+  }
+
+  double _sinVal(double x) {
+    // تقريب sin بدون dart:math
+    final nx = x % (2 * 3.14159265);
+    final n2 = nx < 3.14159265 ? nx : nx - 2 * 3.14159265;
+    return n2 * (1.27324 - 0.40528 * n2.abs());
   }
 
   @override
   void dispose() {
-    _ctrl.dispose();
+    _masterCtrl.removeListener(_onTick);
+    _masterCtrl.dispose();
+    _posSub?.cancel();
+    _playingSub?.cancel();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _anim,
-      builder: (_, __) {
-        return SizedBox(
-          width: 160,
-          height: 72,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: List.generate(_barCount, (i) {
-              final phase = (i / _barCount * 3.14159);
-              final animFactor = 0.5 + 0.5 * (0.5 + 0.5 * _anim.value) *
-                  (1 + (i % 3 == 0 ? 0.2 : 0));
-              final h = 10.0 + (_baseHeights[i] * 50 * animFactor *
-                  (0.6 + 0.4 * (1 - (phase / 3.14159))));
-              return Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 2),
-                child: AnimatedContainer(
-                  duration: Duration(milliseconds: 150 + (i * 20) % 200),
-                  width: 5,
-                  height: h.clamp(6.0, 66.0),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.85),
-                    borderRadius: BorderRadius.circular(3),
-                  ),
-                ),
-              );
-            }),
+    return CustomPaint(
+      painter: _WaveformPainter(
+        heights: _currentHeights,
+        isPlaying: _isPlaying,
+        phase: _wavePhase,
+      ),
+      size: const Size(double.infinity, 72),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────
+//  _WaveformPainter — الرسم الفعلي للأمواج
+// ─────────────────────────────────────────────
+class _WaveformPainter extends CustomPainter {
+  final List<double> heights;
+  final bool isPlaying;
+  final double phase;
+
+  _WaveformPainter({
+    required this.heights,
+    required this.isPlaying,
+    required this.phase,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final barCount = heights.length;
+    final totalWidth = size.width;
+    final totalHeight = size.height;
+    final barWidth = (totalWidth / barCount) * 0.55;
+    final gap = (totalWidth - barWidth * barCount) / (barCount + 1);
+    final centerY = totalHeight / 2;
+
+    for (int i = 0; i < barCount; i++) {
+      final x = gap + i * (barWidth + gap) + barWidth / 2;
+      final barH = (heights[i] * totalHeight * 0.88).clamp(4.0, totalHeight * 0.92);
+
+      // لون متدرج لكل بار (أبيض → شفاف للأطراف)
+      final distFromCenter = ((i - barCount / 2).abs() / (barCount / 2));
+      final opacity = isPlaying
+          ? (1.0 - distFromCenter * 0.5).clamp(0.55, 1.0)
+          : (1.0 - distFromCenter * 0.6).clamp(0.3, 0.7);
+
+      // ظل ناعم خلف كل بار
+      final shadowPaint = Paint()
+        ..color = Colors.black.withOpacity(0.18 * opacity)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3);
+
+      final glowPaint = Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Colors.white.withOpacity(opacity * 0.9),
+            Colors.white.withOpacity(opacity * 0.5),
+          ],
+        ).createShader(Rect.fromCenter(
+          center: Offset(x, centerY),
+          width: barWidth + 4,
+          height: barH + 4,
+        ));
+
+      final mainPaint = Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Colors.white.withOpacity(opacity),
+            Colors.white.withOpacity(opacity * 0.75),
+          ],
+        ).createShader(Rect.fromCenter(
+          center: Offset(x, centerY),
+          width: barWidth,
+          height: barH,
+        ));
+
+      final rect = RRect.fromRectAndRadius(
+        Rect.fromCenter(
+          center: Offset(x, centerY),
+          width: barWidth,
+          height: barH,
+        ),
+        Radius.circular(barWidth / 2),
+      );
+
+      // رسم الظل أولاً
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromCenter(
+            center: Offset(x + 1, centerY + 1),
+            width: barWidth,
+            height: barH,
           ),
-        );
-      },
+          Radius.circular(barWidth / 2),
+        ),
+        shadowPaint,
+      );
+
+      // رسم توهج خفيف
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromCenter(
+            center: Offset(x, centerY),
+            width: barWidth + 3,
+            height: barH + 3,
+          ),
+          Radius.circular((barWidth + 3) / 2),
+        ),
+        glowPaint,
+      );
+
+      // رسم الشريط الرئيسي
+      canvas.drawRRect(rect, mainPaint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_WaveformPainter old) => true;
+}
+
+// ─────────────────────────────────────────────
+//  _FallbackSoundWave — احتياطي (مستخدم ضمنياً)
+// ─────────────────────────────────────────────
+class _FallbackSoundWave extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return const SizedBox(
+      height: 72,
+      width: 220,
+      child: _RealSoundWave(),
     );
   }
 }

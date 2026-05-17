@@ -19,11 +19,11 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Build iOS
-        run: flutter build ios --debug --no-codesign
+      - name: Build iOS Simulator
+        run: flutter build ios --simulator --debug
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: Runner-app
-          path: build/ios/iphoneos/
+          path: build/ios/iphonesimulator/

@@ -406,89 +406,136 @@ class _AdSlideshowCardState extends State<_AdSlideshowCard>
   }
 
   Widget _buildSlide(AdSlide slide) {
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        CachedNetworkImage(
-          imageUrl: slide.imageUrl,
-          fit: BoxFit.cover,
-          width: double.infinity,
-          height: double.infinity,
-          placeholder: (_, __) => Container(
-            color: Colors.grey[900],
-            child: const Center(
-              child: CircularProgressIndicator(
-                valueColor: AlwaysStoppedAnimation(Colors.white54),
-              ),
-            ),
-          ),
-          errorWidget: (_, __, ___) => Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [AppColors.primary, AppColors.primaryDark],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-            ),
-            child: const Center(
-              child: Icon(
-                Icons.broken_image,
-                color: Colors.white,
-                size: 48,
-              ),
-            ),
+return Stack(
+  fit: StackFit.expand,
+  children: [
+    CachedNetworkImage(
+      imageUrl: slide.imageUrl,
+      fit: BoxFit.cover,
+      width: double.infinity,
+      height: double.infinity,
+      placeholder: (_, __) => Container(
+        color: Colors.grey[900],
+        child: const Center(
+          child: CircularProgressIndicator(
+            valueColor: AlwaysStoppedAnimation(Colors.white54),
           ),
         ),
-        Positioned.fill(
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                stops: const [0.4, 1.0],
-                colors: [
-                  const Color.fromARGB(22, 0, 0, 0),
-                  Colors.black.withValues(alpha: 0.75),
+      ),
+      errorWidget: (_, __, ___) => Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [AppColors.primary, AppColors.primaryDark],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: const Center(
+          child: Icon(
+            Icons.broken_image,
+            color: Colors.white,
+            size: 48,
+          ),
+        ),
+      ),
+    ),
+
+    // التعتيم السفلي
+    Positioned.fill(
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            stops: const [0.4, 1.0],
+            colors: [
+              const Color.fromARGB(22, 0, 0, 0),
+              Colors.black.withValues(alpha: 0.75),
+            ],
+          ),
+        ),
+      ),
+    ),
+
+    // ✨ تأثير اللمعة المتحركة
+    Positioned.fill(
+      child: IgnorePointer(
+        child: TweenAnimationBuilder<double>(
+          tween: Tween(begin: -1.5, end: 2.0),
+          duration: const Duration(seconds: 4),
+          curve: Curves.easeInOut,
+          onEnd: () {
+            if (mounted) {
+              setState(() {});
+            }
+          },
+          builder: (context, value, child) {
+            return Transform.rotate(
+              angle: -0.55,
+              child: Transform.translate(
+                offset: Offset(value * MediaQuery.of(context).size.width, 0),
+                child: Container(
+                  width: 70,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.transparent,
+                        Colors.white.withValues(alpha: 0.10),
+                        Colors.white.withValues(alpha: 0.22),
+                        Colors.white.withValues(alpha: 0.10),
+                        Colors.transparent,
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    ),
+
+    Positioned(
+      bottom: 24,
+      right: 18,
+      left: 18,
+      child: Directionality(
+        textDirection: TextDirection.rtl,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              slide.title,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 17,
+                fontFamily: 'Tajawal',
+                fontWeight: FontWeight.w800,
+                shadows: [
+                  Shadow(color: Colors.black87, blurRadius: 10),
                 ],
               ),
             ),
-          ),
-        ),
-        Positioned(
-          bottom: 24,
-          right: 18,
-          left: 18,
-          child: Directionality(
-            textDirection: TextDirection.rtl,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  slide.title,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 17,
-                    fontFamily: 'Tajawal',
-                    fontWeight: FontWeight.w800,
-                    shadows: [Shadow(color: Colors.black87, blurRadius: 10)],
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  slide.description,
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.88),
-                    fontSize: 12,
-                    fontFamily: 'Tajawal',
-                    shadows: [Shadow(color: Colors.black54, blurRadius: 8)],
-                  ),
-                ),
-              ],
+            const SizedBox(height: 4),
+            Text(
+              slide.description,
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.88),
+                fontSize: 12,
+                fontFamily: 'Tajawal',
+                shadows: [
+                  Shadow(color: Colors.black54, blurRadius: 8),
+                ],
+              ),
             ),
-          ),
+          ],
         ),
-      ],
-    );
+      ),
+    ),
+  ],
+);
   }
 }
 

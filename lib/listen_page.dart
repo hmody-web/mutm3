@@ -781,7 +781,8 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
     } catch (_) {}
   }
 
-  // السحب للجهة اليسرى (سالب) فقط في RTL
+  // السحب لليسار يُظهر الأزرار على اليمين (RTL)
+  // delta.dx سالب عند السحب لليسار → نجمعه مع الإشارة الصحيحة
   void _onHorizontalDrag(DragUpdateDetails details) {
     setState(() {
       _dragOffset = (_dragOffset - details.delta.dx).clamp(0.0, _revealWidth);
@@ -813,16 +814,143 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
     final currentPath = audioService.currentItem?.path;
     final isActive = currentPath == widget.item.path;
 
-    final showButtons = _dragOffset > _revealWidth * 0.5;
-    final buttonsWidth = _dragOffset.clamp(0.0, _revealWidth);
-
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       child: ClipRect(
-        child: Row(
+        child: Stack(
           children: [
-            // ── الكرت الرئيسي يأخذ المساحة المتبقية ──
-            Expanded(
+            // ── الأزرار ثابتة على اليمين ──
+            Positioned(
+              top: 0,
+              bottom: 0,
+              right: 0,
+              width: _revealWidth,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Row(
+                  children: [
+                    // ── زر الحفظ (أزرق) ──
+                    Expanded(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () {
+                          _closeSwipe();
+                          widget.onSave();
+                        },
+                        child: Container(
+                          margin: const EdgeInsets.only(right: 4, left: 3, top: 2, bottom: 2),
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [Color(0xFF1976D2), Color(0xFF42A5F5)],
+                            ),
+                            borderRadius: BorderRadius.circular(16),
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFF1976D2).withValues(alpha: 0.40),
+                                blurRadius: 10,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                          ),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Container(
+                                width: 36,
+                                height: 36,
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withValues(alpha: 0.20),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  CupertinoIcons.arrow_down_to_line_alt,
+                                  color: Colors.white,
+                                  size: 18,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              const Text(
+                                'حفظ',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12,
+                                  fontFamily: 'Tajawal',
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 0.3,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    // ── زر الحذف (أحمر) ──
+                    Expanded(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () {
+                          _closeSwipe();
+                          widget.onDelete();
+                        },
+                        child: Container(
+                          margin: const EdgeInsets.only(right: 3, left: 4, top: 2, bottom: 2),
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [Color(0xFFD32F2F), Color(0xFFFF5252)],
+                            ),
+                            borderRadius: BorderRadius.circular(16),
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFFD32F2F).withValues(alpha: 0.40),
+                                blurRadius: 10,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                          ),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Container(
+                                width: 36,
+                                height: 36,
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withValues(alpha: 0.20),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  CupertinoIcons.trash_fill,
+                                  color: Colors.white,
+                                  size: 18,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              const Text(
+                                'حذف',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12,
+                                  fontFamily: 'Tajawal',
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 0.3,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            // ── الكرت يتحرك لليسار عند السحب ──
+            Transform.translate(
+              offset: Offset(-_dragOffset, 0),
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onHorizontalDragUpdate: _onHorizontalDrag,
@@ -832,7 +960,6 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
                     _closeSwipe();
                     return;
                   }
-                  // نُمرر القائمة والـ index مباشرة — playList يضبط currentIndex قبل أي async
                   audioService.playList(
                     List<LocalMediaItem>.unmodifiable(widget.allItems),
                     widget.index,
@@ -854,81 +981,6 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
                 },
                 child: _buildTile(isActive),
               ),
-            ),
-
-            // ── الأزرار على يمين الكرت (تظهر بعرض حقيقي فلا يحجبها الكرت) ──
-            SizedBox(
-              width: buttonsWidth,
-              child: showButtons
-                  ? Row(
-                      children: [
-                        // زر الحفظ (أزرق)
-                        Expanded(
-                          child: GestureDetector(
-                            behavior: HitTestBehavior.opaque,
-                            onTap: () {
-                              _closeSwipe();
-                              widget.onSave();
-                            },
-                            child: Container(
-                              margin: const EdgeInsets.symmetric(vertical: 2, horizontal: 2),
-                              decoration: BoxDecoration(
-                                gradient: const LinearGradient(
-                                  colors: [Color(0xFF1565C0), Color(0xFF2196F3)],
-                                ),
-                                borderRadius: BorderRadius.circular(14),
-                              ),
-                              child: const Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(CupertinoIcons.arrow_down_to_line,
-                                      color: Colors.white, size: 18),
-                                  SizedBox(height: 3),
-                                  Text('حفظ',
-                                      style: TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.w700)),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                        // زر الحذف (أحمر)
-                        Expanded(
-                          child: GestureDetector(
-                            behavior: HitTestBehavior.opaque,
-                            onTap: () {
-                              _closeSwipe();
-                              widget.onDelete();
-                            },
-                            child: Container(
-                              margin: const EdgeInsets.symmetric(vertical: 2, horizontal: 2),
-                              decoration: BoxDecoration(
-                                gradient: const LinearGradient(
-                                  colors: [Color(0xFFD32F2F), Color(0xFFFF3B30)],
-                                ),
-                                borderRadius: BorderRadius.circular(14),
-                              ),
-                              child: const Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(CupertinoIcons.trash_fill,
-                                      color: Colors.white, size: 18),
-                                  SizedBox(height: 3),
-                                  Text('حذف',
-                                      style: TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.w700)),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    )
-                  : const SizedBox.shrink(),
             ),
           ],
         ),

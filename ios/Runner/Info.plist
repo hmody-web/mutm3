@@ -125,6 +125,25 @@
 		</dict>
 
 	</dict>
-
+<key>CFBundleIcons~ipad</key>
+<dict>
+    <key>CFBundlePrimaryIcon</key>
+    <dict>
+        <key>CFBundleIconName</key>
+        <string>AppIcon</string>
+    </dict>
+    <key>CFBundleAlternateIcons</key>
+    <dict>
+        <key>AppIconDark</key>
+        <dict>
+            <key>CFBundleIconFiles</key>
+            <array>
+                <string>AppIconDark</string>
+            </array>
+            <key>UIPrerenderedIcon</key>
+            <false/>
+        </dict>
+    </dict>
+</dict>
 </dict>
 </plist>

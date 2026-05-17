@@ -1648,6 +1648,8 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
   bool _showSpeedOptions = false;
   bool _isShuffle = false;
   bool _isRepeat = false;
+  String? _doubleTapHint;
+  Timer? _doubleTapHintTimer;
 
   @override
   void initState() {
@@ -1658,6 +1660,7 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
   @override
   void dispose() {
     _hideTimer?.cancel();
+    _doubleTapHintTimer?.cancel();
     // لا نُغيّر الاتجاه هنا — فقط عند الخروج الفعلي من FullScreen
     super.dispose();
   }
@@ -1945,7 +1948,7 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
               ),
             ),
 
-            // ── طبقة double-tap (نصف يسار تقديم، نصف يمين رجوع) ──
+            // ── طبقة double-tap — تعمل دائماً بغض النظر عن حالة controls ──
             Positioned.fill(
               child: Row(
                 children: [
@@ -1954,7 +1957,13 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
                       behavior: HitTestBehavior.translucent,
                       onDoubleTap: () {
                         final pos = widget.audioPlayer.position;
-                        widget.onSeek(pos + const Duration(seconds: 10));
+                        final back = pos - const Duration(seconds: 10);
+                        widget.onSeek(back < Duration.zero ? Duration.zero : back);
+                        setState(() => _doubleTapHint = 'backward');
+                        _doubleTapHintTimer?.cancel();
+                        _doubleTapHintTimer = Timer(const Duration(milliseconds: 800), () {
+                          if (mounted) setState(() => _doubleTapHint = null);
+                        });
                         _resetTimer();
                       },
                     ),
@@ -1964,8 +1973,12 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
                       behavior: HitTestBehavior.translucent,
                       onDoubleTap: () {
                         final pos = widget.audioPlayer.position;
-                        final back = pos - const Duration(seconds: 10);
-                        widget.onSeek(back < Duration.zero ? Duration.zero : back);
+                        widget.onSeek(pos + const Duration(seconds: 10));
+                        setState(() => _doubleTapHint = 'forward');
+                        _doubleTapHintTimer?.cancel();
+                        _doubleTapHintTimer = Timer(const Duration(milliseconds: 800), () {
+                          if (mounted) setState(() => _doubleTapHint = null);
+                        });
                         _resetTimer();
                       },
                     ),
@@ -1973,6 +1986,10 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
                 ],
               ),
             ),
+
+            // ── أنيميشن التقديم/التأخير ──
+            if (_doubleTapHint != null)
+              _SeekRippleAnimation(isForward: _doubleTapHint == 'forward'),
 
             // ── طبقة التحكم (controls overlay) ──
             AnimatedOpacity(
@@ -2133,36 +2150,39 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
                                         ],
                                       ),
                                     ),
-                                    // ── شريط التقدم مع thumb يكبر عند السحب ──
-                                    SliderTheme(
-                                      data: SliderThemeData(
-                                        trackHeight: 3,
-                                        thumbShape: RoundSliderThumbShape(
-                                            enabledThumbRadius: _dragging ? 10 : 6),
-                                        overlayShape: const RoundSliderOverlayShape(
-                                            overlayRadius: 0),
-                                        activeTrackColor: Colors.white,
-                                        inactiveTrackColor: Colors.white30,
-                                        thumbColor: Colors.white,
-                                        overlayColor: Colors.transparent,
-                                      ),
-                                      child: Slider(
-                                        value: display.clamp(0.0, 1.0),
-                                        onChangeStart: (v) {
-                                          setState(() {
-                                            _dragging = true;
-                                            _dragValue = v;
-                                          });
-                                          _hideTimer?.cancel();
-                                        },
-                                        onChanged: (v) =>
-                                            setState(() => _dragValue = v),
-                                        onChangeEnd: (v) {
-                                          setState(() => _dragging = false);
-                                          final ms = (v * dur.inMilliseconds).toInt();
-                                          widget.onSeek(Duration(milliseconds: ms));
-                                          _startHideTimer();
-                                        },
+                                    // ── شريط التقدم أبيض سميك مع مسافات جانبية ──
+                                    Padding(
+                                      padding: const EdgeInsets.fromLTRB(8, 0, 8, 6),
+                                      child: SliderTheme(
+                                        data: SliderThemeData(
+                                          trackHeight: 5,
+                                          thumbShape: RoundSliderThumbShape(
+                                              enabledThumbRadius: _dragging ? 12 : 7),
+                                          overlayShape: const RoundSliderOverlayShape(
+                                              overlayRadius: 0),
+                                          activeTrackColor: Colors.white,
+                                          inactiveTrackColor: Colors.white30,
+                                          thumbColor: Colors.white,
+                                          overlayColor: Colors.transparent,
+                                        ),
+                                        child: Slider(
+                                          value: display.clamp(0.0, 1.0),
+                                          onChangeStart: (v) {
+                                            setState(() {
+                                              _dragging = true;
+                                              _dragValue = v;
+                                            });
+                                            _hideTimer?.cancel();
+                                          },
+                                          onChanged: (v) =>
+                                              setState(() => _dragValue = v),
+                                          onChangeEnd: (v) {
+                                            setState(() => _dragging = false);
+                                            final ms = (v * dur.inMilliseconds).toInt();
+                                            widget.onSeek(Duration(milliseconds: ms));
+                                            _startHideTimer();
+                                          },
+                                        ),
                                       ),
                                     ),
                                   ],
@@ -2184,19 +2204,13 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
       }, // end ValueListenableBuilder builder
     ); // end ValueListenableBuilder
 
-    // ── وضع عادي: نسبة 16:9 بدون سواد ──
-    return ValueListenableBuilder<VideoPlayerController?>(
-      valueListenable: widget.ctrlNotifier,
-      builder: (_, ctrl, child) => AspectRatio(
-        aspectRatio: (ctrl != null && ctrl.value.aspectRatio > 0)
-            ? ctrl.value.aspectRatio
-            : 16 / 9,
-        child: Container(
-          color: Colors.black,
-          child: child,
-        ),
+    // ── وضع عادي: نسبة 16:9 ثابتة دائماً بغض النظر عن نوع الفيديو ──
+    return AspectRatio(
+      aspectRatio: 16 / 9,
+      child: Container(
+        color: Colors.black,
+        child: videoContent,
       ),
-      child: videoContent,
     );
   }
 
@@ -2650,7 +2664,7 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
               ),
             ),
 
-            // ── double tap: يسار=رجوع 10ث، يمين=تقديم 10ث (معكوس) ──
+            // ── double tap: يسار=رجوع 10ث، يمين=تقديم 10ث — يعمل دائماً ──
             Positioned.fill(
               child: Row(
                 children: [
@@ -2662,9 +2676,9 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
                         final pos = widget.audioPlayer.position;
                         final back = pos - const Duration(seconds: 10);
                         widget.onSeek(back < Duration.zero ? Duration.zero : back);
-                        setState(() => _doubleTapHint = '⏪ -10');
+                        setState(() => _doubleTapHint = 'backward');
                         _doubleTapHintTimer?.cancel();
-                        _doubleTapHintTimer = Timer(const Duration(milliseconds: 700), () {
+                        _doubleTapHintTimer = Timer(const Duration(milliseconds: 900), () {
                           if (mounted) setState(() => _doubleTapHint = null);
                         });
                         _resetTimer();
@@ -2678,9 +2692,9 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
                       onDoubleTap: () {
                         final pos = widget.audioPlayer.position;
                         widget.onSeek(pos + const Duration(seconds: 10));
-                        setState(() => _doubleTapHint = '⏩ +10');
+                        setState(() => _doubleTapHint = 'forward');
                         _doubleTapHintTimer?.cancel();
-                        _doubleTapHintTimer = Timer(const Duration(milliseconds: 700), () {
+                        _doubleTapHintTimer = Timer(const Duration(milliseconds: 900), () {
                           if (mounted) setState(() => _doubleTapHint = null);
                         });
                         _resetTimer();
@@ -2691,19 +2705,9 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
               ),
             ),
 
-            // ── مؤشر double tap ──
+            // ── أنيميشن التقديم/التأخير الرهيب ──
             if (_doubleTapHint != null)
-              Center(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: Colors.black54,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text(_doubleTapHint!,
-                      style: const TextStyle(color: Colors.white, fontSize: 16, fontFamily: 'Tajawal')),
-                ),
-              ),
+              _SeekRippleAnimation(isForward: _doubleTapHint == 'forward'),
 
             // ── طبقة التحكم ──
             AnimatedOpacity(
@@ -2830,7 +2834,7 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
 
                       // ── شريط التقدم + الوقت يسار + زر خروج يمين (كلاهما فوق الشريط) ──
                       Padding(
-                        padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+                        padding: const EdgeInsets.fromLTRB(32, 0, 32, 28),
                         child: StreamBuilder<Duration?>(
                           stream: widget.audioPlayer.durationStream,
                           builder: (_, durSnap) {
@@ -2885,16 +2889,18 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
                                         ],
                                       ),
                                     ),
-                                    // ── شريط التقدم الأحمر ──
-                                    SliderTheme(
+                            // ── شريط التقدم أبيض سميك مع مسافات جانبية ──
+                                    Padding(
+                                      padding: const EdgeInsets.fromLTRB(8, 0, 8, 0),
+                                      child: SliderTheme(
                                       data: SliderThemeData(
-                                        trackHeight: 3,
+                                        trackHeight: 6,
                                         thumbShape: RoundSliderThumbShape(
-                                            enabledThumbRadius: _dragging ? 10 : 6),
+                                            enabledThumbRadius: _dragging ? 14 : 8),
                                         overlayShape: const RoundSliderOverlayShape(overlayRadius: 0),
-                                        activeTrackColor: AppColors.primary,
+                                        activeTrackColor: Colors.white,
                                         inactiveTrackColor: Colors.white30,
-                                        thumbColor: AppColors.primary,
+                                        thumbColor: Colors.white,
                                         overlayColor: Colors.transparent,
                                       ),
                                       child: Slider(
@@ -2914,6 +2920,7 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
                                           _startHideTimer();
                                         },
                                       ),
+                                    ),
                                     ),
                                   ],
                                 );
@@ -3827,6 +3834,157 @@ class _MarqueeTitleState extends State<_MarqueeTitle>
                 fontWeight: FontWeight.w700,
               ),
             ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  SEEK RIPPLE ANIMATION — أنيميشن التقديم والتأخير الرهيب
+// ═══════════════════════════════════════════════════════════
+class _SeekRippleAnimation extends StatefulWidget {
+  final bool isForward;
+  const _SeekRippleAnimation({required this.isForward});
+
+  @override
+  State<_SeekRippleAnimation> createState() => _SeekRippleAnimationState();
+}
+
+class _SeekRippleAnimationState extends State<_SeekRippleAnimation>
+    with TickerProviderStateMixin {
+  late AnimationController _rippleCtrl;
+  late AnimationController _arrowCtrl;
+  late Animation<double> _rippleAnim;
+  late Animation<double> _arrowAnim;
+  late Animation<double> _fadeAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _rippleCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    );
+    _arrowCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 500),
+    );
+
+    _rippleAnim = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _rippleCtrl, curve: Curves.easeOut),
+    );
+    _arrowAnim = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _arrowCtrl, curve: Curves.elasticOut),
+    );
+    _fadeAnim = Tween<double>(begin: 1.0, end: 0.0).animate(
+      CurvedAnimation(
+        parent: _rippleCtrl,
+        curve: const Interval(0.6, 1.0, curve: Curves.easeIn),
+      ),
+    );
+
+    _rippleCtrl.forward();
+    _arrowCtrl.forward();
+  }
+
+  @override
+  void dispose() {
+    _rippleCtrl.dispose();
+    _arrowCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isForward = widget.isForward;
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: Row(
+          children: [
+            if (!isForward) Expanded(child: _buildSide(isForward)) else const Expanded(child: SizedBox()),
+            if (isForward) Expanded(child: _buildSide(isForward)) else const Expanded(child: SizedBox()),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSide(bool isForward) {
+    return AnimatedBuilder(
+      animation: Listenable.merge([_rippleCtrl, _arrowCtrl]),
+      builder: (_, __) {
+        return FadeTransition(
+          opacity: _fadeAnim,
+          child: Container(
+            decoration: BoxDecoration(
+              gradient: RadialGradient(
+                center: isForward ? Alignment.centerRight : Alignment.centerLeft,
+                radius: 1.2,
+                colors: [
+                  Colors.white.withOpacity(0.18 * _rippleAnim.value),
+                  Colors.white.withOpacity(0.06 * _rippleAnim.value),
+                  Colors.transparent,
+                ],
+              ),
+            ),
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // ── السهام المتحركة ──
+                  ScaleTransition(
+                    scale: _arrowAnim,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: List.generate(3, (i) {
+                        return AnimatedBuilder(
+                          animation: _rippleCtrl,
+                          builder: (_, __) {
+                            final delay = i * 0.12;
+                            final progress = (_rippleAnim.value - delay).clamp(0.0, 1.0);
+                            return Opacity(
+                              opacity: progress,
+                              child: Icon(
+                                isForward
+                                    ? CupertinoIcons.chevron_right
+                                    : CupertinoIcons.chevron_left,
+                                color: Colors.white,
+                                size: 22 + (i * 4.0),
+                              ),
+                            );
+                          },
+                        );
+                      }),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  // ── النص +10 ثواني ──
+                  ScaleTransition(
+                    scale: _arrowAnim,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.55),
+                        borderRadius: BorderRadius.circular(24),
+                        border: Border.all(color: Colors.white24, width: 1),
+                      ),
+                      child: Text(
+                        isForward ? '+10 ثواني' : '-10 ثواني',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontFamily: 'Tajawal',
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }

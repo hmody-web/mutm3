@@ -39,8 +39,10 @@
 	<array>
 		<string>audio</string>
 	</array>
-    <key>NSAppleMusicUsageDescription</key>
-    <string>لعرض الصور المصغرة للأغاني</string>
+
+	<key>NSAppleMusicUsageDescription</key>
+	<string>لعرض الصور المصغرة للأغاني</string>
+
 	<!-- صلاحيات -->
 	<key>NSDocumentsFolderUsageDescription</key>
 	<string>دندن يحتاج إلى الوصول للملفات لتشغيلها</string>
@@ -51,10 +53,11 @@
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>دندن يستخدم الشبكة للتحميل من يوتيوب</string>
 
-    <key>NSPhotoLibraryAddUsageDescription</key>
-    <string>يحتاج دندن إذنك لحفظ الوسائط في معرض الصور</string>
-    <key>NSPhotoLibraryUsageDescription</key>
-    <string>يحتاج دندن إذنك للوصول لمعرض الصور</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>يحتاج دندن إذنك لحفظ الوسائط في معرض الصور</string>
+
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>يحتاج دندن إذنك للوصول لمعرض الصور</string>
 
 	<!-- السماح بمحتوى HTTP -->
 	<key>NSAppTransportSecurity</key>
@@ -92,20 +95,23 @@
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 
-	<!-- أيقونات بديلة للوضع الداكن -->
+	<!-- أيقونات التطبيق -->
 	<key>CFBundleIcons</key>
 	<dict>
+
+		<!-- الأيقونة الأساسية -->
 		<key>CFBundlePrimaryIcon</key>
 		<dict>
-			<key>CFBundleIconFiles</key>
-			<array>
-				<string>AppIcon</string>
-			</array>
+			<key>CFBundleIconName</key>
+			<string>AppIcon</string>
 			<key>UIPrerenderedIcon</key>
 			<false/>
 		</dict>
+
+		<!-- الأيقونات البديلة — يدوي فقط عبر setAlternateIconName -->
 		<key>CFBundleAlternateIcons</key>
 		<dict>
+
 			<key>AppIconDark</key>
 			<dict>
 				<key>CFBundleIconFiles</key>
@@ -115,7 +121,9 @@
 				<key>UIPrerenderedIcon</key>
 				<false/>
 			</dict>
+
 		</dict>
+
 	</dict>
 
 </dict>

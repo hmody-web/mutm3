@@ -56,5 +56,3 @@ flutter_launcher_icons:
 
   adaptive_icon_background: "#000000"
   adaptive_icon_foreground: "assets/images/icon-white.png"
-
-  image_path_ios_dark_transparent: "assets/images/icon-dark.png"

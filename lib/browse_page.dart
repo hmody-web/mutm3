@@ -30,6 +30,7 @@ import 'listen_page.dart';
 import 'browse_page.dart';
 import 'settings_page.dart';
 import 'download_service.dart';
+import 'download_page.dart';
 class ManifestCache {
   static final Map<String, StreamManifest> _cache = {};
   static final Map<String, Future<StreamManifest>> _pending = {};
@@ -1588,34 +1589,94 @@ Future<void> _analyzeAndFetch() async {
   }
 
   Widget _buildError(Color textPrimary, Color textSecondary) {
+    final url = widget.url.trim();
+    final isSocial = url.contains('tiktok.com') ||
+        url.contains('instagram.com') ||
+        url.contains('instagr.am');
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(CupertinoIcons.exclamationmark_circle, color: AppColors.primary, size: 52),
+            const Icon(CupertinoIcons.exclamationmark_circle,
+                color: AppColors.primary, size: 52),
             const SizedBox(height: 16),
             Text(
               _error ?? 'خطأ غير معروف',
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 14, color: textPrimary, fontFamily: 'Tajawal'),
+              style: TextStyle(
+                  fontSize: 14, color: textPrimary, fontFamily: 'Tajawal'),
             ),
             const SizedBox(height: 24),
+            // زر إعادة المحاولة
             GestureDetector(
               onTap: _analyzeAndFetch,
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 13),
                 decoration: BoxDecoration(
                   color: AppColors.primary,
                   borderRadius: BorderRadius.circular(12),
                 ),
+                alignment: Alignment.center,
                 child: const Text(
                   'إعادة المحاولة',
-                  style: TextStyle(color: Colors.white, fontSize: 15, fontFamily: 'Tajawal', fontWeight: FontWeight.w700),
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontFamily: 'Tajawal',
+                      fontWeight: FontWeight.w700),
                 ),
               ),
             ),
+            // زر المتصفح الداخلي — يظهر فقط لروابط التواصل الاجتماعي
+            if (isSocial) ...[
+              const SizedBox(height: 12),
+              GestureDetector(
+                onTap: () {
+                  Navigator.pushReplacement(
+                    context,
+                    CupertinoPageRoute(
+                      builder: (_) => DownloadPage(initialUrl: url),
+                    ),
+                  );
+                },
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 13),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: AppColors.primary, width: 1.3),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  alignment: Alignment.center,
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(CupertinoIcons.globe,
+                          color: AppColors.primary, size: 18),
+                      SizedBox(width: 8),
+                      Text(
+                        'فتح في المتصفح الداخلي',
+                        style: TextStyle(
+                            color: AppColors.primary,
+                            fontSize: 15,
+                            fontFamily: 'Tajawal',
+                            fontWeight: FontWeight.w700),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'سجّل دخولك وسيكتشف التطبيق الفيديو تلقائياً',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    fontSize: 12, color: textSecondary, fontFamily: 'Tajawal'),
+              ),
+            ],
           ],
         ),
       ),

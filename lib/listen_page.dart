@@ -814,129 +814,124 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
     final isActive = currentPath == widget.item.path;
 
     final showButtons = _dragOffset > _revealWidth * 0.5;
+    final buttonsWidth = _dragOffset.clamp(0.0, _revealWidth);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
-      child: Stack(
-        clipBehavior: Clip.hardEdge,
-        children: [
-          // ── الأزرار خلف الكرت (جهة اليمين في RTL) ──
-          Positioned.fill(
-            child: Align(
-              alignment: Alignment.centerRight,
-              child: SizedBox(
-                width: _dragOffset.clamp(0.0, _revealWidth),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    // زر الحفظ (أزرق)
-                    if (showButtons)
-                      Expanded(
-                        child: GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onTap: () {
-                            _closeSwipe();
-                            widget.onSave();
-                          },
-                          child: Container(
-                            margin: const EdgeInsets.symmetric(vertical: 2, horizontal: 2),
-                            decoration: BoxDecoration(
-                              gradient: const LinearGradient(
-                                colors: [Color(0xFF1565C0), Color(0xFF2196F3)],
-                              ),
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                            child: const Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(CupertinoIcons.arrow_down_to_line,
-                                    color: Colors.white, size: 18),
-                                SizedBox(height: 3),
-                                Text('حفظ',
-                                    style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.w700)),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    // زر الحذف (أحمر)
-                    if (showButtons)
-                      Expanded(
-                        child: GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onTap: () {
-                            _closeSwipe();
-                            widget.onDelete();
-                          },
-                          child: Container(
-                            margin: const EdgeInsets.symmetric(vertical: 2, horizontal: 2),
-                            decoration: BoxDecoration(
-                              gradient: const LinearGradient(
-                                colors: [Color(0xFFD32F2F), Color(0xFFFF3B30)],
-                              ),
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                            child: const Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(CupertinoIcons.trash_fill,
-                                    color: Colors.white, size: 18),
-                                SizedBox(height: 3),
-                                Text('حذف',
-                                    style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.w700)),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
+      child: ClipRect(
+        child: Row(
+          children: [
+            // ── الكرت الرئيسي يأخذ المساحة المتبقية ──
+            Expanded(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onHorizontalDragUpdate: _onHorizontalDrag,
+                onHorizontalDragEnd: _onDragEnd,
+                onTap: () {
+                  if (_revealed) {
+                    _closeSwipe();
+                    return;
+                  }
+                  // نُمرر القائمة والـ index مباشرة — playList يضبط currentIndex قبل أي async
+                  audioService.playList(
+                    List<LocalMediaItem>.unmodifiable(widget.allItems),
+                    widget.index,
+                  );
+                  Navigator.of(context).push(
+                    PageRouteBuilder(
+                      pageBuilder: (_, __, ___) => const FullScreenPlayer(),
+                      transitionsBuilder: (_, animation, __, child) {
+                        return SlideTransition(
+                          position: Tween<Offset>(
+                                  begin: const Offset(0, 1), end: Offset.zero)
+                              .animate(CurvedAnimation(
+                                  parent: animation, curve: Curves.easeOutCubic)),
+                          child: child,
+                        );
+                      },
+                    ),
+                  );
+                },
+                child: _buildTile(isActive),
               ),
             ),
-          ),
 
-          // ── الكرت الرئيسي ──
-          GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onHorizontalDragUpdate: _onHorizontalDrag,
-            onHorizontalDragEnd: _onDragEnd,
-            onTap: () {
-              if (_revealed) {
-                _closeSwipe();
-                return;
-              }
-              // نُمرر القائمة والـ index مباشرة — playList يضبط currentIndex قبل أي async
-              audioService.playList(
-                List<LocalMediaItem>.unmodifiable(widget.allItems),
-                widget.index,
-              );
-              Navigator.of(context).push(
-                PageRouteBuilder(
-                  pageBuilder: (_, __, ___) => const FullScreenPlayer(),
-                  transitionsBuilder: (_, animation, __, child) {
-                    return SlideTransition(
-                      position: Tween<Offset>(
-                              begin: const Offset(0, 1), end: Offset.zero)
-                          .animate(CurvedAnimation(
-                              parent: animation, curve: Curves.easeOutCubic)),
-                      child: child,
-                    );
-                  },
-                ),
-              );
-            },
-            child: Transform.translate(
-              offset: Offset(-_dragOffset, 0),
-              child: _buildTile(isActive),
+            // ── الأزرار على يمين الكرت (تظهر بعرض حقيقي فلا يحجبها الكرت) ──
+            SizedBox(
+              width: buttonsWidth,
+              child: showButtons
+                  ? Row(
+                      children: [
+                        // زر الحفظ (أزرق)
+                        Expanded(
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () {
+                              _closeSwipe();
+                              widget.onSave();
+                            },
+                            child: Container(
+                              margin: const EdgeInsets.symmetric(vertical: 2, horizontal: 2),
+                              decoration: BoxDecoration(
+                                gradient: const LinearGradient(
+                                  colors: [Color(0xFF1565C0), Color(0xFF2196F3)],
+                                ),
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: const Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(CupertinoIcons.arrow_down_to_line,
+                                      color: Colors.white, size: 18),
+                                  SizedBox(height: 3),
+                                  Text('حفظ',
+                                      style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w700)),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        // زر الحذف (أحمر)
+                        Expanded(
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () {
+                              _closeSwipe();
+                              widget.onDelete();
+                            },
+                            child: Container(
+                              margin: const EdgeInsets.symmetric(vertical: 2, horizontal: 2),
+                              decoration: BoxDecoration(
+                                gradient: const LinearGradient(
+                                  colors: [Color(0xFFD32F2F), Color(0xFFFF3B30)],
+                                ),
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: const Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(CupertinoIcons.trash_fill,
+                                      color: Colors.white, size: 18),
+                                  SizedBox(height: 3),
+                                  Text('حذف',
+                                      style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w700)),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    )
+                  : const SizedBox.shrink(),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

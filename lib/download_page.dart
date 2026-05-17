@@ -6,7 +6,9 @@ import '../main.dart';
 import 'download_service.dart';
 
 class DownloadPage extends StatefulWidget {
-  const DownloadPage({super.key});
+  /// إذا مُرِّر initialUrl، يُفتح المتصفح الداخلي تلقائياً على هذا الرابط
+  final String? initialUrl;
+  const DownloadPage({super.key, this.initialUrl});
 
   @override
   State<DownloadPage> createState() => _DownloadPageState();
@@ -36,6 +38,16 @@ class _DownloadPageState extends State<DownloadPage>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+
+    // إذا جاء الرابط من صفحة أخرى (مثلاً بعد فشل الاستخراج)،
+    // انتقل للمتصفح الداخلي وافتح الرابط تلقائياً
+    if (widget.initialUrl != null && widget.initialUrl!.isNotEmpty) {
+      _urlController.text = widget.initialUrl!;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _tabController.animateTo(1); // انتقل لتبويب المتصفح
+        _initWebView(_buildBrowserStartUrl(widget.initialUrl!));
+      });
+    }
   }
 
   @override

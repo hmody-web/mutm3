@@ -4005,8 +4005,6 @@ class _IdleOverlayContentState extends State<_IdleOverlayContent>
     return LayoutBuilder(
       builder: (ctx, constraints) {
         final totalH = constraints.maxHeight;
-        // ارتفاع الـ overlay يبدأ من الأسفل وصولاً لـ 52% من الشاشة
-        const overlayFraction = 0.72;
 
         return Stack(
           children: [
@@ -4016,7 +4014,7 @@ Positioned(
   bottom: 0,
   left: 0,
   right: 0,
-  height: totalH * 0.58,
+  height: totalH - (MediaQuery.of(context).size.width * (9 / 16)),
   child: ClipRect(
     child: BackdropFilter(
       filter: ImageFilter.blur(
@@ -4089,7 +4087,7 @@ Positioned(
                                       textDirection: TextDirection.rtl,
                                       style: const TextStyle(
                                         color: Colors.white,
-                                        fontSize: 26,
+                                        fontSize: 28,
                                         fontFamily: 'mzghrf',
                                         fontWeight: FontWeight.w800,
                                         shadows: [
@@ -4105,8 +4103,8 @@ Positioned(
                                       textDirection: TextDirection.rtl,
                                       style: const TextStyle(
                                         color: Colors.white,
-                                        fontSize: 26,
-                                        fontFamily: 'Tajawal',
+                                        fontSize: 28,
+                                        fontFamily: 'mzghrf',
                                         fontWeight: FontWeight.w800,
                                         shadows: [
                                           Shadow(color: Colors.black54, blurRadius: 8),
@@ -4121,8 +4119,8 @@ Positioned(
                                       textDirection: TextDirection.rtl,
                                       style: const TextStyle(
                                         color: Colors.white,
-                                        fontSize: 26,
-                                        fontFamily: 'Tajawal',
+                                        fontSize: 28,
+                                        fontFamily: 'mzghrf',
                                         fontWeight: FontWeight.w800,
                                         shadows: [
                                           Shadow(color: Colors.black54, blurRadius: 8),
@@ -4141,8 +4139,8 @@ Positioned(
                               textDirection: TextDirection.rtl,
                               style: const TextStyle(
                                 color: Colors.white,
-                                fontSize: 26,
-                                fontFamily: 'Tajawal',
+                                fontSize: 28,
+                                fontFamily: 'mzghrf',
                                 fontWeight: FontWeight.w800,
                                 shadows: [
                                   Shadow(color: Colors.black54, blurRadius: 8),

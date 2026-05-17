@@ -251,37 +251,49 @@ class _AdSlideshowCardState extends State<_AdSlideshowCard>
     }
   }
 
-  Future<void> _fetchAdsFromNetwork(SharedPreferences prefs) async {
-    try {
-      final uri = Uri.parse('https://scrptaty.com/dndn/index.php?json');
-      final response = await http.get(uri).timeout(const Duration(seconds: 10));
+Future<void> _fetchAdsFromNetwork(SharedPreferences prefs) async {
+  try {
+    final uri = Uri.parse('https://scrptaty.com/dndn/index.php?json');
+    final response = await http.get(uri).timeout(const Duration(seconds: 10));
 
-      if (response.statusCode == 200) {
-        final List<dynamic> data = jsonDecode(response.body);
-        // حفظ البيانات الجديدة في الكاش
-        await prefs.setString(_kAdsCache, response.body);
-        await prefs.setInt(_kAdsFetch, DateTime.now().millisecondsSinceEpoch);
+    if (response.statusCode == 200) {
+      final List<dynamic> data = jsonDecode(response.body);
 
-        if (!mounted) return;
-        final newSlides = data.map((item) => AdSlide.fromJson(item)).toList();
-        setState(() {
-          _slides    = newSlides;
-          _isLoading = false;
-          _error     = null;
-        });
-        if (_autoTimer == null) _startAutoSlide();
-      }
-    } catch (e) {
+      await prefs.setString(_kAdsCache, response.body);
+      await prefs.setInt(_kAdsFetch, DateTime.now().millisecondsSinceEpoch);
+
       if (!mounted) return;
-      // إذا لم يكن هناك كاش سابق نعرض الخطأ
-      if (_slides.isEmpty) {
-        setState(() {
-          _error     = 'خطأ: $e';
-          _isLoading = false;
-        });
-      }
+
+      final newSlides =
+          data.map((item) => AdSlide.fromJson(item)).toList();
+
+      setState(() {
+        _slides = newSlides;
+        _isLoading = false;
+        _error = null;
+      });
+
+      if (_autoTimer == null) _startAutoSlide();
+
+    } else {
+      // ← هذا الجزء كان ناقص
+      if (!mounted) return;
+
+      setState(() {
+        _isLoading = false;
+        _error = 'Server Error: ${response.statusCode}';
+      });
     }
+
+  } catch (e) {
+    if (!mounted) return;
+
+    setState(() {
+      _isLoading = false;
+      _error = 'خطأ: $e';
+    });
   }
+}
 
   /// يُحفظ رقم الصفحة الحالية عند كل تغيير
   Future<void> _saveCurrentPage(int page) async {

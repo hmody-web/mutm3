@@ -152,7 +152,7 @@ class _ListenPageState extends State<ListenPage> {
   }
 
   Future<void> _saveToGallery(LocalMediaItem item) async {
-    // ── طلب الصلاحيات ──
+    // ── طلب الصلاحيات مباشرةً ──
     PermissionStatus status;
     if (Platform.isAndroid) {
       status = item.isVideo
@@ -162,24 +162,27 @@ class _ListenPageState extends State<ListenPage> {
         status = await Permission.storage.request();
       }
     } else {
+      // iOS — طلب مباشر للصور
       status = await Permission.photos.request();
     }
 
     if (!mounted) return;
 
-    if (!status.isGranted) {
+    if (status.isPermanentlyDenied) {
+      // فقط إذا رفض نهائياً نوجّهه للإعدادات
       await showCupertinoDialog(
         context: context,
         builder: (_) => CupertinoAlertDialog(
           title: const Text('صلاحية مطلوبة'),
           content: const Text(
-              'يحتاج التطبيق إذن الوصول للمعرض. افتح الإعدادات ومنح الإذن.'),
+              'تم رفض الإذن نهائياً. افتح الإعدادات لتفعيل الوصول.'),
           actions: [
             CupertinoDialogAction(
               onPressed: () => Navigator.pop(context),
               child: const Text('إلغاء'),
             ),
             CupertinoDialogAction(
+              isDefaultAction: true,
               onPressed: () {
                 Navigator.pop(context);
                 openAppSettings();
@@ -189,6 +192,11 @@ class _ListenPageState extends State<ListenPage> {
           ],
         ),
       );
+      return;
+    }
+
+    if (!status.isGranted) {
+      _showSnack('لم يتم منح الإذن. حاول مجدداً.');
       return;
     }
 
@@ -727,8 +735,15 @@ class _SwipeableMediaTile extends StatefulWidget {
 }
 
 class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   late AnimationController _swipeCtrl;
+  late AnimationController _savePressCtrl;
+  late AnimationController _deletePressCtrl;
+  late AnimationController _springCtrl;
+  late Animation<double> _saveScaleAnim;
+  late Animation<double> _deleteScaleAnim;
+  late Animation<double> _springAnim;
+
   double _dragOffset = 0;
   bool _revealed = false;
   String? _thumbPath;
@@ -740,8 +755,26 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
     super.initState();
     _swipeCtrl = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 250));
+
+    // أنيميشن ضغط زر الحفظ
+    _savePressCtrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 120));
+    _saveScaleAnim = Tween<double>(begin: 1.0, end: 0.88).animate(
+        CurvedAnimation(parent: _savePressCtrl, curve: Curves.easeInOut));
+
+    // أنيميشن ضغط زر الحذف
+    _deletePressCtrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 120));
+    _deleteScaleAnim = Tween<double>(begin: 1.0, end: 0.88).animate(
+        CurvedAnimation(parent: _deletePressCtrl, curve: Curves.easeInOut));
+
+    // أنيميشن ارتداد نهاية السحب (spring)
+    _springCtrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 380));
+    _springAnim = Tween<double>(begin: 0.0, end: 0.0).animate(
+        CurvedAnimation(parent: _springCtrl, curve: Curves.elasticOut));
+
     _loadThumb();
-    // إعادة رسم الكرت عند تغيّر الأغنية الحالية
     audioService.currentIndex.addListener(_onIndexChange);
   }
 
@@ -753,6 +786,9 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
   void dispose() {
     audioService.currentIndex.removeListener(_onIndexChange);
     _swipeCtrl.dispose();
+    _savePressCtrl.dispose();
+    _deletePressCtrl.dispose();
+    _springCtrl.dispose();
     super.dispose();
   }
 
@@ -785,165 +821,205 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
   // delta.dx سالب عند السحب لليسار → نجمعه مع الإشارة الصحيحة
   void _onHorizontalDrag(DragUpdateDetails details) {
     setState(() {
-      _dragOffset = (_dragOffset - details.delta.dx).clamp(0.0, _revealWidth);
+      _dragOffset = (_dragOffset - details.delta.dx).clamp(0.0, _revealWidth * 1.1);
     });
   }
 
   void _onDragEnd(DragEndDetails details) {
-    if (_dragOffset > _revealWidth * 0.45) {
-      setState(() {
-        _dragOffset = _revealWidth;
-        _revealed = true;
-      });
+    final velocity = details.primaryVelocity ?? 0;
+    // سرعة سحب كافية أو تجاوز نصف المسافة → فتح
+    if (_dragOffset > _revealWidth * 0.40 || velocity < -400) {
+      _animateToReveal();
     } else {
-      _closeSwipe();
+      _animateToClose();
     }
   }
 
-  void _closeSwipe() {
-    setState(() {
-      _dragOffset = 0;
-      _revealed = false;
+  void _animateToReveal() {
+    final start = _dragOffset;
+    _springAnim = Tween<double>(begin: start, end: _revealWidth).animate(
+        CurvedAnimation(parent: _springCtrl, curve: Curves.elasticOut));
+    _springCtrl.forward(from: 0).then((_) {
+      if (mounted) setState(() { _dragOffset = _revealWidth; _revealed = true; });
     });
+    _springCtrl.addListener(() {
+      if (mounted) setState(() => _dragOffset = _springAnim.value.clamp(0.0, _revealWidth * 1.06));
+    });
+  }
+
+  void _animateToClose() {
+    final start = _dragOffset;
+    _springAnim = Tween<double>(begin: start, end: 0.0).animate(
+        CurvedAnimation(parent: _springCtrl, curve: Curves.easeOutBack));
+    _springCtrl.forward(from: 0).then((_) {
+      if (mounted) setState(() { _dragOffset = 0; _revealed = false; });
+    });
+    _springCtrl.addListener(() {
+      if (mounted) setState(() => _dragOffset = _springAnim.value.clamp(0.0, _revealWidth));
+    });
+  }
+
+  void _closeSwipe() {
+    _animateToClose();
   }
 
   @override
   Widget build(BuildContext context) {
-    // نستخدم المقارنة بالمسار لأنها أكثر دقة من المقارنة بالـ index
-    // (الـ index قد يتغير إذا حُذف عنصر من القائمة)
     final currentPath = audioService.currentItem?.path;
     final isActive = currentPath == widget.item.path;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    // نسبة الكشف (0.0 → 1.0) لتحريك الأزرار مع السحب
+    final revealFraction = (_dragOffset / _revealWidth).clamp(0.0, 1.0);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       child: ClipRect(
         child: Stack(
           children: [
-            // ── الأزرار ثابتة على اليمين ──
+            // ── الأزرار تظهر من اليمين بأنيميشن ──
             Positioned(
               top: 0,
               bottom: 0,
               right: 0,
               width: _revealWidth,
-              child: Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: Row(
-                  children: [
-                    // ── زر الحفظ (أزرق) ──
-                    Expanded(
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: () {
-                          _closeSwipe();
-                          widget.onSave();
-                        },
-                        child: Container(
-                          margin: const EdgeInsets.only(right: 4, left: 3, top: 2, bottom: 2),
-                          decoration: BoxDecoration(
-                            gradient: const LinearGradient(
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                              colors: [Color(0xFF1976D2), Color(0xFF42A5F5)],
-                            ),
-                            borderRadius: BorderRadius.circular(16),
-                            boxShadow: [
-                              BoxShadow(
-                                color: const Color(0xFF1976D2).withValues(alpha: 0.40),
-                                blurRadius: 10,
-                                offset: const Offset(0, 4),
-                              ),
-                            ],
-                          ),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Container(
-                                width: 36,
-                                height: 36,
+              child: Opacity(
+                opacity: revealFraction,
+                child: Transform.translate(
+                  offset: Offset((1 - revealFraction) * 30, 0),
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Row(
+                      children: [
+                        // ── زر الحفظ (أزرق) ──
+                        Expanded(
+                          child: ScaleTransition(
+                            scale: _saveScaleAnim,
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTapDown: (_) => _savePressCtrl.forward(),
+                              onTapUp: (_) async {
+                                await _savePressCtrl.reverse();
+                                _closeSwipe();
+                                widget.onSave();
+                              },
+                              onTapCancel: () => _savePressCtrl.reverse(),
+                              child: Container(
+                                margin: const EdgeInsets.only(right: 4, left: 3, top: 2, bottom: 2),
                                 decoration: BoxDecoration(
-                                  color: Colors.white.withValues(alpha: 0.20),
-                                  shape: BoxShape.circle,
+                                  gradient: const LinearGradient(
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                    colors: [Color(0xFF1565C0), Color(0xFF42A5F5)],
+                                  ),
+                                  borderRadius: BorderRadius.circular(16),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: const Color(0xFF1976D2).withValues(alpha: 0.45),
+                                      blurRadius: 14,
+                                      offset: const Offset(0, 5),
+                                    ),
+                                  ],
                                 ),
-                                child: const Icon(
-                                  CupertinoIcons.arrow_down_to_line_alt,
-                                  color: Colors.white,
-                                  size: 18,
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Container(
+                                      width: 36,
+                                      height: 36,
+                                      decoration: BoxDecoration(
+                                        color: Colors.white.withValues(alpha: 0.22),
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: const Icon(
+                                        CupertinoIcons.arrow_down_to_line_alt,
+                                        color: Colors.white,
+                                        size: 18,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    const Text(
+                                      'حفظ',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 12,
+                                        fontFamily: 'Tajawal',
+                                        fontWeight: FontWeight.w700,
+                                        letterSpacing: 0.3,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
-                              const SizedBox(height: 6),
-                              const Text(
-                                'حفظ',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 12,
-                                  fontFamily: 'Tajawal',
-                                  fontWeight: FontWeight.w700,
-                                  letterSpacing: 0.3,
-                                ),
-                              ),
-                            ],
+                            ),
                           ),
                         ),
-                      ),
-                    ),
-                    // ── زر الحذف (أحمر) ──
-                    Expanded(
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: () {
-                          _closeSwipe();
-                          widget.onDelete();
-                        },
-                        child: Container(
-                          margin: const EdgeInsets.only(right: 3, left: 4, top: 2, bottom: 2),
-                          decoration: BoxDecoration(
-                            gradient: const LinearGradient(
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                              colors: [Color(0xFFD32F2F), Color(0xFFFF5252)],
-                            ),
-                            borderRadius: BorderRadius.circular(16),
-                            boxShadow: [
-                              BoxShadow(
-                                color: const Color(0xFFD32F2F).withValues(alpha: 0.40),
-                                blurRadius: 10,
-                                offset: const Offset(0, 4),
-                              ),
-                            ],
-                          ),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Container(
-                                width: 36,
-                                height: 36,
+                        // ── زر الحذف (أحمر) ──
+                        Expanded(
+                          child: ScaleTransition(
+                            scale: _deleteScaleAnim,
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTapDown: (_) => _deletePressCtrl.forward(),
+                              onTapUp: (_) async {
+                                await _deletePressCtrl.reverse();
+                                _closeSwipe();
+                                widget.onDelete();
+                              },
+                              onTapCancel: () => _deletePressCtrl.reverse(),
+                              child: Container(
+                                margin: const EdgeInsets.only(right: 3, left: 4, top: 2, bottom: 2),
                                 decoration: BoxDecoration(
-                                  color: Colors.white.withValues(alpha: 0.20),
-                                  shape: BoxShape.circle,
+                                  gradient: const LinearGradient(
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                    colors: [Color(0xFFB71C1C), Color(0xFFEF5350)],
+                                  ),
+                                  borderRadius: BorderRadius.circular(16),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: const Color(0xFFD32F2F).withValues(alpha: 0.45),
+                                      blurRadius: 14,
+                                      offset: const Offset(0, 5),
+                                    ),
+                                  ],
                                 ),
-                                child: const Icon(
-                                  CupertinoIcons.trash_fill,
-                                  color: Colors.white,
-                                  size: 18,
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Container(
+                                      width: 36,
+                                      height: 36,
+                                      decoration: BoxDecoration(
+                                        color: Colors.white.withValues(alpha: 0.22),
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: const Icon(
+                                        CupertinoIcons.trash_fill,
+                                        color: Colors.white,
+                                        size: 18,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    const Text(
+                                      'حذف',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 12,
+                                        fontFamily: 'Tajawal',
+                                        fontWeight: FontWeight.w700,
+                                        letterSpacing: 0.3,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
-                              const SizedBox(height: 6),
-                              const Text(
-                                'حذف',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 12,
-                                  fontFamily: 'Tajawal',
-                                  fontWeight: FontWeight.w700,
-                                  letterSpacing: 0.3,
-                                ),
-                              ),
-                            ],
+                            ),
                           ),
                         ),
-                      ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
               ),
             ),
@@ -998,26 +1074,32 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
 
   Widget _buildTileWithThumb(bool active, double size) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    // لون الخلفية الصلب (غير شفاف) حسب الوضع والحالة
+    final Color bgColor = active
+        ? (isDark
+            ? Color.lerp(AppColors.darkSurface, AppColors.primary, 0.18)!
+            : Color.lerp(Colors.white, AppColors.primary, 0.10)!)
+        : (isDark ? AppColors.darkSurface : AppColors.surface);
+
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 220),
-      curve: Curves.easeOut,
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeOutCubic,
       decoration: BoxDecoration(
-        color: active
-            ? AppColors.primary.withValues(alpha: 0.07)
-            : (isDark ? AppColors.darkSurface : AppColors.surface),
+        color: bgColor,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: active
-              ? AppColors.primary.withValues(alpha: 0.45)
+              ? AppColors.primary.withValues(alpha: 0.55)
               : (isDark ? AppColors.darkDivider : AppColors.divider),
-          width: active ? 1.2 : 0.6,
+          width: active ? 1.4 : 0.6,
         ),
         boxShadow: active
             ? [
                 BoxShadow(
-                  color: AppColors.primary.withValues(alpha: 0.12),
-                  blurRadius: 12,
-                  offset: const Offset(0, 4),
+                  color: AppColors.primary.withValues(alpha: 0.22),
+                  blurRadius: 16,
+                  offset: const Offset(0, 5),
                 )
               ]
             : [
@@ -1148,26 +1230,31 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
 
   Widget _buildTileWithoutThumb(bool active, double size) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    final Color bgColor = active
+        ? (isDark
+            ? Color.lerp(AppColors.darkSurface, AppColors.primary, 0.18)!
+            : Color.lerp(Colors.white, AppColors.primary, 0.10)!)
+        : (isDark ? AppColors.darkSurface : AppColors.surface);
+
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 220),
-      curve: Curves.easeOut,
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeOutCubic,
       decoration: BoxDecoration(
-        color: active
-            ? AppColors.primary.withValues(alpha: 0.07)
-            : (isDark ? AppColors.darkSurface : AppColors.surface),
+        color: bgColor,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: active
-              ? AppColors.primary.withValues(alpha: 0.45)
+              ? AppColors.primary.withValues(alpha: 0.55)
               : (isDark ? AppColors.darkDivider : AppColors.divider),
-          width: active ? 1.2 : 0.6,
+          width: active ? 1.4 : 0.6,
         ),
         boxShadow: active
             ? [
                 BoxShadow(
-                  color: AppColors.primary.withValues(alpha: 0.12),
-                  blurRadius: 12,
-                  offset: const Offset(0, 4),
+                  color: AppColors.primary.withValues(alpha: 0.22),
+                  blurRadius: 16,
+                  offset: const Offset(0, 5),
                 )
               ]
             : [

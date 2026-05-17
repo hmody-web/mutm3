@@ -131,9 +131,7 @@ extension AppTheme on BuildContext {
   Color get appRedLight => isDark ? AppColors.darkRedLight : AppColors.redLight;
 }
 
-// ─────────────────────────────────────────────
-//  SINGLETONS
-// ─────────────────────────────────────────────
+
 final YoutubeExplode yt = YoutubeExplode();
 
 final Dio dio = Dio(
@@ -160,9 +158,6 @@ class CachedVideo {
   const CachedVideo({required this.streamInfo, required this.url});
 }
 
-// ─────────────────────────────────────────────
-//  MANIFEST CACHE
-// ─────────────────────────────────────────────
 class _ManifestCache {
   static final Map<String, StreamManifest> _cache = {};
   static final Map<String, Future<StreamManifest>> _pending = {};
@@ -226,15 +221,12 @@ class _ManifestCache {
   }
 }
 
-// ─────────────────────────────────────────────
-//  MEDIA ITEM MODEL — يمثل ملف محلي واحد
-// ─────────────────────────────────────────────
+
 class LocalMediaItem {
   final String path;
   final String title;
   final bool isVideo;
-  final String? thumbnailUrl; // YouTube thumbnail URL مخزّن مع الملف
-
+  final String? thumbnailUrl;
   const LocalMediaItem({
     required this.path,
     required this.title,
@@ -249,21 +241,16 @@ class LocalMediaItem {
   }
 }
 
-// ─────────────────────────────────────────────
-//  THUMBNAIL CACHE MANAGER
-//  يدعم: YouTube URLs + فيديو محلي + Album Art
-// ─────────────────────────────────────────────
+
 class ThumbnailManager {
   static final Map<String, String?> _memCache = {};
 
-  // ── مسار ملف الصورة المخزّنة بجانب الملف الأصلي ──
   static String _thumbPath(String mediaPath) {
     final name = mediaPath.split('/').last.replaceAll(RegExp(r'\.\w+$'), '');
     final dir = mediaPath.substring(0, mediaPath.lastIndexOf('/'));
     return '$dir/.thumb_$name.jpg';
   }
 
-  /// يُرجع مسار صورة مصغرة جاهزة (من الكاش أو من الملف) أو null
   static Future<String?> getLocalThumbnail(String mediaPath) async {
     if (_memCache.containsKey(mediaPath)) return _memCache[mediaPath];
     final tp = _thumbPath(mediaPath);
@@ -3157,7 +3144,9 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
       },
       child: Scaffold(
       backgroundColor: bgColor,
-      body: SafeArea(
+      body: Stack(
+        children: [
+          SafeArea(
         child: Column(
           children: [
             // ── Top Bar ──
@@ -3229,10 +3218,7 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                       ],
                     ),
                     child: AspectRatio(
-                        aspectRatio: (_videoInitialized && _videoCtrl != null &&
-                                _videoCtrl!.value.aspectRatio > 0)
-                            ? _videoCtrl!.value.aspectRatio
-                            : 16 / 9,
+                        aspectRatio: 16 / 9,
                         child: Container(
                           color: Colors.black,
                           child: _videoInitialized && _videoCtrl != null
@@ -3668,6 +3654,12 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
           ],
         ),
       ),
+          // ── Idle Overlay فوق كل شيء ──
+          const Positioned.fill(
+            child: _IdleOverlay(),
+          ),
+        ],
+      ),
     ),
     );
   }
@@ -3834,6 +3826,422 @@ class _MarqueeTitleState extends State<_MarqueeTitle>
                 fontWeight: FontWeight.w700,
               ),
             ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  IDLE OVERLAY — يظهر بعد 10 ثواني من عدم التفاعل
+// ═══════════════════════════════════════════════════════════
+class _IdleOverlay extends StatefulWidget {
+  const _IdleOverlay();
+
+  @override
+  State<_IdleOverlay> createState() => _IdleOverlayState();
+}
+
+class _IdleOverlayState extends State<_IdleOverlay>
+    with SingleTickerProviderStateMixin {
+  bool _visible = false;
+  Timer? _idleTimer;
+  late AnimationController _fadeCtrl;
+  late Animation<double> _fadeAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _fadeCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    );
+    _fadeAnim = CurvedAnimation(parent: _fadeCtrl, curve: Curves.easeInOut);
+    _resetTimer();
+  }
+
+  @override
+  void dispose() {
+    _idleTimer?.cancel();
+    _fadeCtrl.dispose();
+    super.dispose();
+  }
+
+  void _resetTimer() {
+    _idleTimer?.cancel();
+    // إذا كان الـ overlay ظاهراً → أخفه فوراً
+    if (_visible) _hide();
+    _idleTimer = Timer(const Duration(seconds: 10), () {
+      if (mounted) _show();
+    });
+  }
+
+  void _show() {
+    setState(() => _visible = true);
+    _fadeCtrl.forward();
+  }
+
+  void _hide() {
+    _fadeCtrl.reverse().then((_) {
+      if (mounted) setState(() => _visible = false);
+    });
+  }
+
+  void _onTap() {
+    _resetTimer();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTap: _onTap,
+      onPanDown: (_) => _onTap(),
+      child: Stack(
+        children: [
+          // منطقة شفافة تلتقط اللمس دائماً
+          Positioned.fill(child: const SizedBox.expand()),
+
+          // الـ Overlay نفسه
+          if (_visible)
+            Positioned.fill(
+              child: IgnorePointer(
+                ignoring: false,
+                child: FadeTransition(
+                  opacity: _fadeAnim,
+                  child: _IdleOverlayContent(),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────
+//  محتوى الـ Idle Overlay
+// ─────────────────────────────────────────────
+class _IdleOverlayContent extends StatefulWidget {
+  @override
+  State<_IdleOverlayContent> createState() => _IdleOverlayContentState();
+}
+
+class _IdleOverlayContentState extends State<_IdleOverlayContent>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _titleScrollCtrl;
+  late ScrollController _scrollCtrl;
+  Timer? _scrollTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _titleScrollCtrl = AnimationController(vsync: this);
+    _scrollCtrl = ScrollController();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startTitleScroll());
+  }
+
+  @override
+  void dispose() {
+    _scrollTimer?.cancel();
+    _titleScrollCtrl.dispose();
+    _scrollCtrl.dispose();
+    super.dispose();
+  }
+
+  void _startTitleScroll() {
+    if (!mounted) return;
+    final item = audioService.currentItem;
+    if (item == null) return;
+    final title = item.title.replaceAll(RegExp(r'\.\w+$'), '');
+    if (title.length <= 22) return;
+
+    _scrollTimer = Timer(const Duration(seconds: 1), () {
+      if (!mounted) return;
+      _scrollLoop();
+    });
+  }
+
+  void _scrollLoop() {
+    if (!mounted || !_scrollCtrl.hasClients) return;
+    final maxExtent = _scrollCtrl.position.maxScrollExtent;
+    if (maxExtent <= 0) return;
+    final duration = Duration(milliseconds: (maxExtent / 35 * 1000).toInt());
+    _scrollCtrl
+        .animateTo(maxExtent, duration: duration, curve: Curves.linear)
+        .then((_) {
+          if (!mounted || !_scrollCtrl.hasClients) return;
+          _scrollCtrl.jumpTo(0);
+          _scrollTimer = Timer(const Duration(milliseconds: 800), () {
+            if (mounted) _scrollLoop();
+          });
+        })
+        .catchError((_) {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final item = audioService.currentItem;
+    final title = item?.title.replaceAll(RegExp(r'\.\w+$'), '') ?? '';
+
+    return LayoutBuilder(
+      builder: (ctx, constraints) {
+        final totalH = constraints.maxHeight;
+        // ارتفاع الـ overlay يبدأ من الأسفل وصولاً لـ 52% من الشاشة
+        const overlayFraction = 0.52;
+
+        return Stack(
+          children: [
+            // ── الخلفية المتدرجة ──
+            Positioned(
+              bottom: 0,
+              left: 0,
+              right: 0,
+              height: totalH * overlayFraction,
+              child: Container(
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.bottomCenter,
+                    end: Alignment.topCenter,
+                    colors: [
+                      Color(0xFF9B0000),   // أحمر غامق قوي في الأسفل
+                      Color(0xCCE8272A),   // أحمر متوسط
+                      Color(0x88C0181B),   // أحمر فاتح
+                      Color(0x44A01015),   // شبه شفاف
+                      Colors.transparent, // شفاف تماماً في الأعلى
+                    ],
+                    stops: [0.0, 0.28, 0.55, 0.78, 1.0],
+                  ),
+                ),
+              ),
+            ),
+
+            // ── المحتوى في المنتصف-أسفل ──
+            Positioned(
+              bottom: totalH * 0.08,
+              left: 0,
+              right: 0,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // ── صورة تموج الصوت ──
+                  SizedBox(
+                    height: 72,
+                    child: Image.asset(
+                      'assets/images/sound.gif',
+                      height: 72,
+                      fit: BoxFit.fitHeight,
+                      errorBuilder: (_, __, ___) => _FallbackSoundWave(),
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  // ── عنوان الأغنية (Marquee إذا طويل) ──
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 32),
+                    child: SizedBox(
+                      height: 36,
+                      child: title.length > 22
+                          ? ShaderMask(
+                              shaderCallback: (bounds) => const LinearGradient(
+                                colors: [Colors.transparent, Colors.white, Colors.white, Colors.transparent],
+                                stops: [0.0, 0.06, 0.88, 1.0],
+                              ).createShader(bounds),
+                              blendMode: BlendMode.dstIn,
+                              child: SingleChildScrollView(
+                                controller: _scrollCtrl,
+                                scrollDirection: Axis.horizontal,
+                                physics: const NeverScrollableScrollPhysics(),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      title,
+                                      maxLines: 1,
+                                      softWrap: false,
+                                      textDirection: TextDirection.rtl,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 26,
+                                        fontFamily: 'Tajawal',
+                                        fontWeight: FontWeight.w800,
+                                        shadows: [
+                                          Shadow(color: Colors.black54, blurRadius: 8),
+                                        ],
+                                      ),
+                                    ),
+                                    const SizedBox(width: 60),
+                                    Text(
+                                      title,
+                                      maxLines: 1,
+                                      softWrap: false,
+                                      textDirection: TextDirection.rtl,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 26,
+                                        fontFamily: 'Tajawal',
+                                        fontWeight: FontWeight.w800,
+                                        shadows: [
+                                          Shadow(color: Colors.black54, blurRadius: 8),
+                                        ],
+                                      ),
+                                    ),
+                                    const SizedBox(width: 60),
+                                  ],
+                                ),
+                              ),
+                            )
+                          : Text(
+                              title,
+                              maxLines: 1,
+                              textAlign: TextAlign.center,
+                              textDirection: TextDirection.rtl,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 26,
+                                fontFamily: 'Tajawal',
+                                fontWeight: FontWeight.w800,
+                                shadows: [
+                                  Shadow(color: Colors.black54, blurRadius: 8),
+                                ],
+                              ),
+                            ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  // ── لوجو التطبيق + دندن ──
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Container(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(10),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.35),
+                              blurRadius: 10,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(10),
+                          child: Image.asset(
+                            'assets/images/logo.png',
+                            width: 38,
+                            height: 38,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => Container(
+                              width: 38, height: 38,
+                              decoration: BoxDecoration(
+                                gradient: const LinearGradient(
+                                  colors: [AppColors.primary, AppColors.primaryDark],
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                ),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: const Icon(CupertinoIcons.music_note_2,
+                                  color: Colors.white, size: 20),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      const Text(
+                        'دندن',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 22,
+                          fontFamily: 'Tajawal',
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 1.5,
+                          shadows: [
+                            Shadow(color: Colors.black45, blurRadius: 6),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+// ─────────────────────────────────────────────
+//  Fallback Sound Wave — إذا لم يوجد sound.gif
+// ─────────────────────────────────────────────
+class _FallbackSoundWave extends StatefulWidget {
+  @override
+  State<_FallbackSoundWave> createState() => _FallbackSoundWaveState();
+}
+
+class _FallbackSoundWaveState extends State<_FallbackSoundWave>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+  late Animation<double> _anim;
+
+  static const int _barCount = 18;
+  static const List<double> _baseHeights = [
+    0.4, 0.7, 0.9, 0.6, 1.0, 0.75, 0.5, 0.85, 0.65,
+    0.95, 0.55, 0.8, 0.45, 0.7, 1.0, 0.6, 0.85, 0.5,
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat(reverse: true);
+    _anim = CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _anim,
+      builder: (_, __) {
+        return SizedBox(
+          width: 160,
+          height: 72,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: List.generate(_barCount, (i) {
+              final phase = (i / _barCount * 3.14159);
+              final animFactor = 0.5 + 0.5 * (0.5 + 0.5 * _anim.value) *
+                  (1 + (i % 3 == 0 ? 0.2 : 0));
+              final h = 10.0 + (_baseHeights[i] * 50 * animFactor *
+                  (0.6 + 0.4 * (1 - (phase / 3.14159))));
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 2),
+                child: AnimatedContainer(
+                  duration: Duration(milliseconds: 150 + (i * 20) % 200),
+                  width: 5,
+                  height: h.clamp(6.0, 66.0),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.85),
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                ),
+              );
+            }),
+          ),
+        );
+      },
     );
   }
 }

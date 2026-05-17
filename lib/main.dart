@@ -3925,12 +3925,19 @@ class _IdleOverlayState extends State<_IdleOverlay>
   void _show() {
     setState(() => _visible = true);
     _fadeCtrl.forward();
+    // إخفاء شريط الحالة والتنقل → وضع ملء الشاشة
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   }
 
   void _hide() {
     _fadeCtrl.reverse().then((_) {
       if (mounted) setState(() => _visible = false);
     });
+    // استعادة شريط الحالة والتنقل
+    SystemChrome.setEnabledSystemUIMode(
+      SystemUiMode.manual,
+      overlays: SystemUiOverlay.values,
+    );
   }
 
   void _onTap() {
@@ -3979,6 +3986,28 @@ return Listener(
 // ─────────────────────────────────────────────
 //  محتوى الـ Idle Overlay
 // ─────────────────────────────────────────────
+
+/// بناء TextSpan مختلط: كلمات عربية → mzghrf، كلمات إنجليزية → zen
+List<TextSpan> _buildMixedTitleSpans(String title) {
+  // نقسم النص على المسافات مع الاحتفاظ بها
+  final parts = title.split(RegExp(r'(?<=\s)|(?=\s)'));
+  return parts.map((part) {
+    final isEnglish = RegExp(r'^[A-Za-z0-9\s\p{P}]+$', unicode: true).hasMatch(part.trim()) && part.trim().isNotEmpty;
+    return TextSpan(
+      text: part,
+      style: TextStyle(
+        fontFamily: isEnglish ? 'zen' : 'mzghrf',
+        fontSize: 28,
+        fontWeight: FontWeight.w100,
+        color: Colors.white,
+        height: 1.3,
+        leadingDistribution: TextLeadingDistribution.even,
+        shadows: const [Shadow(color: Colors.black54, blurRadius: 8)],
+      ),
+    );
+  }).toList();
+}
+
 class _IdleOverlayContent extends StatefulWidget {
   @override
   State<_IdleOverlayContent> createState() => _IdleOverlayContentState();
@@ -4047,6 +4076,8 @@ class _IdleOverlayContentState extends State<_IdleOverlayContent>
 
         return Stack(
           children: [
+            // ── نوتات موسيقية متصاعدة ──
+            const _FloatingMusicNotes(),
             // ── الخلفية المتدرجة ──
 // ── الخلفية المتدرجة + Blur ──
 Positioned(
@@ -4131,80 +4162,33 @@ Positioned(
                                 child: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    Text(
-                                      title,
+                                    RichText(
                                       maxLines: 1,
-                                      softWrap: false,
                                       textDirection: TextDirection.rtl,
-                                      style: const TextStyle(
-  color: Colors.white,
-  fontSize: 28,
-  fontFamily: 'mzghrf',
-  fontWeight: FontWeight.w100,
-  height: 1.3,
-  leadingDistribution: TextLeadingDistribution.even,
-  shadows: [
-    Shadow(color: Colors.black54, blurRadius: 8),
-  ],
-),
+                                      text: TextSpan(children: _buildMixedTitleSpans(title)),
                                     ),
                                     const SizedBox(width: 60),
-                                    Text(
-                                      title,
+                                    RichText(
                                       maxLines: 1,
-                                      softWrap: false,
                                       textDirection: TextDirection.rtl,
-                                      style: const TextStyle(
-  color: Colors.white,
-  fontSize: 28,
-  fontFamily: 'mzghrf',
-  fontWeight: FontWeight.w100,
-  height: 1.3,
-  leadingDistribution: TextLeadingDistribution.even,
-  shadows: [
-    Shadow(color: Colors.black54, blurRadius: 8),
-  ],
-),
+                                      text: TextSpan(children: _buildMixedTitleSpans(title)),
                                     ),
                                     const SizedBox(width: 60),
-                                    Text(
-                                      title,
+                                    RichText(
                                       maxLines: 1,
-                                      softWrap: false,
                                       textDirection: TextDirection.rtl,
-                                      style: const TextStyle(
-  color: Colors.white,
-  fontSize: 28,
-  fontFamily: 'mzghrf',
-  fontWeight: FontWeight.w100,
-  height: 1.3,
-  leadingDistribution: TextLeadingDistribution.even,
-  shadows: [
-    Shadow(color: Colors.black54, blurRadius: 8),
-  ],
-),
+                                      text: TextSpan(children: _buildMixedTitleSpans(title)),
                                     ),
                                     const SizedBox(width: 60),
                                   ],
                                 ),
                               ),
                             )
-                          : Text(
-                              title,
+                          : RichText(
                               maxLines: 1,
                               textAlign: TextAlign.center,
                               textDirection: TextDirection.rtl,
-                              style: const TextStyle(
-  color: Colors.white,
-  fontSize: 28,
-  fontFamily: 'mzghrf',
-  fontWeight: FontWeight.w100,
-  height: 1.3,
-  leadingDistribution: TextLeadingDistribution.even,
-  shadows: [
-    Shadow(color: Colors.black54, blurRadius: 8),
-  ],
-),
+                              text: TextSpan(children: _buildMixedTitleSpans(title)),
                             ),
                     ),
                   ); // نهاية return Padding داخل ValueListenableBuilder
@@ -4217,27 +4201,17 @@ Positioned(
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      ColorFiltered(
-                        colorFilter: const ColorFilter.matrix([
-                          // تحويل كل الألوان إلى أبيض مع الحفاظ على الـ alpha
-                          0, 0, 0, 0, 1,
-                          0, 0, 0, 0, 1,
-                          0, 0, 0, 0, 1,
-                          0, 0, 0, 1, 0,
-                        ]),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(10),
-                          child: Image.asset(
-                            'assets/images/logo.png',
-                            width: 38,
-                            height: 38,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => const Icon(
-                              CupertinoIcons.music_note_2,
-                              color: Colors.white,
-                              size: 32,
-                            ),
-                          ),
+                      Image.asset(
+                        'assets/images/logo.png',
+                        width: 38,
+                        height: 38,
+                        fit: BoxFit.cover,
+                        color: Colors.white,
+                        colorBlendMode: BlendMode.srcIn,
+                        errorBuilder: (_, __, ___) => const Icon(
+                          CupertinoIcons.music_note_2,
+                          color: Colors.white,
+                          size: 32,
                         ),
                       ),
                       const SizedBox(width: 10),
@@ -4521,6 +4495,212 @@ class _FallbackSoundWave extends StatelessWidget {
 }
 
 // ═══════════════════════════════════════════════════════════
+//  _FloatingMusicNotes — نوتات موسيقية تتصاعد بهدوء وجمال
+// ═══════════════════════════════════════════════════════════
+class _FloatingMusicNotes extends StatefulWidget {
+  const _FloatingMusicNotes();
+
+  @override
+  State<_FloatingMusicNotes> createState() => _FloatingMusicNotesState();
+}
+
+class _FloatingMusicNotesState extends State<_FloatingMusicNotes>
+    with TickerProviderStateMixin {
+
+  static const _noteSymbols = ['♩', '♪', '♫', '♬', '𝅘𝅥𝅮', '♩', '♪'];
+  final _rand = math.Random();
+  final List<_MusicNote> _notes = [];
+  late AnimationController _ticker;
+  DateTime? _lastTick;
+  Timer? _spawnTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _ticker = AnimationController(vsync: this, duration: const Duration(hours: 1))
+      ..addListener(_onFrame)
+      ..forward();
+
+    // إضافة نوتة جديدة كل فترة بشكل عشوائي وهادئ
+    _scheduleNextNote();
+  }
+
+  void _scheduleNextNote() {
+    if (!mounted) return;
+    // توليد نوتة كل 1.2 إلى 2.8 ثانية — هادئ وغير مزعج
+    final delay = 1200 + _rand.nextInt(1600);
+    _spawnTimer = Timer(Duration(milliseconds: delay), () {
+      if (!mounted) return;
+      _spawnNote();
+      _scheduleNextNote();
+    });
+  }
+
+  void _spawnNote() {
+    if (!mounted) return;
+    final symbol = _noteSymbols[_rand.nextInt(_noteSymbols.length)];
+    final x = 0.08 + _rand.nextDouble() * 0.84; // موضع أفقي عشوائي بين 8%-92%
+    final size = 18.0 + _rand.nextDouble() * 16.0; // حجم بين 18-34
+    final speed = 0.045 + _rand.nextDouble() * 0.03; // سرعة هادئة جداً
+    final drift = (_rand.nextDouble() - 0.5) * 0.18; // انجراف أفقي طفيف
+    final rotationSpeed = (_rand.nextDouble() - 0.5) * 0.8; // دوران بطيء
+    final delay = _rand.nextDouble() * 0.3;
+
+    setState(() {
+      _notes.add(_MusicNote(
+        symbol: symbol,
+        x: x,
+        y: 1.05, // تبدأ من تحت الشاشة
+        size: size,
+        speed: speed,
+        drift: drift,
+        rotationSpeed: rotationSpeed,
+        opacity: 0.0,
+        rotation: 0.0,
+        birthTime: DateTime.now().millisecondsSinceEpoch / 1000.0 + delay,
+      ));
+    });
+  }
+
+  void _onFrame() {
+    if (!mounted) return;
+    final now = DateTime.now();
+    final dt = _lastTick == null
+        ? 0.016
+        : now.difference(_lastTick!).inMicroseconds / 1000000.0;
+    _lastTick = now;
+
+    final currentTime = now.millisecondsSinceEpoch / 1000.0;
+
+    setState(() {
+      for (int i = _notes.length - 1; i >= 0; i--) {
+        final note = _notes[i];
+        // انتظر حتى يحين وقت ظهور النوتة
+        if (currentTime < note.birthTime) continue;
+
+        final age = currentTime - note.birthTime;
+
+        // حساب الموضع الجديد
+        final newY = note.y - note.speed * dt;
+        final newX = note.x + note.drift * dt * 0.3;
+        final newRotation = note.rotation + note.rotationSpeed * dt;
+
+        // الشفافية: ظهور تدريجي في البداية، اختفاء تدريجي عند نصف الشاشة
+        double newOpacity;
+        if (age < 0.6) {
+          // ظهور خلال 0.6 ثانية
+          newOpacity = (age / 0.6).clamp(0.0, 1.0) * 0.75;
+        } else if (newY <= 0.5) {
+          // اختفاء تدريجي عند الوصول لنصف الشاشة
+          final fadeProgress = ((0.5 - newY) / 0.22).clamp(0.0, 1.0);
+          newOpacity = (1.0 - fadeProgress) * 0.75;
+        } else {
+          newOpacity = 0.75;
+        }
+
+        // إزالة النوتة عند اختفائها تماماً أو خروجها من الشاشة
+        if (newOpacity <= 0.01 || newY < 0.25) {
+          _notes.removeAt(i);
+          continue;
+        }
+
+        _notes[i] = _MusicNote(
+          symbol: note.symbol,
+          x: newX.clamp(0.02, 0.98),
+          y: newY,
+          size: note.size,
+          speed: note.speed,
+          drift: note.drift,
+          rotationSpeed: note.rotationSpeed,
+          opacity: newOpacity,
+          rotation: newRotation,
+          birthTime: note.birthTime,
+        );
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _spawnTimer?.cancel();
+    _ticker.removeListener(_onFrame);
+    _ticker.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: LayoutBuilder(
+          builder: (ctx, constraints) {
+            final w = constraints.maxWidth;
+            final h = constraints.maxHeight;
+            return Stack(
+              children: _notes.map((note) {
+                return Positioned(
+                  left: note.x * w - note.size / 2,
+                  top: note.y * h - note.size / 2,
+                  child: Opacity(
+                    opacity: note.opacity.clamp(0.0, 1.0),
+                    child: Transform.rotate(
+                      angle: note.rotation,
+                      child: Text(
+                        note.symbol,
+                        style: TextStyle(
+                          fontSize: note.size,
+                          color: Colors.white,
+                          shadows: [
+                            Shadow(
+                              color: Colors.white.withOpacity(0.4),
+                              blurRadius: 8,
+                            ),
+                            Shadow(
+                              color: AppColors.primary.withOpacity(0.3),
+                              blurRadius: 14,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              }).toList(),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _MusicNote {
+  final String symbol;
+  final double x;
+  final double y;
+  final double size;
+  final double speed;
+  final double drift;
+  final double rotationSpeed;
+  final double opacity;
+  final double rotation;
+  final double birthTime;
+
+  const _MusicNote({
+    required this.symbol,
+    required this.x,
+    required this.y,
+    required this.size,
+    required this.speed,
+    required this.drift,
+    required this.rotationSpeed,
+    required this.opacity,
+    required this.rotation,
+    required this.birthTime,
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
 //  SEEK RIPPLE ANIMATION — أنيميشن التقديم والتأخير الرهيب
 // ═══════════════════════════════════════════════════════════
 class _SeekRippleAnimation extends StatefulWidget {
@@ -4627,8 +4807,8 @@ class _SeekRippleAnimationState extends State<_SeekRippleAnimation>
                               opacity: progress,
                               child: Icon(
                                 isForward
-                                    ? CupertinoIcons.chevron_right
-                                    : CupertinoIcons.chevron_left,
+                                    ? CupertinoIcons.chevron_left
+                                    : CupertinoIcons.chevron_right,
                                 color: Colors.white,
                                 size: 22 + (i * 4.0),
                               ),

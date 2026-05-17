@@ -53,6 +53,10 @@ flutter:
       fonts:
         - asset: assets/fonts/mzghrf.ttf
 
+        - family: zen
+      fonts:
+        - asset: assets/fonts/zen.ttf
+
 flutter_launcher_icons:
   android: true
   ios: true

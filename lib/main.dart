@@ -3750,7 +3750,15 @@ class _MarqueeTitleState extends State<_MarqueeTitle>
         )
         .then((_) {
           if (!mounted || _loopGen != gen || !_scrollCtrl.hasClients) return;
-          try { _scrollCtrl.jumpTo(_scrollCtrl.offset - oneLoop); } catch (_) { return; }
+
+          try {
+            if (_scrollCtrl.offset >= oneLoop) {
+              _scrollCtrl.jumpTo(_scrollCtrl.offset - oneLoop);
+            }
+          } catch (_) {
+            return;
+          }
+
           _loop(gen);
         })
         .catchError((_) {/* animation cancelled — توقف بهدوء */});
@@ -3892,25 +3900,40 @@ class _IdleOverlayState extends State<_IdleOverlay>
 
 @override
 Widget build(BuildContext context) {
-  return Listener(
-    behavior: HitTestBehavior.translucent,
-    onPointerDown: (_) => _onTap(),
-    onPointerMove: (_) => _onTap(),
-    child: Stack(
-      children: [
-        if (_visible)
-          Positioned.fill(
-            child: IgnorePointer(
-              ignoring: true,
-              child: FadeTransition(
-                opacity: _fadeAnim,
-                child: _IdleOverlayContent(),
-              ),
+return Listener(
+  behavior: HitTestBehavior.translucent,
+
+  onPointerDown: (_) {
+    if (_visible) return;
+    _onTap();
+  },
+
+  onPointerMove: (_) {
+    if (_visible) return;
+    _onTap();
+  },
+
+  child: Stack(
+    children: [
+      if (_visible)
+        Positioned.fill(
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+
+            onTap: () {
+              _hide();
+              _resetTimer();
+            },
+
+            child: FadeTransition(
+              opacity: _fadeAnim,
+              child: _IdleOverlayContent(),
             ),
           ),
-      ],
-    ),
-  );
+        ),
+    ],
+  ),
+);
 }
 }
 
@@ -3993,12 +4016,12 @@ Positioned(
   bottom: 0,
   left: 0,
   right: 0,
-  height: totalH * overlayFraction,
+  height: totalH * 0.58,
   child: ClipRect(
     child: BackdropFilter(
       filter: ImageFilter.blur(
-        sigmaX: 5,
-        sigmaY: 5,
+        sigmaX: 2.2,
+        sigmaY: 2.2,
       ),
       child: Container(
         decoration: const BoxDecoration(
@@ -4006,13 +4029,13 @@ Positioned(
             begin: Alignment.bottomCenter,
             end: Alignment.topCenter,
             colors: [
-              Color(0xCC9B0000),
-              Color(0x99E8272A),
-              Color(0x66C0181B),
-              Color(0x33A01015),
+              Color(0xD0A30000),
+              Color(0x88E8272A),
+              Color(0x40C0181B),
+              Color(0x12A01015),
               Colors.transparent,
             ],
-            stops: [0.0, 0.28, 0.55, 0.78, 1.0],
+            stops: [0.0, 0.32, 0.58, 0.82, 1.0],
           ),
         ),
       ),
@@ -4059,6 +4082,22 @@ Positioned(
                                 child: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
+                                    Text(
+                                      title,
+                                      maxLines: 1,
+                                      softWrap: false,
+                                      textDirection: TextDirection.rtl,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 26,
+                                        fontFamily: 'mzghrf',
+                                        fontWeight: FontWeight.w800,
+                                        shadows: [
+                                          Shadow(color: Colors.black54, blurRadius: 8),
+                                        ],
+                                      ),
+                                    ),
+                                    const SizedBox(width: 60),
                                     Text(
                                       title,
                                       maxLines: 1,

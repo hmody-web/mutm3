@@ -1939,7 +1939,6 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
       width: double.infinity,
       height: double.infinity,
       child: GestureDetector(
-        onTap: _toggleControls,
         behavior: HitTestBehavior.opaque,
         child: Stack(
           fit: StackFit.expand,
@@ -1960,8 +1959,10 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
                 children: [
                   Expanded(
                     child: GestureDetector(
-                      behavior: HitTestBehavior.translucent,
+                      behavior: HitTestBehavior.opaque,
+                      onTap: _toggleControls,
                       onDoubleTap: () {
+                        if (_showControls) setState(() => _showControls = false);
                         final pos = widget.audioPlayer.position;
                         final back = pos - const Duration(seconds: 10);
                         widget.onSeek(back < Duration.zero ? Duration.zero : back);
@@ -1970,14 +1971,16 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
                         _doubleTapHintTimer = Timer(const Duration(milliseconds: 800), () {
                           if (mounted) setState(() => _doubleTapHint = null);
                         });
-                        _resetTimer();
+                        _hideTimer?.cancel();
                       },
                     ),
                   ),
                   Expanded(
                     child: GestureDetector(
-                      behavior: HitTestBehavior.translucent,
+                      behavior: HitTestBehavior.opaque,
+                      onTap: _toggleControls,
                       onDoubleTap: () {
+                        if (_showControls) setState(() => _showControls = false);
                         final pos = widget.audioPlayer.position;
                         widget.onSeek(pos + const Duration(seconds: 10));
                         setState(() => _doubleTapHint = 'forward');
@@ -1985,7 +1988,7 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
                         _doubleTapHintTimer = Timer(const Duration(milliseconds: 800), () {
                           if (mounted) setState(() => _doubleTapHint = null);
                         });
-                        _resetTimer();
+                        _hideTimer?.cancel();
                       },
                     ),
                   ),
@@ -2643,7 +2646,6 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
           children: [
             // ── الفيديو بنسبته الأصلية مع pinch zoom ──
             GestureDetector(
-              onTap: _toggleControls,
               behavior: HitTestBehavior.opaque,
               onScaleStart: (d) => _baseScale = _scale,
               onScaleUpdate: (d) {
@@ -2670,15 +2672,22 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
               ),
             ),
 
-            // ── double tap: يسار=رجوع 10ث، يمين=تقديم 10ث — يعمل دائماً ──
+            // ── double tap: يسار=رجوع 10ث، يمين=تقديم 10ث — يعمل دائماً حتى لو الأزرار ظاهرة ──
+            // ── ضغطة واحدة → إخفاء الأزرار إذا كانت ظاهرة ──
             Positioned.fill(
               child: Row(
                 children: [
                   // نصف الشاشة اليسار → رجوع 10 ثواني
                   Expanded(
                     child: GestureDetector(
-                      behavior: HitTestBehavior.translucent,
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () {
+                        // ضغطة واحدة: إذا الأزرار ظاهرة أخفها، وإلا أظهرها
+                        _toggleControls();
+                      },
                       onDoubleTap: () {
+                        // إخفاء الأزرار فوراً عند الـ double tap
+                        if (_showControls) setState(() => _showControls = false);
                         final pos = widget.audioPlayer.position;
                         final back = pos - const Duration(seconds: 10);
                         widget.onSeek(back < Duration.zero ? Duration.zero : back);
@@ -2687,15 +2696,20 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
                         _doubleTapHintTimer = Timer(const Duration(milliseconds: 900), () {
                           if (mounted) setState(() => _doubleTapHint = null);
                         });
-                        _resetTimer();
+                        _hideTimer?.cancel();
                       },
                     ),
                   ),
                   // نصف الشاشة اليمين → تقديم 10 ثواني
                   Expanded(
                     child: GestureDetector(
-                      behavior: HitTestBehavior.translucent,
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () {
+                        _toggleControls();
+                      },
                       onDoubleTap: () {
+                        // إخفاء الأزرار فوراً عند الـ double tap
+                        if (_showControls) setState(() => _showControls = false);
                         final pos = widget.audioPlayer.position;
                         widget.onSeek(pos + const Duration(seconds: 10));
                         setState(() => _doubleTapHint = 'forward');
@@ -2703,7 +2717,7 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
                         _doubleTapHintTimer = Timer(const Duration(milliseconds: 900), () {
                           if (mounted) setState(() => _doubleTapHint = null);
                         });
-                        _resetTimer();
+                        _hideTimer?.cancel();
                       },
                     ),
                   ),
@@ -3409,11 +3423,18 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            _MarqueeTitle(
-                              key: ValueKey(title),
-                              text: title,
-                              textColor: textColor,
-                              maxCharsBeforeScroll: 27,
+                            Text(
+                              title.length > 27
+                                  ? '${title.substring(0, 27)}...'
+                                  : title,
+                              maxLines: 1,
+                              overflow: TextOverflow.clip,
+                              style: TextStyle(
+                                color: textColor,
+                                fontSize: 20,
+                                fontFamily: 'Tajawal',
+                                fontWeight: FontWeight.w700,
+                              ),
                             ),
                             const SizedBox(height: 3),
                             Row(
@@ -4035,7 +4056,7 @@ Positioned(
   height: totalH -
     ((MediaQuery.of(context).size.width * (9 / 16)) +
     MediaQuery.of(context).padding.top +
-    71),
+    69),
   child: ClipRect(
     child: BackdropFilter(
       filter: ImageFilter.blur(
@@ -4078,11 +4099,24 @@ Positioned(
 
                   const SizedBox(height: 16),
 
-                  // ── عنوان الأغنية (Marquee إذا طويل) ──
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 32),
+                  // ── عنوان الأغنية — يتحدث فور تغيير الأغنية ──
+                  ValueListenableBuilder<int>(
+                    valueListenable: audioService.currentIndex,
+                    builder: (_, __, ___) {
+                      final item = audioService.currentItem;
+                      final title = item?.title.replaceAll(RegExp(r'\.\w+$'), '') ?? '';
+                      // أعد تشغيل الـ scroll من البداية عند كل أغنية جديدة
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (_scrollCtrl.hasClients) {
+                          _scrollCtrl.jumpTo(0);
+                        }
+                        _scrollTimer?.cancel();
+                        _startTitleScroll();
+                      });
+                      return Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 4),
                     child: SizedBox(
-                      height: 36,
+                      height: 54,
                       child: title.length > 22
                           ? ShaderMask(
                               shaderCallback: (bounds) => const LinearGradient(
@@ -4107,7 +4141,7 @@ Positioned(
   fontSize: 28,
   fontFamily: 'mzghrf',
   fontWeight: FontWeight.w100,
-  height: 2,
+  height: 1.3,
   leadingDistribution: TextLeadingDistribution.even,
   shadows: [
     Shadow(color: Colors.black54, blurRadius: 8),
@@ -4125,7 +4159,7 @@ Positioned(
   fontSize: 28,
   fontFamily: 'mzghrf',
   fontWeight: FontWeight.w100,
-  height: 2,
+  height: 1.3,
   leadingDistribution: TextLeadingDistribution.even,
   shadows: [
     Shadow(color: Colors.black54, blurRadius: 8),
@@ -4143,7 +4177,7 @@ Positioned(
   fontSize: 28,
   fontFamily: 'mzghrf',
   fontWeight: FontWeight.w100,
-  height: 2,
+  height: 1.3,
   leadingDistribution: TextLeadingDistribution.even,
   shadows: [
     Shadow(color: Colors.black54, blurRadius: 8),
@@ -4165,7 +4199,7 @@ Positioned(
   fontSize: 28,
   fontFamily: 'mzghrf',
   fontWeight: FontWeight.w100,
-  height: 2,
+  height: 1.3,
   leadingDistribution: TextLeadingDistribution.even,
   shadows: [
     Shadow(color: Colors.black54, blurRadius: 8),
@@ -4173,25 +4207,24 @@ Positioned(
 ),
                             ),
                     ),
-                  ),
+                  ); // نهاية return Padding داخل ValueListenableBuilder
+                    },
+                  ), // نهاية ValueListenableBuilder
 
                   const SizedBox(height: 20),
 
-                  // ── لوجو التطبيق + دندن ──
+                  // ── لوجو التطبيق + دندن (أبيض، بدون ظل) ──
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Container(
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(10),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.35),
-                              blurRadius: 10,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
-                        ),
+                      ColorFiltered(
+                        colorFilter: const ColorFilter.matrix([
+                          // تحويل كل الألوان إلى أبيض مع الحفاظ على الـ alpha
+                          0, 0, 0, 0, 1,
+                          0, 0, 0, 0, 1,
+                          0, 0, 0, 0, 1,
+                          0, 0, 0, 1, 0,
+                        ]),
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(10),
                           child: Image.asset(
@@ -4199,18 +4232,10 @@ Positioned(
                             width: 38,
                             height: 38,
                             fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => Container(
-                              width: 38, height: 38,
-                              decoration: BoxDecoration(
-                                gradient: const LinearGradient(
-                                  colors: [AppColors.primary, AppColors.primaryDark],
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
-                                ),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: const Icon(CupertinoIcons.music_note_2,
-                                  color: Colors.white, size: 20),
+                            errorBuilder: (_, __, ___) => const Icon(
+                              CupertinoIcons.music_note_2,
+                              color: Colors.white,
+                              size: 32,
                             ),
                           ),
                         ),
@@ -4224,9 +4249,7 @@ Positioned(
                           fontFamily: 'Tajawal',
                           fontWeight: FontWeight.w700,
                           letterSpacing: 1.5,
-                          shadows: [
-                            Shadow(color: Colors.black45, blurRadius: 6),
-                          ],
+                          // بدون shadows
                         ),
                       ),
                     ],

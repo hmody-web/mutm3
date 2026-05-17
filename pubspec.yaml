@@ -53,7 +53,7 @@ flutter:
       fonts:
         - asset: assets/fonts/mzghrf.ttf
 
-        - family: zen
+    - family: zen
       fonts:
         - asset: assets/fonts/zen.ttf
 

@@ -84,10 +84,10 @@ class _ListenPageState extends State<ListenPage> with TickerProviderStateMixin {
 
   // ── وضع التحديد ──
   bool _selectionMode = false;
-  final Set<String> _selectedPaths = {};
 
-  // ── وضع العرض: قائمة أو شبكة ──
-  bool _isGridView = false;
+  // ── نوع العرض ──
+  bool _gridView = false;
+  final Set<String> _selectedPaths = {};
 
   // ── أنيميشن وضع التحديد ──
   late AnimationController _selectionBarCtrl;
@@ -2189,18 +2189,17 @@ class _ListenPageState extends State<ListenPage> with TickerProviderStateMixin {
                 ),
               ),
             ),
-            const Spacer(),
+            const SizedBox(width: 10),
 
-            // ── زر تبديل طريقة العرض (شبكة / قائمة) ──
             if (!_selectionMode)
               GestureDetector(
-                onTap: () => setState(() => _isGridView = !_isGridView),
+                onTap: () => setState(() => _gridView = !_gridView),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 280),
                   curve: Curves.easeOutCubic,
                   padding: const EdgeInsets.all(7),
                   decoration: BoxDecoration(
-                    gradient: _isGridView
+                    gradient: _gridView
                         ? LinearGradient(
                             colors: [
                               AppColors.primary,
@@ -2210,21 +2209,21 @@ class _ListenPageState extends State<ListenPage> with TickerProviderStateMixin {
                             end: Alignment.bottomRight,
                           )
                         : null,
-                    color: _isGridView
+                    color: _gridView
                         ? null
                         : (isDark
                             ? AppColors.darkSurface
                             : AppColors.surface),
                     borderRadius: BorderRadius.circular(10),
                     border: Border.all(
-                      color: _isGridView
+                      color: _gridView
                           ? Colors.transparent
                           : (isDark
                               ? AppColors.darkDivider
                               : AppColors.divider),
                       width: 0.8,
                     ),
-                    boxShadow: _isGridView
+                    boxShadow: _gridView
                         ? [
                             BoxShadow(
                               color: AppColors.primary.withValues(alpha: 0.35),
@@ -2241,18 +2240,19 @@ class _ListenPageState extends State<ListenPage> with TickerProviderStateMixin {
                       child: child,
                     ),
                     child: Icon(
-                      _isGridView
+                      _gridView
                           ? CupertinoIcons.square_grid_2x2_fill
                           : CupertinoIcons.square_grid_2x2,
-                      key: ValueKey(_isGridView),
+                      key: ValueKey(_gridView),
                       size: 17,
-                      color: _isGridView ? Colors.white : context.appTextSec,
+                      color:
+                          _gridView ? Colors.white : context.appTextSec,
                     ),
                   ),
                 ),
               ),
-
             if (_selectionMode) ...[
+              const Spacer(),
               GestureDetector(
                 onTap: () {
                   setState(() {
@@ -2403,439 +2403,70 @@ class _ListenPageState extends State<ListenPage> with TickerProviderStateMixin {
       );
     }
 
-    return _isGridView && !_selectionMode
-        ? SliverPadding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            sliver: SliverGrid(
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
-                childAspectRatio: 0.78,
-              ),
-              delegate: SliverChildBuilderDelegate(
-                (context, index) {
-                  final item = displayed[index];
-                  return _GridMediaCard(
-                    key: ValueKey('grid_${item.path}'),
-                    item: item,
-                    index: _localItems.indexOf(item),
-                    allItems: _localItems,
-                    onDelete: () => _deleteItem(item),
-                    onSave: () => _saveToGallery(item),
+    if (_gridView && !_selectionMode) {
+      return SliverPadding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
+        sliver: SliverGrid(
+          delegate: SliverChildBuilderDelegate(
+            (context, index) {
+              final item = displayed[index];
+
+              return _ModernMusicCard(
+                item: item,
+                onTap: () async {
+                  await audioService.playAtIndex(
+                    _localItems.indexOf(item),
                   );
                 },
-                childCount: displayed.length,
-              ),
-            ),
-          )
-        : SliverPadding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            sliver: SliverList(
-              delegate: SliverChildBuilderDelegate(
-                (context, index) {
-                  final item = displayed[index];
-                  final isSelected = _selectedPaths.contains(item.path);
+              );
+            },
+            childCount: displayed.length,
+          ),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
+            mainAxisSpacing: 16,
+            crossAxisSpacing: 16,
+            childAspectRatio: 0.70,
+          ),
+        ),
+      );
+    }
 
-                  if (_selectionMode) {
-                    return _SelectableMediaTile(
-                      key: ValueKey('sel_${item.path}'),
-                      item: item,
-                      isSelected: isSelected,
-                      onToggle: () {
-                        setState(() {
-                          if (isSelected) {
-                            _selectedPaths.remove(item.path);
-                          } else {
-                            _selectedPaths.add(item.path);
-                          }
-                        });
-                      },
-                    );
-                  }
+    return SliverPadding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      sliver: SliverList(
+        delegate: SliverChildBuilderDelegate(
+          (context, index) {
+            final item = displayed[index];
+            final isSelected = _selectedPaths.contains(item.path);
 
-                  return _SwipeableMediaTile(
-                    key: ValueKey(item.path),
-                    item: item,
-                    index: _localItems.indexOf(item),
-                    allItems: _localItems,
-                    onDelete: () => _deleteItem(item),
-                    onSave: () => _saveToGallery(item),
-                  );
+            if (_selectionMode) {
+              return _SelectableMediaTile(
+                key: ValueKey('sel_${item.path}'),
+                item: item,
+                isSelected: isSelected,
+                onToggle: () {
+                  setState(() {
+                    if (isSelected) {
+                      _selectedPaths.remove(item.path);
+                    } else {
+                      _selectedPaths.add(item.path);
+                    }
+                  });
                 },
-                childCount: displayed.length,
-              ),
-            ),
-          );
-  }
-}
+              );
+            }
 
-// ═══════════════════════════════════════════════════════════
-//  GRID CARD — كارت الأغنية في وضع الشبكة
-// ═══════════════════════════════════════════════════════════
-class _GridMediaCard extends StatefulWidget {
-  final LocalMediaItem item;
-  final int index;
-  final List<LocalMediaItem> allItems;
-  final VoidCallback onDelete;
-  final VoidCallback onSave;
-
-  const _GridMediaCard({
-    super.key,
-    required this.item,
-    required this.index,
-    required this.allItems,
-    required this.onDelete,
-    required this.onSave,
-  });
-
-  @override
-  State<_GridMediaCard> createState() => _GridMediaCardState();
-}
-
-class _GridMediaCardState extends State<_GridMediaCard>
-    with SingleTickerProviderStateMixin {
-  String? _thumbPath;
-  late AnimationController _pressCtrl;
-  late Animation<double> _pressAnim;
-
-  @override
-  void initState() {
-    super.initState();
-    _pressCtrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 120));
-    _pressAnim = Tween<double>(begin: 1.0, end: 0.94).animate(
-        CurvedAnimation(parent: _pressCtrl, curve: Curves.easeInOut));
-    _loadThumb();
-    audioService.currentIndex.addListener(_onIndexChange);
-  }
-
-  void _onIndexChange() {
-    if (mounted) setState(() {});
-  }
-
-  @override
-  void dispose() {
-    audioService.currentIndex.removeListener(_onIndexChange);
-    _pressCtrl.dispose();
-    super.dispose();
-  }
-
-  Future<void> _loadThumb() async {
-    final path = await ThumbnailManager.getLocalThumbnail(widget.item.path);
-    if (path != null && mounted) setState(() => _thumbPath = path);
-  }
-
-  void _onTap() {
-    audioService.playList(widget.allItems, widget.index);
-  }
-
-  void _showOptions() {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    showCupertinoModalPopup(
-      context: context,
-      builder: (_) => CupertinoActionSheet(
-        title: Text(
-          widget.item.title.replaceAll(RegExp(r'\.\w+$'), ''),
-          style: const TextStyle(fontFamily: 'Tajawal'),
-        ),
-        actions: [
-          CupertinoActionSheetAction(
-            onPressed: () {
-              Navigator.pop(context);
-              widget.onSave();
-            },
-            child: const Text('حفظ في الجهاز',
-                style: TextStyle(fontFamily: 'Tajawal')),
-          ),
-          CupertinoActionSheetAction(
-            isDestructiveAction: true,
-            onPressed: () {
-              Navigator.pop(context);
-              widget.onDelete();
-            },
-            child: const Text('حذف', style: TextStyle(fontFamily: 'Tajawal')),
-          ),
-        ],
-        cancelButton: CupertinoActionSheetAction(
-          onPressed: () => Navigator.pop(context),
-          child:
-              const Text('إلغاء', style: TextStyle(fontFamily: 'Tajawal')),
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final currentPath = audioService.currentItem?.path;
-    final isActive = currentPath == widget.item.path;
-
-    return GestureDetector(
-      onTapDown: (_) => _pressCtrl.forward(),
-      onTapUp: (_) async {
-        await _pressCtrl.reverse();
-        _onTap();
-      },
-      onTapCancel: () => _pressCtrl.reverse(),
-      onLongPress: _showOptions,
-      child: AnimatedBuilder(
-        animation: _pressAnim,
-        builder: (_, child) =>
-            Transform.scale(scale: _pressAnim.value, child: child),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOutCubic,
-          decoration: BoxDecoration(
-            color: isActive
-                ? (isDark
-                    ? Color.lerp(AppColors.darkSurface, AppColors.primary, 0.15)
-                    : Color.lerp(Colors.white, AppColors.primary, 0.07))
-                : (isDark ? AppColors.darkSurface : Colors.white),
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(
-              color: isActive
-                  ? AppColors.primary.withValues(alpha: 0.6)
-                  : (isDark
-                      ? AppColors.darkDivider
-                      : const Color(0xFFEEEEEE)),
-              width: isActive ? 1.5 : 0.8,
-            ),
-            boxShadow: isActive
-                ? [
-                    BoxShadow(
-                      color: AppColors.primary.withValues(alpha: 0.25),
-                      blurRadius: 20,
-                      offset: const Offset(0, 6),
-                    ),
-                  ]
-                : [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: isDark ? 0.22 : 0.06),
-                      blurRadius: 12,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // ── الصورة المصغرة الكبيرة ──
-              Expanded(
-                flex: 5,
-                child: Stack(
-                  children: [
-                    // خلفية الصورة
-                    ClipRRect(
-                      borderRadius: const BorderRadius.vertical(
-                          top: Radius.circular(17)),
-                      child: _thumbPath != null
-                          ? Image.file(
-                              File(_thumbPath!),
-                              width: double.infinity,
-                              height: double.infinity,
-                              fit: BoxFit.cover,
-                            )
-                          : Container(
-                              width: double.infinity,
-                              height: double.infinity,
-                              decoration: BoxDecoration(
-                                gradient: LinearGradient(
-                                  colors: widget.item.isVideo
-                                      ? [
-                                          const Color(0xFF0D1B2A),
-                                          const Color(0xFF1B2838),
-                                        ]
-                                      : isActive
-                                          ? [
-                                              AppColors.primary,
-                                              AppColors.primaryDark,
-                                            ]
-                                          : [
-                                              const Color(0xFFFFE4E4),
-                                              const Color(0xFFFFCDD2),
-                                            ],
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
-                                ),
-                              ),
-                              child: Icon(
-                                widget.item.isVideo
-                                    ? CupertinoIcons.play_rectangle_fill
-                                    : CupertinoIcons.music_note,
-                                size: 36,
-                                color: widget.item.isVideo
-                                    ? Colors.white54
-                                    : isActive
-                                        ? Colors.white
-                                        : AppColors.primary,
-                              ),
-                            ),
-                    ),
-                    // تدرج سفلي لجمالية بصرية
-                    Positioned(
-                      bottom: 0,
-                      left: 0,
-                      right: 0,
-                      child: Container(
-                        height: 40,
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [
-                              Colors.transparent,
-                              Colors.black.withValues(alpha: 0.35),
-                            ],
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                          ),
-                        ),
-                      ),
-                    ),
-                    // ── شارة نوع الميديا ──
-                    Positioned(
-                      top: 8,
-                      right: 8,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 7, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.5),
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.15),
-                            width: 0.5,
-                          ),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              widget.item.isVideo
-                                  ? CupertinoIcons.play_rectangle
-                                  : CupertinoIcons.music_note,
-                              color: Colors.white,
-                              size: 9,
-                            ),
-                            const SizedBox(width: 3),
-                            Text(
-                              widget.item.isVideo ? 'فيديو' : 'صوت',
-                              style: const TextStyle(
-                                fontFamily: 'Tajawal',
-                                fontSize: 9,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    // ── زر تشغيل/إيقاف إذا كانت نشطة ──
-                    if (isActive)
-                      Positioned(
-                        bottom: 8,
-                        left: 8,
-                        child: StreamBuilder<bool>(
-                          stream: audioService.player.playingStream,
-                          builder: (_, snap) {
-                            final playing = snap.data ?? false;
-                            return GestureDetector(
-                              onTap: () {
-                                if (playing) {
-                                  audioService.pauseByUser();
-                                } else {
-                                  audioService.playByUser();
-                                }
-                              },
-                              child: Container(
-                                width: 30,
-                                height: 30,
-                                decoration: BoxDecoration(
-                                  color: AppColors.primary,
-                                  shape: BoxShape.circle,
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: AppColors.primary
-                                          .withValues(alpha: 0.5),
-                                      blurRadius: 10,
-                                      offset: const Offset(0, 3),
-                                    ),
-                                  ],
-                                ),
-                                child: Icon(
-                                  playing
-                                      ? CupertinoIcons.pause_fill
-                                      : CupertinoIcons.play_fill,
-                                  color: Colors.white,
-                                  size: 13,
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              // ── عنوان الأغنية ──
-              Expanded(
-                flex: 2,
-                child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        widget.item.title.replaceAll(RegExp(r'\.\w+$'), ''),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontFamily: 'Tajawal',
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                          height: 1.3,
-                          color: isActive
-                              ? AppColors.primary
-                              : (isDark
-                                  ? AppColors.darkText
-                                  : AppColors.textPrimary),
-                        ),
-                      ),
-                      if (isActive) ...[
-                        const SizedBox(height: 3),
-                        Row(
-                          children: [
-                            Container(
-                              width: 6,
-                              height: 6,
-                              decoration: BoxDecoration(
-                                color: AppColors.primary,
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              'يُشغَّل الآن',
-                              style: TextStyle(
-                                fontFamily: 'Tajawal',
-                                fontSize: 10,
-                                fontWeight: FontWeight.w600,
-                                color: AppColors.primary
-                                    .withValues(alpha: 0.8),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
+            return _SwipeableMediaTile(
+              key: ValueKey(item.path),
+              item: item,
+              index: _localItems.indexOf(item),
+              allItems: _localItems,
+              onDelete: () => _deleteItem(item),
+              onSave: () => _saveToGallery(item),
+            );
+          },
+          childCount: displayed.length,
         ),
       ),
     );
@@ -3049,7 +2680,6 @@ class FolderDetailPage extends StatefulWidget {
 
 class _FolderDetailPageState extends State<FolderDetailPage> {
   late List<LocalMediaItem> _items;
-  bool _isGridView = false;
 
   @override
   void initState() {
@@ -3211,43 +2841,6 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
                                     color: Colors.white, size: 18),
                               ),
                             ),
-                            const Spacer(),
-                            // ── زر تبديل طريقة العرض في المجلد ──
-                            GestureDetector(
-                              onTap: () =>
-                                  setState(() => _isGridView = !_isGridView),
-                              child: AnimatedContainer(
-                                duration: const Duration(milliseconds: 280),
-                                curve: Curves.easeOutCubic,
-                                padding: const EdgeInsets.all(7),
-                                decoration: BoxDecoration(
-                                  color: _isGridView
-                                      ? Colors.white.withValues(alpha: 0.30)
-                                      : Colors.white.withValues(alpha: 0.15),
-                                  borderRadius: BorderRadius.circular(10),
-                                  border: Border.all(
-                                    color: Colors.white.withValues(alpha: 0.30),
-                                    width: 0.8,
-                                  ),
-                                ),
-                                child: AnimatedSwitcher(
-                                  duration: const Duration(milliseconds: 200),
-                                  transitionBuilder: (child, anim) =>
-                                      ScaleTransition(
-                                    scale: anim,
-                                    child: child,
-                                  ),
-                                  child: Icon(
-                                    _isGridView
-                                        ? CupertinoIcons.square_grid_2x2_fill
-                                        : CupertinoIcons.square_grid_2x2,
-                                    key: ValueKey(_isGridView),
-                                    size: 17,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                              ),
-                            ),
                           ],
                         ),
                       ),
@@ -3308,57 +2901,28 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
                   ),
                 )
               else
-                _isGridView
-                    ? SliverPadding(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 8),
-                        sliver: SliverGrid(
-                          gridDelegate:
-                              const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 2,
-                            crossAxisSpacing: 12,
-                            mainAxisSpacing: 12,
-                            childAspectRatio: 0.78,
-                          ),
-                          delegate: SliverChildBuilderDelegate(
-                            (_, i) {
-                              final item = _items[i];
-                              return _GridMediaCard(
-                                key: ValueKey('fg_${item.path}'),
-                                item: item,
-                                index: i,
-                                allItems: _items,
-                                onDelete: () => _deleteItem(item),
-                                onSave: () => _saveToGallery(item),
-                              );
-                            },
-                            childCount: _items.length,
-                          ),
-                        ),
-                      )
-                    : SliverPadding(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 8),
-                        sliver: SliverList(
-                          delegate: SliverChildBuilderDelegate(
-                            (_, i) {
-                              final item = _items[i];
-                              return _FolderItemTile(
-                                key: ValueKey(item.path),
-                                item: item,
-                                index: i,
-                                allItems: _items,
-                                folderColor: widget.folder.color,
-                                onRemoveFromFolder: () =>
-                                    _removeFromFolder(item),
-                                onDelete: () => _deleteItem(item),
-                                onSave: () => _saveToGallery(item),
-                              );
-                            },
-                            childCount: _items.length,
-                          ),
-                        ),
-                      ),
+                SliverPadding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  sliver: SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (_, i) {
+                        final item = _items[i];
+                        return _FolderItemTile(
+                          key: ValueKey(item.path),
+                          item: item,
+                          index: i,
+                          allItems: _items,
+                          folderColor: widget.folder.color,
+                          onRemoveFromFolder: () => _removeFromFolder(item),
+                          onDelete: () => _deleteItem(item),
+                          onSave: () => _saveToGallery(item),
+                        );
+                      },
+                      childCount: _items.length,
+                    ),
+                  ),
+                ),
               const SliverToBoxAdapter(child: SizedBox(height: 200)),
             ],
           ),
@@ -4791,6 +4355,227 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
                 ? Colors.white70
                 : AppColors.primary,
         size: 24,
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  MODERN MUSIC GRID CARD
+// ═══════════════════════════════════════════════════════════
+class _ModernMusicCard extends StatefulWidget {
+  final LocalMediaItem item;
+  final VoidCallback onTap;
+
+  const _ModernMusicCard({
+    required this.item,
+    required this.onTap,
+  });
+
+  @override
+  State<_ModernMusicCard> createState() => _ModernMusicCardState();
+}
+
+class _ModernMusicCardState extends State<_ModernMusicCard> {
+  String? _thumbPath;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadThumb();
+  }
+
+  Future<void> _loadThumb() async {
+    final thumb =
+        await ThumbnailManager.getLocalThumbnail(widget.item.path);
+
+    if (mounted) {
+      setState(() {
+        _thumbPath = thumb;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final title =
+        widget.item.title.replaceAll(RegExp(r'\.\w+$'), '');
+
+    return GestureDetector(
+      onTap: widget.onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(30),
+gradient: context.isDark
+    ? LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          Colors.white.withOpacity(0.08),
+          Colors.white.withOpacity(0.03),
+        ],
+      )
+    :  LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          Colors.black.withOpacity(0.08),
+          Colors.black.withOpacity(0.03),
+        ],
+      ),
+border: Border.all(
+  color: context.isDark
+      ? Colors.white.withOpacity(0.06)
+      : Colors.black.withOpacity(0.05),
+  width: 1,
+),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.22),
+              blurRadius: 22,
+              offset: const Offset(0, 12),
+            ),
+            BoxShadow(
+              color: AppColors.primary.withValues(alpha: 0.10),
+              blurRadius: 20,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(30),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: _thumbPath != null
+                          ? Image.file(
+                              File(_thumbPath!),
+                              fit: BoxFit.cover,
+                            )
+                          : Container(
+                              decoration: const BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    Color(0xFFE8272A),
+                                    Color(0xFF470707),
+                                  ],
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                ),
+                              ),
+                              child: Center(
+                                child: Icon(
+                                  widget.item.isVideo
+                                      ? CupertinoIcons.play_rectangle_fill
+                                      : CupertinoIcons.music_note_2,
+                                  color: Colors.white.withValues(alpha: 0.8),
+                                  size: 56,
+                                ),
+                              ),
+                            ),
+                    ),
+
+                    Positioned.fill(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              Colors.transparent,
+                              Colors.black.withValues(alpha: 0.75),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    Positioned(
+                      top: 12,
+                      right: 12,
+                      child: Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.35),
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.10),
+                          ),
+                        ),
+                        child: const Icon(
+                          CupertinoIcons.play_fill,
+                          color: Colors.white,
+                          size: 18,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 14, 14, 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        height: 1.45,
+                        fontWeight: FontWeight.w700,
+                        fontFamily: 'Tajawal',
+                      ),
+                    ),
+
+                    const SizedBox(height: 10),
+
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withValues(alpha: 0.14),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            widget.item.isVideo
+                                ? CupertinoIcons.play_rectangle
+                                : CupertinoIcons.music_note,
+                            color: Colors.white70,
+                            size: 13,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            widget.item.isVideo ? 'فيديو' : 'صوت',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              fontFamily: 'Tajawal',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

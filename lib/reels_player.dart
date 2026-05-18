@@ -90,14 +90,11 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
     if (_currentIndex < widget.items.length - 1)
       _initController(_currentIndex + 1);
 
-    _scheduleControlsHide();
-
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    // لا نخفي شريط النظام (الوقت والبطارية والشبكة)
   }
 
   @override
   void dispose() {
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     for (final ctrl in _controllers.values) {
       ctrl.dispose();
     }
@@ -148,8 +145,10 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
   }
 
   void _toggleControls() {
-    setState(() => _showControls = !_showControls);
-    if (_showControls) _scheduleControlsHide();
+    // النقر على الشاشة يُظهر العناصر فقط (الإخفاء عبر زر العين)
+    if (!_showControls) {
+      setState(() => _showControls = true);
+    }
   }
 
   void _onPageChanged(int index) {
@@ -182,7 +181,6 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
       _initialized.remove(k);
     }
 
-    _scheduleControlsHide();
     setState(() {});
 
     if (_autoScroll) _scheduleAutoScroll();
@@ -381,57 +379,61 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
         : 0.0;
 
     final isPlaying = ctrl?.value.isPlaying ?? false;
-
-    // عنوان مقتطع / كامل
     final title = item.title.replaceAll(RegExp(r'\.\w+$'), '');
-    final shortTitle = title.length > 27 ? title.substring(0, 27) : title;
+    final shortTitle = title.length > 30 ? title.substring(0, 30) : title;
+    final topPad = MediaQuery.of(context).padding.top;
+    final botPad = MediaQuery.of(context).padding.bottom;
 
     return Stack(
       children: [
-        // ─── الجانب الأيمن: لوجو + خيارات ───
+        // ═══════════════════════════════════════
+        //  الجانب الأيمن — عمود الأزرار المدمج
+        // ═══════════════════════════════════════
         Positioned(
-          right: 16,
-          bottom: 140,
+          right: 12,
+          bottom: botPad + 110,
           child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              // لوجو التطبيق دندن
+              // ── لوجو التطبيق (logo.png) ──
               _buildSideButton(
-                child: Image.asset('assets/images/jna7.png',
-                    width: 28, height: 28, fit: BoxFit.contain,
-                    errorBuilder: (_, __, ___) => const Text('♪',
-                        style:
-                            TextStyle(color: Colors.white, fontSize: 22))),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: Image.asset(
+                    'assets/images/logo.png',
+                    width: 24, height: 24, fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => const Icon(
+                      CupertinoIcons.music_note_2,
+                      color: Colors.white, size: 18,
+                    ),
+                  ),
+                ),
                 label: '',
                 onTap: () {},
                 showLabel: false,
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 14),
 
-              // تشغيل/إيقاف
+              // ── تشغيل / إيقاف ──
               _buildSideButton(
                 child: Icon(
                   isPlaying ? CupertinoIcons.pause_fill : CupertinoIcons.play_fill,
-                  color: Colors.white,
-                  size: 26,
+                  color: Colors.white, size: 20,
                 ),
                 label: isPlaying ? 'إيقاف' : 'تشغيل',
                 onTap: () {
                   setState(() {});
-                  if (isPlaying) {
-                    ctrl?.pause();
-                  } else {
-                    ctrl?.play();
-                  }
+                  isPlaying ? ctrl?.pause() : ctrl?.play();
                 },
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 14),
 
-              // تكرار
+              // ── تكرار ──
               _buildSideButton(
                 child: Icon(
                   CupertinoIcons.repeat,
                   color: _isLooping ? AppColors.primary : Colors.white,
-                  size: 24,
+                  size: 20,
                 ),
                 label: 'تكرار',
                 onTap: () {
@@ -440,103 +442,115 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
                 },
                 isActive: _isLooping,
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 14),
 
-              // تصفح تلقائي
-              _buildSideButton(
-                child: Icon(
-                  CupertinoIcons.infinite,
-                  color: _autoScroll ? AppColors.primary : Colors.white,
-                  size: 24,
-                ),
-                label: 'تلقائي',
-                onTap: () {
-                  setState(() => _autoScroll = !_autoScroll);
-                  if (_autoScroll) {
-                    _scheduleAutoScroll();
-                  } else {
-                    _autoScrollTimer?.cancel();
-                  }
-                },
-                isActive: _autoScroll,
-              ),
-              const SizedBox(height: 20),
-
-              // ثلاث نقاط - المزيد
+              // ── المزيد ──
               _buildSideButton(
                 child: const Icon(CupertinoIcons.ellipsis_vertical,
-                    color: Colors.white, size: 24),
+                    color: Colors.white, size: 20),
                 label: 'المزيد',
                 onTap: () => _showOptionsMenu(context),
+              ),
+              const SizedBox(height: 14),
+
+              // ── زر إخفاء / إظهار العناصر ──
+              _buildSideButton(
+                child: Icon(
+                  _showControls
+                      ? CupertinoIcons.eye_slash_fill
+                      : CupertinoIcons.eye_fill,
+                  color: _showControls
+                      ? Colors.white.withOpacity(0.7)
+                      : AppColors.primary,
+                  size: 20,
+                ),
+                label: _showControls ? 'إخفاء' : 'إظهار',
+                onTap: () {
+                  setState(() => _showControls = !_showControls);
+                  // عند الإظهار لا نجدول إخفاء تلقائي
+                  _controlsTimer?.cancel();
+                },
+                isActive: !_showControls,
               ),
             ],
           ),
         ),
 
-        // ─── أعلى: زر الرجوع ───
+        // ═══════════════════════════════════════
+        //  الشريط العلوي — رجوع + عداد
+        // ═══════════════════════════════════════
         Positioned(
-          top: MediaQuery.of(context).padding.top + 12,
-          right: 16,
-          child: GestureDetector(
-            onTap: () => Navigator.pop(context),
-            child: Container(
-              width: 38,
-              height: 38,
-              decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.5),
-                borderRadius: BorderRadius.circular(19),
-                border:
-                    Border.all(color: Colors.white.withOpacity(0.2), width: 1),
+          top: topPad + 10,
+          left: 12,
+          right: 12,
+          child: Row(
+            children: [
+              // زر الرجوع
+              GestureDetector(
+                onTap: () => Navigator.pop(context),
+                child: Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.45),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                        color: Colors.white.withOpacity(0.18), width: 1),
+                  ),
+                  child: const Icon(CupertinoIcons.xmark,
+                      color: Colors.white, size: 16),
+                ),
               ),
-              child: const Icon(CupertinoIcons.xmark,
-                  color: Colors.white, size: 18),
-            ),
+              const Spacer(),
+              // عداد الفيديو
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.45),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                      color: Colors.white.withOpacity(0.15), width: 1),
+                ),
+                child: Text(
+                  '${_currentIndex + 1} / ${widget.items.length}',
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontFamily: 'Tajawal',
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
           ),
         ),
 
-        // ─── مؤشر الفيديو الحالي ───
-        Positioned(
-          top: MediaQuery.of(context).padding.top + 14,
-          left: 0,
-          right: 60,
-          child: Center(
-            child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-              decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.5),
-                borderRadius: BorderRadius.circular(20),
-                border:
-                    Border.all(color: Colors.white.withOpacity(0.15), width: 1),
-              ),
-              child: Text(
-                '${_currentIndex + 1} / ${widget.items.length}',
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontFamily: 'Tajawal',
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600),
-              ),
-            ),
-          ),
-        ),
-
-        // ─── الأسفل: عنوان + شريط التمرير ───
+        // ═══════════════════════════════════════
+        //  الشريط السفلي — عنوان + شريط التمرير
+        //  بعرض الشاشة الكامل
+        // ═══════════════════════════════════════
         Positioned(
           bottom: 0,
           left: 0,
-          right: 80,
-          child: Padding(
-            padding: EdgeInsets.only(
-              left: 16,
-              right: 16,
-              bottom: MediaQuery.of(context).padding.bottom + 16,
+          right: 0,
+          child: Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.transparent,
+                  Colors.black.withOpacity(0.6),
+                  Colors.black.withOpacity(0.92),
+                ],
+              ),
             ),
+            padding: EdgeInsets.fromLTRB(
+                16, 20, 16, botPad + 14),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                // أيقونة الفيديو + العنوان
+                // أيقونة + العنوان
                 Row(
                   children: [
                     Container(
@@ -546,15 +560,15 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: const Icon(CupertinoIcons.play_rectangle_fill,
-                          color: Colors.white, size: 14),
+                          color: Colors.white, size: 13),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: GestureDetector(
-                        onTap: () =>
-                            setState(() => _isTitleExpanded = !_isTitleExpanded),
+                        onTap: () => setState(
+                            () => _isTitleExpanded = !_isTitleExpanded),
                         child: AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 300),
+                          duration: const Duration(milliseconds: 250),
                           child: Text(
                             _isTitleExpanded ? title : shortTitle,
                             key: ValueKey(_isTitleExpanded),
@@ -578,7 +592,7 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
                         ),
                       ),
                     ),
-                    if (title.length > 27)
+                    if (title.length > 30)
                       Icon(
                         _isTitleExpanded
                             ? CupertinoIcons.chevron_up
@@ -590,114 +604,121 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
                 ),
                 const SizedBox(height: 10),
 
-                // وقت التشغيل
+                // أوقات التشغيل
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
                       _formatDuration(position),
                       style: TextStyle(
-                          color: Colors.white.withOpacity(0.8),
+                          color: Colors.white.withOpacity(0.75),
                           fontFamily: 'Tajawal',
                           fontSize: 11),
                     ),
                     Text(
                       _formatDuration(duration),
                       style: TextStyle(
-                          color: Colors.white.withOpacity(0.8),
+                          color: Colors.white.withOpacity(0.75),
                           fontFamily: 'Tajawal',
                           fontSize: 11),
                     ),
                   ],
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 8),
 
-                // شريط التمرير
-                GestureDetector(
-                  onHorizontalDragUpdate: (d) {
-                    if (ctrl == null || !isInit) return;
-                    final box = context.findRenderObject() as RenderBox?;
-                    if (box == null) return;
-                    final width = box.size.width - 32;
-                    final newProgress =
-                        (progress + d.delta.dx / width).clamp(0.0, 1.0);
-                    final newPos = duration * newProgress;
-                    ctrl.seekTo(newPos);
+                // ── شريط التمرير القابل للتحكم ──
+                LayoutBuilder(
+                  builder: (ctx, constraints) {
+                    final trackWidth = constraints.maxWidth;
+                    return GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      // سحب أفقي للتقديم/التأخير
+                      onHorizontalDragUpdate: (d) {
+                        if (ctrl == null || !isInit) return;
+                        final delta = d.delta.dx / trackWidth;
+                        final newProgress =
+                            (progress + delta).clamp(0.0, 1.0);
+                        ctrl.seekTo(duration * newProgress);
+                      },
+                      // نقر مباشر على مكان معين في الشريط
+                      onTapDown: (d) {
+                        if (ctrl == null || !isInit) return;
+                        final tapFraction =
+                            (d.localPosition.dx / trackWidth).clamp(0.0, 1.0);
+                        ctrl.seekTo(duration * tapFraction);
+                      },
+                      child: SizedBox(
+                        height: 28,
+                        child: Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            // مسار الخلفية
+                            Container(
+                              height: 4,
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.25),
+                                borderRadius: BorderRadius.circular(3),
+                              ),
+                            ),
+                            // شريط التقدم
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: FractionallySizedBox(
+                                widthFactor: progress.clamp(0.0, 1.0),
+                                child: Container(
+                                  height: 4,
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      colors: [
+                                        AppColors.primary,
+                                        AppColors.primary.withOpacity(0.7),
+                                      ],
+                                    ),
+                                    borderRadius: BorderRadius.circular(3),
+                                    boxShadow: [
+                                      BoxShadow(
+                                          color:
+                                              AppColors.primary.withOpacity(0.55),
+                                          blurRadius: 6,
+                                          spreadRadius: 1),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                            // دائرة السحب
+                            Positioned(
+                              left: (progress.clamp(0.0, 1.0) * trackWidth) - 8,
+                              child: Container(
+                                width: 16,
+                                height: 16,
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  shape: BoxShape.circle,
+                                  boxShadow: [
+                                    BoxShadow(
+                                        color: AppColors.primary.withOpacity(0.6),
+                                        blurRadius: 8,
+                                        spreadRadius: 1),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
                   },
-                  child: Stack(
-                    alignment: Alignment.centerLeft,
-                    children: [
-                      // خلفية
-                      Container(
-                        height: 3,
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.3),
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                      // تقدم
-                      FractionallySizedBox(
-                        widthFactor: progress.clamp(0.0, 1.0),
-                        child: Container(
-                          height: 3,
-                          decoration: BoxDecoration(
-                            color: AppColors.primary,
-                            borderRadius: BorderRadius.circular(2),
-                            boxShadow: [
-                              BoxShadow(
-                                  color: AppColors.primary.withOpacity(0.6),
-                                  blurRadius: 4,
-                                  spreadRadius: 1),
-                            ],
-                          ),
-                        ),
-                      ),
-                      // دائرة التمرير
-                      Positioned(
-                        left: ((progress.clamp(0.0, 1.0)) *
-                                (MediaQuery.of(context).size.width - 112)) -
-                            6,
-                        child: Container(
-                          width: 14,
-                          height: 14,
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            shape: BoxShape.circle,
-                            boxShadow: [
-                              BoxShadow(
-                                  color: AppColors.primary.withOpacity(0.5),
-                                  blurRadius: 6),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
                 ),
               ],
             ),
           ),
         ),
-
-        // ─── مؤشرات التصفح (أسهم) ───
-        if (_currentIndex > 0)
-          Positioned(
-            top: size.height * 0.5 - 40,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: AnimatedOpacity(
-                opacity: _showControls ? 0.6 : 0.0,
-                duration: const Duration(milliseconds: 300),
-                child: const Icon(CupertinoIcons.chevron_up,
-                    color: Colors.white, size: 20),
-              ),
-            ),
-          ),
       ],
     );
   }
 
+  // زر جانبي مصغّر أنيق
   Widget _buildSideButton({
     required Widget child,
     required String label,
@@ -708,41 +729,50 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
     return GestureDetector(
       onTap: onTap,
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 48,
-            height: 48,
+            width: 40,
+            height: 40,
             decoration: BoxDecoration(
               color: isActive
-                  ? AppColors.primary.withOpacity(0.25)
-                  : Colors.black.withOpacity(0.45),
+                  ? AppColors.primary.withOpacity(0.28)
+                  : Colors.black.withOpacity(0.42),
               shape: BoxShape.circle,
               border: Border.all(
                 color: isActive
-                    ? AppColors.primary.withOpacity(0.6)
-                    : Colors.white.withOpacity(0.2),
-                width: 1.5,
+                    ? AppColors.primary.withOpacity(0.65)
+                    : Colors.white.withOpacity(0.18),
+                width: 1.2,
               ),
               boxShadow: isActive
                   ? [
                       BoxShadow(
-                          color: AppColors.primary.withOpacity(0.3),
+                          color: AppColors.primary.withOpacity(0.35),
                           blurRadius: 10,
-                          spreadRadius: 2),
+                          spreadRadius: 1),
                     ]
-                  : [],
+                  : [
+                      BoxShadow(
+                          color: Colors.black.withOpacity(0.3),
+                          blurRadius: 6),
+                    ],
             ),
             child: Center(child: child),
           ),
           if (showLabel && label.isNotEmpty) ...[
-            const SizedBox(height: 4),
+            const SizedBox(height: 3),
             Text(
               label,
               style: TextStyle(
-                color: isActive ? AppColors.primary : Colors.white.withOpacity(0.8),
+                color:
+                    isActive ? AppColors.primary : Colors.white.withOpacity(0.75),
                 fontFamily: 'Tajawal',
-                fontSize: 10,
-                fontWeight: FontWeight.w500,
+                fontSize: 9,
+                fontWeight: FontWeight.w600,
+                shadows: const [
+                  Shadow(color: Colors.black54, blurRadius: 4),
+                ],
               ),
             ),
           ],

@@ -2925,7 +2925,6 @@ class FullScreenPlayer extends StatefulWidget {
 }
 
 class _FullScreenPlayerState extends State<FullScreenPlayer> {
-  bool _isGridView = false;
   bool _isRepeat = false;
   String? _thumbPath;
   VideoPlayerController? _videoCtrl;
@@ -3615,79 +3614,6 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                     ),
                   ),
                   const SizedBox(height: 4),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                    child: Row(
-                      children: [
-                        Text(
-                          'جميع الأغاني',
-                          style: TextStyle(
-                            color: textColor,
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                            fontFamily: 'Tajawal',
-                          ),
-                        ),
-                        const Spacer(),
-                        GestureDetector(
-                          onTap: () {
-                            setState(() {
-                              _isGridView = !_isGridView;
-                            });
-                          },
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 250),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 10,
-                            ),
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(18),
-                              gradient: LinearGradient(
-                                colors: _isGridView
-                                    ? [
-                                        const Color(0xFFE8272A),
-                                        const Color(0xFF7A0D0D),
-                                      ]
-                                    : [
-                                        Colors.white.withOpacity(0.08),
-                                        Colors.white.withOpacity(0.03),
-                                      ],
-                              ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: const Color(0xFFE8272A)
-                                      .withOpacity(0.22),
-                                  blurRadius: 18,
-                                  offset: const Offset(0, 8),
-                                ),
-                              ],
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  _isGridView
-                                      ? CupertinoIcons.square_list_fill
-                                      : CupertinoIcons.square_grid_2x2_fill,
-                                  color: Colors.white,
-                                  size: 18,
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  _isGridView ? 'قائمة' : 'شبكة',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold,
-                                    fontFamily: 'Tajawal',
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
                   Expanded(
                     child: ValueListenableBuilder<List<LocalMediaItem>>(
                       valueListenable: audioService.playlist,
@@ -3695,54 +3621,18 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                         return ValueListenableBuilder<int>(
                           valueListenable: audioService.currentIndex,
                           builder: (_, curIdx, __) {
-
-                            if (_isGridView) {
-                              return GridView.builder(
-                                padding: const EdgeInsets.fromLTRB(
-                                  16,
-                                  4,
-                                  16,
-                                  120,
-                                ),
-                                physics: const BouncingScrollPhysics(),
-                                gridDelegate:
-                                    const SliverGridDelegateWithFixedCrossAxisCount(
-                                  crossAxisCount: 2,
-                                  mainAxisSpacing: 16,
-                                  crossAxisSpacing: 16,
-                                  childAspectRatio: 0.72,
-                                ),
-                                itemCount: items.length,
-                                itemBuilder: (context, i) {
-                                  final item = items[i];
-                                  final isActive = i == curIdx;
-
-                                  return _ModernMusicGridCard(
-                                    item: item,
-                                    isActive: isActive,
-                                    onTap: () => Future.microtask(
-                                      () => audioService.playAtIndex(i),
-                                    ),
-                                  );
-                                },
-                              );
-                            }
-
                             return ListView.builder(
                               padding: const EdgeInsets.symmetric(horizontal: 16),
                               itemCount: items.length,
                               itemBuilder: (context, i) {
                                 final item = items[i];
                                 final isActive = i == curIdx;
-
                                 return _PlaylistTile(
                                   item: item,
                                   isActive: isActive,
                                   textColor: textColor,
                                   subColor: subColor,
-                                  onTap: () => Future.microtask(
-                                    () => audioService.playAtIndex(i),
-                                  ),
+                                  onTap: () => Future.microtask(() => audioService.playAtIndex(i)),
                                 );
                               },
                             );
@@ -5070,182 +4960,6 @@ class _PlaylistTileState extends State<_PlaylistTile> {
             : CupertinoIcons.music_note,
         color: isActive ? Colors.white : (widget.item.isVideo ? Colors.white70 : AppColors.primary),
         size: 22,
-      ),
-    );
-  }
-}
-
-// ─────────────────────────────────────────────
-//  MODERN GRID MUSIC CARD
-// ─────────────────────────────────────────────
-class _ModernMusicGridCard extends StatelessWidget {
-  final LocalMediaItem item;
-  final bool isActive;
-  final VoidCallback onTap;
-
-  const _ModernMusicGridCard({
-    required this.item,
-    required this.isActive,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final title = item.title.replaceAll(RegExp(r'\.\w+$'), '');
-
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 220),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(28),
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              Colors.white.withOpacity(0.10),
-              Colors.white.withOpacity(0.03),
-            ],
-          ),
-          border: Border.all(
-            color: isActive
-                ? AppColors.primary.withOpacity(0.45)
-                : Colors.white.withOpacity(0.08),
-            width: 1.2,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.22),
-              blurRadius: 20,
-              offset: const Offset(0, 10),
-            ),
-          ],
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(28),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Stack(
-                  children: [
-                    Positioned.fill(
-                      child: item.thumbnailUrl != null
-                          ? CachedNetworkImage(
-                              imageUrl: item.thumbnailUrl!,
-                              fit: BoxFit.cover,
-                            )
-                          : Container(
-                              decoration: const BoxDecoration(
-                                gradient: LinearGradient(
-                                  colors: [
-                                    Color(0xFFE8272A),
-                                    Color(0xFF470707),
-                                  ],
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
-                                ),
-                              ),
-                              child: Icon(
-                                item.isVideo
-                                    ? CupertinoIcons.play_rectangle_fill
-                                    : CupertinoIcons.music_note_2,
-                                color: Colors.white70,
-                                size: 58,
-                              ),
-                            ),
-                    ),
-                    Positioned.fill(
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: [
-                              Colors.transparent,
-                              Colors.black.withOpacity(0.78),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                    Positioned(
-                      top: 12,
-                      right: 12,
-                      child: Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withOpacity(0.35),
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(
-                          isActive
-                              ? CupertinoIcons.pause_fill
-                              : CupertinoIcons.play_fill,
-                          color: Colors.white,
-                          size: 18,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(14, 14, 14, 16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 14,
-                        height: 1.4,
-                        fontWeight: FontWeight.bold,
-                        fontFamily: 'Tajawal',
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 6,
-                      ),
-                      decoration: BoxDecoration(
-                        color: AppColors.primary.withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            item.isVideo
-                                ? CupertinoIcons.play_rectangle
-                                : CupertinoIcons.music_note,
-                            color: Colors.white70,
-                            size: 13,
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            item.isVideo ? 'فيديو' : 'صوت',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                              fontFamily: 'Tajawal',
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }

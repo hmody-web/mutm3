@@ -84,6 +84,9 @@ class _ListenPageState extends State<ListenPage> with TickerProviderStateMixin {
 
   // ── وضع التحديد ──
   bool _selectionMode = false;
+
+  // ── نوع العرض ──
+  bool _gridView = false;
   final Set<String> _selectedPaths = {};
 
   // ── أنيميشن وضع التحديد ──
@@ -2186,6 +2189,71 @@ class _ListenPageState extends State<ListenPage> with TickerProviderStateMixin {
                 ),
               ),
             ),
+            const SizedBox(width: 10),
+
+            GestureDetector(
+              onTap: () {
+                setState(() {
+                  _gridView = !_gridView;
+                });
+              },
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 250),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 9,
+                ),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(18),
+                  gradient: LinearGradient(
+                    colors: _gridView
+                        ? [
+                            const Color(0xFFE8272A),
+                            const Color(0xFF7D1010),
+                          ]
+                        : [
+                            AppColors.primary.withValues(alpha: 0.12),
+                            AppColors.primary.withValues(alpha: 0.05),
+                          ],
+                  ),
+                  border: Border.all(
+                    color: AppColors.primary.withValues(alpha: 0.15),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppColors.primary.withValues(alpha: 0.18),
+                      blurRadius: 18,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      _gridView
+                          ? CupertinoIcons.square_list_fill
+                          : CupertinoIcons.square_grid_2x2_fill,
+                      color: _gridView
+                          ? Colors.white
+                          : AppColors.primary,
+                      size: 16,
+                    ),
+                    const SizedBox(width: 7),
+                    Text(
+                      _gridView ? 'قائمة' : 'شبكة',
+                      style: TextStyle(
+                        fontFamily: 'Tajawal',
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: _gridView
+                            ? Colors.white
+                            : AppColors.primary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
             if (_selectionMode) ...[
               const Spacer(),
               GestureDetector(
@@ -2338,6 +2406,35 @@ class _ListenPageState extends State<ListenPage> with TickerProviderStateMixin {
       );
     }
 
+    if (_gridView && !_selectionMode) {
+      return SliverPadding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
+        sliver: SliverGrid(
+          delegate: SliverChildBuilderDelegate(
+            (context, index) {
+              final item = displayed[index];
+
+              return _ModernMusicCard(
+                item: item,
+                onTap: () async {
+                  await audioService.playAtIndex(
+                    _localItems.indexOf(item),
+                  );
+                },
+              );
+            },
+            childCount: displayed.length,
+          ),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
+            mainAxisSpacing: 16,
+            crossAxisSpacing: 16,
+            childAspectRatio: 0.70,
+          ),
+        ),
+      );
+    }
+
     return SliverPadding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       sliver: SliverList(
@@ -2347,7 +2444,6 @@ class _ListenPageState extends State<ListenPage> with TickerProviderStateMixin {
             final isSelected = _selectedPaths.contains(item.path);
 
             if (_selectionMode) {
-              // ── وضع التحديد: عرض بسيط مع checkbox ──
               return _SelectableMediaTile(
                 key: ValueKey('sel_${item.path}'),
                 item: item,
@@ -4262,6 +4358,215 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
                 ? Colors.white70
                 : AppColors.primary,
         size: 24,
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  MODERN MUSIC GRID CARD
+// ═══════════════════════════════════════════════════════════
+class _ModernMusicCard extends StatefulWidget {
+  final LocalMediaItem item;
+  final VoidCallback onTap;
+
+  const _ModernMusicCard({
+    required this.item,
+    required this.onTap,
+  });
+
+  @override
+  State<_ModernMusicCard> createState() => _ModernMusicCardState();
+}
+
+class _ModernMusicCardState extends State<_ModernMusicCard> {
+  String? _thumbPath;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadThumb();
+  }
+
+  Future<void> _loadThumb() async {
+    final thumb =
+        await ThumbnailManager.getLocalThumbnail(widget.item.path);
+
+    if (mounted) {
+      setState(() {
+        _thumbPath = thumb;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final title =
+        widget.item.title.replaceAll(RegExp(r'\.\w+$'), '');
+
+    return GestureDetector(
+      onTap: widget.onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(30),
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Colors.white.withValues(alpha: 0.08),
+              Colors.white.withValues(alpha: 0.03),
+            ],
+          ),
+          border: Border.all(
+            color: Colors.white.withValues(alpha: 0.06),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.22),
+              blurRadius: 22,
+              offset: const Offset(0, 12),
+            ),
+            BoxShadow(
+              color: AppColors.primary.withValues(alpha: 0.10),
+              blurRadius: 20,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(30),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: _thumbPath != null
+                          ? Image.file(
+                              File(_thumbPath!),
+                              fit: BoxFit.cover,
+                            )
+                          : Container(
+                              decoration: const BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    Color(0xFFE8272A),
+                                    Color(0xFF470707),
+                                  ],
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                ),
+                              ),
+                              child: Center(
+                                child: Icon(
+                                  widget.item.isVideo
+                                      ? CupertinoIcons.play_rectangle_fill
+                                      : CupertinoIcons.music_note_2,
+                                  color: Colors.white.withValues(alpha: 0.8),
+                                  size: 56,
+                                ),
+                              ),
+                            ),
+                    ),
+
+                    Positioned.fill(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              Colors.transparent,
+                              Colors.black.withValues(alpha: 0.75),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    Positioned(
+                      top: 12,
+                      right: 12,
+                      child: Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.35),
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.10),
+                          ),
+                        ),
+                        child: const Icon(
+                          CupertinoIcons.play_fill,
+                          color: Colors.white,
+                          size: 18,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 14, 14, 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        height: 1.45,
+                        fontWeight: FontWeight.w700,
+                        fontFamily: 'Tajawal',
+                      ),
+                    ),
+
+                    const SizedBox(height: 10),
+
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withValues(alpha: 0.14),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            widget.item.isVideo
+                                ? CupertinoIcons.play_rectangle
+                                : CupertinoIcons.music_note,
+                            color: Colors.white70,
+                            size: 13,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            widget.item.isVideo ? 'فيديو' : 'صوت',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              fontFamily: 'Tajawal',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

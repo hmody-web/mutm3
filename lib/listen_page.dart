@@ -1028,16 +1028,36 @@ class _ListenPageState extends State<ListenPage> with TickerProviderStateMixin {
   }
 
   Future<void> _saveToGallery(LocalMediaItem item) async {
-    PermissionStatus status;
+    // ── التحقق من وجود الملف أولاً ──
+    final sourceFile = File(item.path);
+    if (!await sourceFile.exists()) {
+      _showSnack('الملف غير موجود!');
+      return;
+    }
+
     if (Platform.isAndroid) {
-      status = item.isVideo
-          ? await Permission.videos.request()
-          : await Permission.audio.request();
-      if (!status.isGranted) {
-        status = await Permission.storage.request();
-      }
+      await _saveToGalleryAndroid(item, sourceFile);
     } else {
-      status = await Permission.photosAddOnly.request();
+      await _saveToGalleryIOS(item, sourceFile);
+    }
+  }
+
+  /// حفظ الملف على Android مع التعامل الصحيح مع إصدارات API المختلفة
+  Future<void> _saveToGalleryAndroid(LocalMediaItem item, File sourceFile) async {
+    final androidInfo = await _getAndroidSdkVersion();
+
+    PermissionStatus status;
+
+    if (androidInfo >= 30) {
+      // Android 11+ (API 30+): نطلب MANAGE_EXTERNAL_STORAGE لكتابة Movies/Music
+      status = await Permission.manageExternalStorage.request();
+    } else if (androidInfo >= 29) {
+      // Android 10 (API 29): يعمل بدون صلاحية عبر MediaStore (scoped storage)
+      // لكن الكتابة المباشرة تحتاج WRITE_EXTERNAL_STORAGE — نطلبها
+      status = await Permission.storage.request();
+    } else {
+      // Android 9 وأقل: WRITE_EXTERNAL_STORAGE كافية
+      status = await Permission.storage.request();
     }
 
     if (!mounted) return;
@@ -1048,7 +1068,7 @@ class _ListenPageState extends State<ListenPage> with TickerProviderStateMixin {
         builder: (_) => CupertinoAlertDialog(
           title: const Text('صلاحية مطلوبة'),
           content: const Text(
-              'تم رفض الإذن نهائياً. افتح الإعدادات لتفعيل الوصول.'),
+              'تم رفض الإذن نهائياً. افتح الإعدادات لتفعيل الوصول إلى التخزين.'),
           actions: [
             CupertinoDialogAction(
               onPressed: () => Navigator.pop(context),
@@ -1073,46 +1093,93 @@ class _ListenPageState extends State<ListenPage> with TickerProviderStateMixin {
       return;
     }
 
-    final sourceFile = File(item.path);
-    if (!await sourceFile.exists()) {
-      _showSnack('الملف غير موجود!');
+    try {
+      final destDir = item.isVideo
+          ? Directory('/storage/emulated/0/Movies/دندن')
+          : Directory('/storage/emulated/0/Music/دندن');
+
+      if (!await destDir.exists()) {
+        await destDir.create(recursive: true);
+      }
+
+      final destPath = '${destDir.path}/${item.title}';
+      await sourceFile.copy(destPath);
+      await _scanFile(destPath);
+
+      if (!mounted) return;
+      _showSnack(item.isVideo
+          ? '✅ تم الحفظ في الاستوديو — الفيديوهات'
+          : '✅ تم الحفظ في الاستوديو — الموسيقى');
+    } catch (e) {
+      if (!mounted) return;
+      _showSnack('خطأ في الحفظ: $e');
+    }
+  }
+
+  /// حفظ الملف على iOS مع طلب صلاحية المكتبة بشكل صحيح
+  Future<void> _saveToGalleryIOS(LocalMediaItem item, File sourceFile) async {
+    // iOS: نطلب photos (قراءة + كتابة) أو photosAddOnly (كتابة فقط)
+    PermissionStatus status = await Permission.photosAddOnly.request();
+
+    if (!mounted) return;
+
+    if (status.isPermanentlyDenied) {
+      await showCupertinoDialog(
+        context: context,
+        builder: (_) => CupertinoAlertDialog(
+          title: const Text('صلاحية مطلوبة'),
+          content: const Text(
+              'يحتاج التطبيق إذن "إضافة الصور" للحفظ في المكتبة. افتح الإعدادات لتفعيله.'),
+          actions: [
+            CupertinoDialogAction(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('إلغاء'),
+            ),
+            CupertinoDialogAction(
+              isDefaultAction: true,
+              onPressed: () {
+                Navigator.pop(context);
+                openAppSettings();
+              },
+              child: const Text('الإعدادات'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
+    if (!status.isGranted) {
+      _showSnack('لم يتم منح الإذن. حاول مجدداً.');
       return;
     }
 
     try {
-      if (Platform.isAndroid) {
-        final destDir = item.isVideo
-            ? Directory('/storage/emulated/0/Movies/دندن')
-            : Directory('/storage/emulated/0/Music/دندن');
+      // على iOS نحفظ في مجلد مؤقت ثم نفحص الميديا
+      final tempDir = await getTemporaryDirectory();
+      final tempPath = '${tempDir.path}/${item.title}';
+      await sourceFile.copy(tempPath);
 
-        if (!await destDir.exists()) {
-          await destDir.create(recursive: true);
-        }
+      try {
+        final OnAudioQuery audioQuery = OnAudioQuery();
+        await audioQuery.scanMedia(tempPath);
+      } catch (_) {}
 
-        final destPath = '${destDir.path}/${item.title}';
-        await sourceFile.copy(destPath);
-        await _scanFile(destPath);
-
-        if (!mounted) return;
-        _showSnack(item.isVideo
-            ? '✅ تم الحفظ في الاستوديو — الفيديوهات'
-            : '✅ تم الحفظ في الاستوديو — الموسيقى');
-      } else {
-        final tempDir = await getTemporaryDirectory();
-        final tempPath = '${tempDir.path}/${item.title}';
-        await sourceFile.copy(tempPath);
-
-        try {
-          final OnAudioQuery audioQuery = OnAudioQuery();
-          await audioQuery.scanMedia(tempPath);
-        } catch (_) {}
-
-        if (!mounted) return;
-        _showSnack('✅ تم الحفظ — افتح تطبيق الموسيقى لرؤيته');
-      }
+      if (!mounted) return;
+      _showSnack('✅ تم الحفظ — افتح تطبيق الموسيقى لرؤيته');
     } catch (e) {
       if (!mounted) return;
-      _showSnack('خطأ: $e');
+      _showSnack('خطأ في الحفظ: $e');
+    }
+  }
+
+  /// قراءة إصدار Android SDK
+  Future<int> _getAndroidSdkVersion() async {
+    try {
+      final result = await Process.run('getprop', ['ro.build.version.sdk']);
+      return int.tryParse(result.stdout.toString().trim()) ?? 30;
+    } catch (_) {
+      return 30; // افتراضي: Android 11
     }
   }
 

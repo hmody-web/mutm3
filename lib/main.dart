@@ -429,20 +429,25 @@ class AudioPlayerService {
   int _pendingIndex = -1;
   List<LocalMediaItem>? _pendingList;
 
+  // مؤشر لتتبع ما إذا كان الـ pause ناتج عن انتقال تلقائي بين أغاني
+  bool _isAutoTransitioning = false;
+
   Future<void> init() async {
     final session = await AudioSession.instance;
     await session.configure(const AudioSessionConfiguration.music());
 
-    // عند انتهاء الأغنية → شغّل التالية تلقائياً
-    _completionSub = player.processingStateStream.listen((state) {
+    // ── عند انتهاء الأغنية → شغّل التالية تلقائياً ──
+    _completionSub = player.processingStateStream
+        .distinct()
+        .listen((state) {
       if (state == ProcessingState.completed) {
+        _isAutoTransitioning = true;
         _autoNext();
       }
     });
 
     // ── الاستماع لتغييرات currentIndex من just_audio_background ──
     // عند الضغط على التالي/السابق في الإشعار أو شاشة القفل أو Bluetooth
-    // يُغيّر just_audio_background currentIndex في ConcatenatingAudioSource
     _indexSub = player.currentIndexStream.distinct().listen((rawIdx) {
       if (rawIdx == null || _handlingIndexChange || _isSwitching) return;
       final list = playlist.value;
@@ -450,21 +455,32 @@ class AudioPlayerService {
       if (list.isEmpty || cur < 0) return;
       final hasPrev = cur > 0;
 
-      // rawIdx 0 = السابق (إذا كان موجوداً), 1 أو 0 = الحالي, آخر = التالي
       final currentRawIdx = hasPrev ? 1 : 0;
       if (rawIdx < currentRawIdx) {
-        // الضغط على السابق
-        Future.microtask(() => _playSingleFile(list, cur - 1));
+        // ── الضغط على السابق من الإشعار/شاشة القفل ──
+        // نُعطّل loopMode مؤقتاً عند الانتقال اليدوي حتى لا تُعاد نفس الأغنية
+        _isAutoTransitioning = true;
+        final wasLoop = player.loopMode == LoopMode.one;
+        if (wasLoop) player.setLoopMode(LoopMode.off);
+        Future.microtask(() async {
+          await _playSingleFile(list, cur - 1);
+          if (wasLoop) await player.setLoopMode(LoopMode.one);
+        });
       } else if (rawIdx > currentRawIdx) {
-        // الضغط على التالي
-        Future.microtask(() => _playSingleFile(list, cur + 1));
+        // ── الضغط على التالي من الإشعار/شاشة القفل ──
+        _isAutoTransitioning = true;
+        final wasLoop = player.loopMode == LoopMode.one;
+        if (wasLoop) player.setLoopMode(LoopMode.off);
+        Future.microtask(() async {
+          await _playSingleFile(list, cur + 1);
+          if (wasLoop) await player.setLoopMode(LoopMode.one);
+        });
       }
     });
 
     session.interruptionEventStream.listen((event) {
       if (event.begin) {
-        // انقطاع خارجي (مكالمة، تطبيق آخر...) → إيقاف مؤقت تلقائي
-        // لكن لا نُغيّر _userPaused حتى لا يُعيد التشغيل بعد الانقطاع إذا كان المستخدم أوقفه
+        // انقطاع خارجي (مكالمة، تطبيق آخر...) → إيقاف مؤقت
         if (player.playing) player.pause();
       } else {
         // انتهى الانقطاع → أعد التشغيل فقط إذا لم يوقفه المستخدم يدوياً
@@ -476,22 +492,18 @@ class AudioPlayerService {
       }
     });
 
-    // ── إعادة إظهار المشغل المصغر عند استكمال التشغيل من الإشعار أو شاشة القفل ──
-    // عندما يضغط المستخدم على play في الإشعار بعد إخفاء المشغل بزر X،
-    // نُعيد isVisible=true حتى يظهر المشغل المصغر مجدداً في التطبيق.
-    // نتتبع أيضاً الـ pause القادم من شاشة القفل أو الإشعار (خارج pauseByUser)
-    // حتى لا يُعيد interruptionEventStream التشغيل تلقائياً بعد انقطاع خارجي.
+    // ── مراقبة حالة التشغيل/الإيقاف ──
     _playingSub = player.playingStream.listen((playing) {
       if (playing) {
-        // المستخدم استكمل التشغيل من الإشعار أو شاشة القفل → إلغاء علامة الإيقاف اليدوي
+        // بدأ التشغيل → ألغِ علامة الإيقاف اليدوي والانتقال التلقائي
         _userPaused = false;
+        _isAutoTransitioning = false;
         if (!isVisible.value && currentIndex.value >= 0) {
           isVisible.value = true;
         }
       } else {
-        // توقف التشغيل (من أي مصدر: شاشة القفل، إشعار، أو pauseByUser)
-        // نعتبره إيقاف مؤقت مقصود من المستخدم لمنع الاستئناف التلقائي بعد الانقطاعات
-        if (!_handlingIndexChange) {
+        // توقف التشغيل — لا يُعتبر userPaused إذا كان انتقالاً تلقائياً
+        if (!_handlingIndexChange && !_isAutoTransitioning) {
           _userPaused = true;
         }
       }
@@ -1000,6 +1012,8 @@ class _GlassNavBarState extends State<_GlassNavBar>
   double _dragOffset = 0.0;
   bool _isDragging = false;
   int _prevIndex = 0;
+  // القسم المستهدف عند الإفلات (لا يُطبَّق إلا عند رفع الإصبع)
+  int _pendingNavIndex = 0;
 
   static const List<_NavTabData> _tabs = [
     _NavTabData(icon: CupertinoIcons.music_note_2, label: 'استمع'),
@@ -1055,7 +1069,7 @@ class _GlassNavBarState extends State<_GlassNavBar>
     if (mounted) setState(() {});
   }
 
-  // تحديث موقع السحب الفعلي لإصبع المستخدم
+  // تحديث موقع السحب الفعلي لإصبع المستخدم — المؤشر يتبع الإصبع فقط، التبويب يتغير عند الإفلات
   void _updateDragPosition(Offset localPosition, double totalWidth) {
     if (totalWidth <= 0) return;
     setState(() {
@@ -1063,13 +1077,17 @@ class _GlassNavBarState extends State<_GlassNavBar>
       _dragOffset = localPosition.dx.clamp(0.0, totalWidth);
     });
 
-    // حساب التبويب المستهدف لتغيير الصفحة خلف الكواليس
+    // حساب التبويب المستهدف — لكن لا نُغيّره الآن، فقط نحتفظ به للإفلات
     final invertedX = totalWidth - localPosition.dx;
     final tabWidth = totalWidth / _tabs.length;
-    int targetIndex = (invertedX / tabWidth).floor().clamp(0, _tabs.length - 1);
-    
-    if (_navIndexNotifier.value != targetIndex) {
-      _navIndexNotifier.value = targetIndex;
+    _pendingNavIndex = (invertedX / tabWidth).floor().clamp(0, _tabs.length - 1);
+  }
+
+  // عند الإفلات: انتقل للقسم الذي توقف عنده الإصبع
+  void _commitDrag() {
+    _stopScaling();
+    if (_navIndexNotifier.value != _pendingNavIndex) {
+      _navIndexNotifier.value = _pendingNavIndex;
     }
   }
 
@@ -1095,8 +1113,8 @@ class _GlassNavBarState extends State<_GlassNavBar>
           onHorizontalDragUpdate: (details) {
             _updateDragPosition(details.localPosition, barWidth);
           },
-          onTapUp: (_) => _stopScaling(),
-          onHorizontalDragEnd: (_) => _stopScaling(),
+          onTapUp: (_) => _commitDrag(),
+          onHorizontalDragEnd: (_) => _commitDrag(),
           onHorizontalDragCancel: () => _stopScaling(),
           child: AnimatedBuilder(
             animation: _scaleAnim,
@@ -1118,8 +1136,8 @@ class _GlassNavBarState extends State<_GlassNavBar>
                     height: 66,
                     decoration: BoxDecoration(
                       color: isDark
-                          ? Colors.black.withOpacity(0.30)
-                          : Colors.white.withOpacity(0.28),
+                          ? Colors.black.withOpacity(1)
+                          : Colors.white.withOpacity(1),
                       borderRadius: BorderRadius.circular(36),
                       border: Border.all(
                         color: isDark
@@ -1131,8 +1149,8 @@ class _GlassNavBarState extends State<_GlassNavBar>
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
                         colors: isDark
-                            ? [Colors.white.withOpacity(0.08), Colors.white.withOpacity(0.02)]
-                            : [Colors.white.withOpacity(0.60), Colors.white.withOpacity(0.20)],
+                            ? [Colors.black.withOpacity(0.3), Colors.black.withOpacity(0.3)]
+                            : [Colors.white.withOpacity(0.5), Colors.white.withOpacity(0.5)],
                       ),
                       boxShadow: [
                         BoxShadow(
@@ -1150,26 +1168,32 @@ class _GlassNavBarState extends State<_GlassNavBar>
                       // ── الحسبة السحرية للمزج والتمدد (Fluid Blend Logic) ──
                       double indicatorWidth = tabWidth * 0.76;
                       double indicatorRightPosition = idx * tabWidth + tabWidth * 0.12;
+                      double indicatorTop = 8;
+                      double indicatorBottom = 8;
 
                       if (_isDragging) {
-                        // تحويل إحداثيات السحب لتتوافق مع اتجاه الـ RTL العربي (اليمين هو الصفر)
+                        // المؤشر يتبع الإصبع مباشرة بدون أي طفرة
+                        // تحويل إحداثيات السحب لـ RTL (اليمين = الصفر)
                         double rtlDragX = totalBarWidth - _dragOffset;
-                        
-                        // حساب المسافة بين مركز المؤشر الحالي وإصبع المستخدم لتحديد قوة التمدد
-                        double currentCenter = indicatorRightPosition + (indicatorWidth / 2);
-                        double distance = rtlDragX - currentCenter;
 
-                        // تمديد عرض المؤشر بناءً على مسافة السحب لإعطاء تأثير الجيلي/الزئبق
-                        indicatorWidth = (tabWidth * 0.76) + (distance.abs() * 0.4);
-                        // تحديد الحد الأقصى للتمدد حتى لا يخرج عن حدود البار
-                        indicatorWidth = indicatorWidth.clamp(tabWidth * 0.76, tabWidth * 1.8);
+                        // موضع المؤشر يتمركز حول الإصبع مباشرة
+                        double fingerCenter = rtlDragX;
 
-                        // جعل المؤشر ينساب ويمزج موقعه بمرونة فائقة مع اتجاه السحب
-                        if (distance > 0) {
-                          indicatorRightPosition = currentCenter - (tabWidth * 0.38);
-                        } else {
-                          indicatorRightPosition = rtlDragX - (indicatorWidth * 0.3);
-                        }
+                        // مقدار التمدد بناءً على المسافة من مركز القسم الحالي
+                        double currentTabCenter = idx * tabWidth + tabWidth * 0.5;
+                        double distance = (fingerCenter - currentTabCenter).abs();
+
+                        // تمدد أفقي خفيف
+                        indicatorWidth = (tabWidth * 0.76) + (distance * 0.08);
+                        indicatorWidth = indicatorWidth.clamp(tabWidth * 0.76, tabWidth * 1.05);
+
+                        // تمدد رأسي بنفس النسبة (عكسي — يصغر من الأعلى والأسفل)
+                        final verticalStretch = (distance * 0.04).clamp(0.0, 3.0);
+                        indicatorTop = 8 - verticalStretch;
+                        indicatorBottom = 8 - verticalStretch;
+
+                        // المؤشر يتمركز حول الإصبع
+                        indicatorRightPosition = fingerCenter - (indicatorWidth / 2);
                         indicatorRightPosition = indicatorRightPosition.clamp(0.0, totalBarWidth - indicatorWidth);
                       }
 
@@ -1181,8 +1205,8 @@ class _GlassNavBarState extends State<_GlassNavBar>
                           curve: Curves.easeOutCubic,
                           right: indicatorRightPosition,
                           width: indicatorWidth,
-                          top: 8,
-                          bottom: 8,
+                          top: indicatorTop,
+                          bottom: indicatorBottom,
                           child: AnimatedBuilder(
                             animation: _indicatorCtrl,
                             builder: (_, __) {
@@ -2259,43 +2283,6 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
               ),
               const SizedBox(height: 20),
 
-              // ── مستوى الصوت ──
-              Row(children: [
-                const Icon(CupertinoIcons.speaker_3_fill, color: Colors.white70, size: 18),
-                const SizedBox(width: 8),
-                const Text('مستوى الصوت',
-                    style: TextStyle(color: Colors.white70, fontFamily: 'Tajawal', fontSize: 13)),
-              ]),
-              const SizedBox(height: 6),
-              Row(children: [
-                Expanded(
-                  child: SliderTheme(
-                    data: const SliderThemeData(
-                      trackHeight: 3,
-                      thumbShape: RoundSliderThumbShape(enabledThumbRadius: 7),
-                      activeTrackColor: AppColors.primary,
-                      inactiveTrackColor: Colors.white24,
-                      thumbColor: Colors.white,
-                    ),
-                    child: Slider(
-                      value: localVolume.clamp(0.0, 3.0),
-                      min: 0, max: 3.0,
-                      onChanged: (v) {
-                        setSheet(() => localVolume = v);
-                        widget.onVolumeChange(v);
-                      },
-                    ),
-                  ),
-                ),
-                SizedBox(
-                  width: 40,
-                  child: Text('${(localVolume * 100).toInt()}%',
-                      style: const TextStyle(color: Colors.white70, fontSize: 11, fontFamily: 'Tajawal'),
-                      textAlign: TextAlign.end),
-                ),
-              ]),
-
-              const Divider(color: Colors.white12, height: 20),
 
               // ── سرعة التشغيل ──
               Row(children: [
@@ -2501,43 +2488,6 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
               ),
               const SizedBox(height: 20),
 
-              // ── مستوى الصوت ──
-              Row(children: [
-                const Icon(CupertinoIcons.speaker_3_fill, color: Colors.white70, size: 18),
-                const SizedBox(width: 8),
-                const Text('مستوى الصوت',
-                    style: TextStyle(color: Colors.white70, fontFamily: 'Tajawal', fontSize: 13)),
-              ]),
-              const SizedBox(height: 6),
-              Row(children: [
-                Expanded(
-                  child: SliderTheme(
-                    data: const SliderThemeData(
-                      trackHeight: 3,
-                      thumbShape: RoundSliderThumbShape(enabledThumbRadius: 7),
-                      activeTrackColor: AppColors.primary,
-                      inactiveTrackColor: Colors.white24,
-                      thumbColor: Colors.white,
-                    ),
-                    child: Slider(
-                      value: localVolume.clamp(0.0, 3.0),
-                      min: 0, max: 3.0,
-                      onChanged: (v) {
-                        setSheet(() => localVolume = v);
-                        widget.onVolumeChange(v);
-                      },
-                    ),
-                  ),
-                ),
-                SizedBox(
-                  width: 40,
-                  child: Text('${(localVolume * 100).toInt()}%',
-                      style: const TextStyle(color: Colors.white70, fontSize: 11, fontFamily: 'Tajawal'),
-                      textAlign: TextAlign.end),
-                ),
-              ]),
-
-              const Divider(color: Colors.white12, height: 20),
 
               // ── سرعة التشغيل ──
               Row(children: [
@@ -2975,6 +2925,7 @@ class FullScreenPlayer extends StatefulWidget {
 }
 
 class _FullScreenPlayerState extends State<FullScreenPlayer> {
+  bool _isGridView = false;
   bool _isRepeat = false;
   String? _thumbPath;
   VideoPlayerController? _videoCtrl;
@@ -3664,6 +3615,79 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                     ),
                   ),
                   const SizedBox(height: 4),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                    child: Row(
+                      children: [
+                        Text(
+                          'جميع الأغاني',
+                          style: TextStyle(
+                            color: textColor,
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                            fontFamily: 'Tajawal',
+                          ),
+                        ),
+                        const Spacer(),
+                        GestureDetector(
+                          onTap: () {
+                            setState(() {
+                              _isGridView = !_isGridView;
+                            });
+                          },
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 250),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 10,
+                            ),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(18),
+                              gradient: LinearGradient(
+                                colors: _isGridView
+                                    ? [
+                                        const Color(0xFFE8272A),
+                                        const Color(0xFF7A0D0D),
+                                      ]
+                                    : [
+                                        Colors.white.withOpacity(0.08),
+                                        Colors.white.withOpacity(0.03),
+                                      ],
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: const Color(0xFFE8272A)
+                                      .withOpacity(0.22),
+                                  blurRadius: 18,
+                                  offset: const Offset(0, 8),
+                                ),
+                              ],
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  _isGridView
+                                      ? CupertinoIcons.square_list_fill
+                                      : CupertinoIcons.square_grid_2x2_fill,
+                                  color: Colors.white,
+                                  size: 18,
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  _isGridView ? 'قائمة' : 'شبكة',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontFamily: 'Tajawal',
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                   Expanded(
                     child: ValueListenableBuilder<List<LocalMediaItem>>(
                       valueListenable: audioService.playlist,
@@ -3671,18 +3695,54 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                         return ValueListenableBuilder<int>(
                           valueListenable: audioService.currentIndex,
                           builder: (_, curIdx, __) {
+
+                            if (_isGridView) {
+                              return GridView.builder(
+                                padding: const EdgeInsets.fromLTRB(
+                                  16,
+                                  4,
+                                  16,
+                                  120,
+                                ),
+                                physics: const BouncingScrollPhysics(),
+                                gridDelegate:
+                                    const SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: 2,
+                                  mainAxisSpacing: 16,
+                                  crossAxisSpacing: 16,
+                                  childAspectRatio: 0.72,
+                                ),
+                                itemCount: items.length,
+                                itemBuilder: (context, i) {
+                                  final item = items[i];
+                                  final isActive = i == curIdx;
+
+                                  return _ModernMusicGridCard(
+                                    item: item,
+                                    isActive: isActive,
+                                    onTap: () => Future.microtask(
+                                      () => audioService.playAtIndex(i),
+                                    ),
+                                  );
+                                },
+                              );
+                            }
+
                             return ListView.builder(
                               padding: const EdgeInsets.symmetric(horizontal: 16),
                               itemCount: items.length,
                               itemBuilder: (context, i) {
                                 final item = items[i];
                                 final isActive = i == curIdx;
+
                                 return _PlaylistTile(
                                   item: item,
                                   isActive: isActive,
                                   textColor: textColor,
                                   subColor: subColor,
-                                  onTap: () => Future.microtask(() => audioService.playAtIndex(i)),
+                                  onTap: () => Future.microtask(
+                                    () => audioService.playAtIndex(i),
+                                  ),
                                 );
                               },
                             );
@@ -5010,6 +5070,182 @@ class _PlaylistTileState extends State<_PlaylistTile> {
             : CupertinoIcons.music_note,
         color: isActive ? Colors.white : (widget.item.isVideo ? Colors.white70 : AppColors.primary),
         size: 22,
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────
+//  MODERN GRID MUSIC CARD
+// ─────────────────────────────────────────────
+class _ModernMusicGridCard extends StatelessWidget {
+  final LocalMediaItem item;
+  final bool isActive;
+  final VoidCallback onTap;
+
+  const _ModernMusicGridCard({
+    required this.item,
+    required this.isActive,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final title = item.title.replaceAll(RegExp(r'\.\w+$'), '');
+
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(28),
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Colors.white.withOpacity(0.10),
+              Colors.white.withOpacity(0.03),
+            ],
+          ),
+          border: Border.all(
+            color: isActive
+                ? AppColors.primary.withOpacity(0.45)
+                : Colors.white.withOpacity(0.08),
+            width: 1.2,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.22),
+              blurRadius: 20,
+              offset: const Offset(0, 10),
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(28),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: item.thumbnailUrl != null
+                          ? CachedNetworkImage(
+                              imageUrl: item.thumbnailUrl!,
+                              fit: BoxFit.cover,
+                            )
+                          : Container(
+                              decoration: const BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    Color(0xFFE8272A),
+                                    Color(0xFF470707),
+                                  ],
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                ),
+                              ),
+                              child: Icon(
+                                item.isVideo
+                                    ? CupertinoIcons.play_rectangle_fill
+                                    : CupertinoIcons.music_note_2,
+                                color: Colors.white70,
+                                size: 58,
+                              ),
+                            ),
+                    ),
+                    Positioned.fill(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              Colors.transparent,
+                              Colors.black.withOpacity(0.78),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      top: 12,
+                      right: 12,
+                      child: Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.35),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          isActive
+                              ? CupertinoIcons.pause_fill
+                              : CupertinoIcons.play_fill,
+                          color: Colors.white,
+                          size: 18,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 14, 14, 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        height: 1.4,
+                        fontWeight: FontWeight.bold,
+                        fontFamily: 'Tajawal',
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            item.isVideo
+                                ? CupertinoIcons.play_rectangle
+                                : CupertinoIcons.music_note,
+                            color: Colors.white70,
+                            size: 13,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            item.isVideo ? 'فيديو' : 'صوت',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              fontFamily: 'Tajawal',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

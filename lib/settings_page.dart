@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter_dynamic_icon/flutter_dynamic_icon.dart';
+import 'package:share_plus/share_plus.dart';
 // ═══════════════════════════════════════════
 // استيراد الكلاسات المشتركة من player_service.dart
 // ═══════════════════════════════════════════
@@ -263,6 +264,74 @@ child: Padding(
     ),
   ),
 ),
+GestureDetector(
+  onTap: () async {
+Share.share(
+  'حمّل تطبيق دندن الآن \nhttps://scrptaty.com',
+);  },
+  child: Container(
+    decoration: BoxDecoration(
+      color: context.isDark
+          ? AppColors.darkSurface
+          : AppColors.surface,
+border: Border(
+  left: BorderSide(
+    color: context.isDark
+        ? AppColors.darkDivider
+        : AppColors.divider,
+    width: 0.5,
+  ),
+  right: BorderSide(
+    color: context.isDark
+        ? AppColors.darkDivider
+        : AppColors.divider,
+    width: 0.5,
+  ),
+),
+    ),
+    child: ListTile(
+      contentPadding:
+          const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      leading: Container(
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(
+          color: context.isDark
+              ? const Color(0xFF3A1212)
+              : const Color(0xFFFFEBEB),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: const Icon(
+          CupertinoIcons.share,
+          color: Color.fromARGB(255, 232, 39, 42),
+          size: 18,
+        ),
+      ),
+      title: Text(
+        'مشاركة التطبيق',
+        style: TextStyle(
+          fontFamily: 'Tajawal',
+          fontSize: 14,
+          fontWeight: FontWeight.w600,
+          color: context.appText,
+        ),
+      ),
+      subtitle: Text(
+        'شارك التطبيق مع اصدقائك لتجربة أمتع !',
+        style: TextStyle(
+          fontFamily: 'Tajawal',
+          fontSize: 12,
+          color: context.appTextSec,
+        ),
+      ),
+      trailing: Icon(
+        CupertinoIcons.chevron_left,
+        size: 18,
+        color: context.appTextSec,
+      ),
+    ),
+  ),
+),
                     _actionTile(
                       'حذف جميع التنزيلات',
                       'مسح كل الملفات المحملة',
@@ -272,7 +341,7 @@ child: Padding(
                     ),
                   ]),
    
-                  const SizedBox(height: 160),
+                  const SizedBox(height: 100),
                 ],
               ),
             ),

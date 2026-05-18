@@ -4087,7 +4087,7 @@ Positioned(
   height: totalH -
     ((MediaQuery.of(context).size.width * (9 / 16)) +
     MediaQuery.of(context).padding.top +
-    69),
+    68),
   child: ClipRect(
     child: BackdropFilter(
       filter: ImageFilter.blur(

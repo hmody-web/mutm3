@@ -35,6 +35,8 @@ import 'package:flutter_dynamic_icon/flutter_dynamic_icon.dart';
 // ─────────────────────────────────────────────
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  final session = await AudioSession.instance;
+  await session.configure(const AudioSessionConfiguration.music());
 
   await JustAudioBackground.init(
     androidNotificationChannelId: 'com.mustami3.audio',

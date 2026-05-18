@@ -42,7 +42,8 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
   bool _autoScroll = false;
   bool _showControls = true;
   bool _isTitleExpanded = false;
-
+  bool _isDraggingSlider = false;
+  
   Timer? _autoScrollTimer;
   Timer? _controlsTimer;
   Timer? _progressTimer;
@@ -118,7 +119,16 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
 
     try {
       await ctrl.initialize();
-      ctrl.setLooping(_isLooping);
+      ctrl.setLooping(false);
+
+      ctrl.addListener(() async {
+        if (!mounted) return;
+        final value = ctrl.value;
+        if (_autoScroll && value.isInitialized && !value.isPlaying && value.position >= value.duration && widget.items.length > 1) {
+          final next = (_currentIndex + 1) % widget.items.length;
+          await _pageController.animateToPage(next,duration: const Duration(milliseconds: 450),curve: Curves.easeInOutCubic);
+        }
+      });
       if (mounted) setState(() => _initialized[index] = true);
       if (index == _currentIndex) {
         ctrl.play();
@@ -152,6 +162,7 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
   }
 
   void _onPageChanged(int index) {
+    HapticFeedback.lightImpact();
     final prevCtrl = _controllers[_currentIndex];
     prevCtrl?.pause();
 
@@ -277,6 +288,7 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
             PageView.builder(
               controller: _pageController,
               scrollDirection: Axis.vertical,
+              physics: const BouncingScrollPhysics(),
               onPageChanged: _onPageChanged,
               itemCount: widget.items.length,
               itemBuilder: (_, index) {

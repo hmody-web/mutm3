@@ -2189,7 +2189,7 @@ class _ListenPageState extends State<ListenPage> with TickerProviderStateMixin {
                 ),
               ),
             ),
-            const SizedBox(width: 10),
+            const Spacer(),
 
             if (!_selectionMode)
               GestureDetector(
@@ -4420,8 +4420,8 @@ gradient: context.isDark
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
         colors: [
-          Colors.black.withOpacity(0.08),
-          Colors.black.withOpacity(0.03),
+         const Color(0xFF69383D),
+         const Color(0xFF69383D),
         ],
       ),
 border: Border.all(
@@ -4576,6 +4576,64 @@ border: Border.all(
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+
+class DesktopFlipCard extends StatefulWidget {
+  final Widget front;
+  final Widget back;
+  const DesktopFlipCard({super.key,required this.front,required this.back});
+
+  @override
+  State<DesktopFlipCard> createState() => _DesktopFlipCardState();
+}
+
+class _DesktopFlipCardState extends State<DesktopFlipCard> with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  bool _isFront = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(vsync: this,duration: const Duration(milliseconds: 500));
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _flip() {
+    if (_isFront) {
+      _controller.forward();
+    } else {
+      _controller.reverse();
+    }
+    _isFront = !_isFront;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: _flip,
+      child: AnimatedBuilder(
+        animation: _controller,
+        builder: (_, child) {
+          final angle = _controller.value * 3.1415926535;
+          return Transform(
+            alignment: Alignment.center,
+            transform: Matrix4.identity()..setEntry(3,2,0.001)..rotateY(angle),
+            child: angle <= 1.57 ? widget.front : Transform(
+              alignment: Alignment.center,
+              transform: Matrix4.identity()..rotateY(3.1415926535),
+              child: widget.back,
+            ),
+          );
+        },
       ),
     );
   }

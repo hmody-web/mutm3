@@ -7,9 +7,10 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter_dynamic_icon/flutter_dynamic_icon.dart';
 import 'package:share_plus/share_plus.dart';
-// ═══════════════════════════════════════════
-// استيراد الكلاسات المشتركة من player_service.dart
-// ═══════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════
+//  SETTINGS PAGE
+// ═══════════════════════════════════════════════════════════════
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -23,6 +24,7 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _stopOnClose = false;
   String _downloadQuality = 'medium';
   String _downloadPath = '';
+  bool _reelsMode = false; // ✦ وضع الريلز
 
   @override
   void initState() {
@@ -38,6 +40,7 @@ class _SettingsPageState extends State<SettingsPage> {
       _stopOnClose = prefs.getBool('stopOnClose') ?? false;
       _downloadQuality = prefs.getString('downloadQuality') ?? 'medium';
       _downloadPath = '${dir.path}/dndn';
+      _reelsMode = prefs.getBool('reelsMode') ?? false; // ✦ وضع الريلز
     });
   }
 
@@ -92,13 +95,12 @@ class _SettingsPageState extends State<SettingsPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // تم استبدال نص "الإعدادات" بالصورة وجعلها في المنتصف
                   Center(
                     child: Image.asset(
                       'assets/images/jna7.png',
-                      width: MediaQuery.of(context).size.width * 4, // تأخذ 70% من عرض الشاشة لتبدو مستطيلة ومتناسقة
-                      height: 60, // ارتفاع مناسب للشكل المستطيل
-                      fit: BoxFit.contain, // المحافظة على أبعاد الصورة بدون تشويه
+                      width: MediaQuery.of(context).size.width * 4,
+                      height: 60,
+                      fit: BoxFit.contain,
                       errorBuilder: (_, __, ___) => const Padding(
                         padding: EdgeInsets.symmetric(vertical: 20),
                         child: Text(
@@ -112,8 +114,7 @@ class _SettingsPageState extends State<SettingsPage> {
                       ),
                     ),
                   ),
-                  const SizedBox(height: 2), // زيادة المسافة قليلاً للتناسق
-              
+                  const SizedBox(height: 2),
                 ],
               ),
             ),
@@ -146,6 +147,13 @@ class _SettingsPageState extends State<SettingsPage> {
                     ),
                   ]),
                   const SizedBox(height: 16),
+
+                  // ✦✦✦ قسم مشغل الفيديو ✦✦✦
+                  _settingsSection('مشغل الفيديو', [
+                    _reelsTile(),
+                  ]),
+                  const SizedBox(height: 16),
+
                   _settingsSection('المظهر', [
                     ValueListenableBuilder<ThemeMode>(
                       valueListenable: ThemeNotifier.instance,
@@ -169,169 +177,168 @@ class _SettingsPageState extends State<SettingsPage> {
                         CupertinoIcons.folder_fill),
                     _qualityTile(),
                   ]),
-
-
-                  
                   const SizedBox(height: 16),
                   _settingsSection('الإدارة', [
-                                 GestureDetector(
-  onTap: () async {
-    final uri = Uri.parse('https://scrptaty.com');
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(
-        uri,
-        mode: LaunchMode.externalApplication,
-      );
-    }
-  },
-  child: Container(
-    decoration: BoxDecoration(
-      color: context.isDark
-          ? AppColors.darkSurface
-          : AppColors.surface,
-borderRadius: const BorderRadius.only(
-  topLeft: Radius.circular(16),
-  topRight: Radius.circular(16),
-),  
-border: Border(
-  top: BorderSide(
-    color: context.isDark
-        ? AppColors.darkDivider
-        : AppColors.divider,
-    width: 0.5,
-  ),
-  left: BorderSide(
-    color: context.isDark
-        ? AppColors.darkDivider
-        : AppColors.divider,
-    width: 0.5,
-  ),
-  right: BorderSide(
-    color: context.isDark
-        ? AppColors.darkDivider
-        : AppColors.divider,
-    width: 0.5,
-  ),
-),
-    ),
-    child: ListTile(
-      contentPadding:
-          const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      leading: Container(
-        width: 36,
-        height: 36,
-        decoration: BoxDecoration(
-color: context.isDark
-    ? const Color(0xFF3A1212)
-    : const Color(0xFFFFEBEB),          borderRadius: BorderRadius.circular(10),
-        ),
-child: Padding(
-  padding: const EdgeInsets.all(7),
-  child: ColorFiltered(
-    colorFilter: const ColorFilter.mode(
-      Color.fromARGB(255, 232, 39, 42),
-      BlendMode.srcIn,
-    ),
-    child: Image.asset(
-      'assets/images/scrptaty.png',
-      fit: BoxFit.contain,
-    ),
-  ),
-),
-      ),
-      title: Text(
-        'سكربتاتي',
-        style: TextStyle(
-          fontFamily: 'Tajawal',
-          fontSize: 14,
-          fontWeight: FontWeight.w600,
-          color: context.appText,
-        ),
-      ),
-      subtitle: Text(
-        'فريق مطوري تطبيق دندن',
-        style: TextStyle(
-          fontFamily: 'Tajawal',
-          fontSize: 12,
-          color: context.appTextSec,
-        ),
-      ),
-      trailing: Icon(
-        CupertinoIcons.chevron_left,
-        size: 18,
-        color: context.appTextSec,
-      ),
-    ),
-  ),
-),
-GestureDetector(
-  onTap: () async {
-Share.share(
-  'حمّل تطبيق دندن الآن \nhttps://scrptaty.com',
-);  },
-  child: Container(
-    decoration: BoxDecoration(
-      color: context.isDark
-          ? AppColors.darkSurface
-          : AppColors.surface,
-border: Border(
-  left: BorderSide(
-    color: context.isDark
-        ? AppColors.darkDivider
-        : AppColors.divider,
-    width: 0.5,
-  ),
-  right: BorderSide(
-    color: context.isDark
-        ? AppColors.darkDivider
-        : AppColors.divider,
-    width: 0.5,
-  ),
-),
-    ),
-    child: ListTile(
-      contentPadding:
-          const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      leading: Container(
-        width: 36,
-        height: 36,
-        decoration: BoxDecoration(
-          color: context.isDark
-              ? const Color(0xFF3A1212)
-              : const Color(0xFFFFEBEB),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: const Icon(
-          CupertinoIcons.share,
-          color: Color.fromARGB(255, 232, 39, 42),
-          size: 18,
-        ),
-      ),
-      title: Text(
-        'مشاركة التطبيق',
-        style: TextStyle(
-          fontFamily: 'Tajawal',
-          fontSize: 14,
-          fontWeight: FontWeight.w600,
-          color: context.appText,
-        ),
-      ),
-      subtitle: Text(
-        'شارك التطبيق مع اصدقائك لتجربة أمتع !',
-        style: TextStyle(
-          fontFamily: 'Tajawal',
-          fontSize: 12,
-          color: context.appTextSec,
-        ),
-      ),
-      trailing: Icon(
-        CupertinoIcons.chevron_left,
-        size: 18,
-        color: context.appTextSec,
-      ),
-    ),
-  ),
-),
+                    GestureDetector(
+                      onTap: () async {
+                        final uri = Uri.parse('https://scrptaty.com');
+                        if (await canLaunchUrl(uri)) {
+                          await launchUrl(
+                            uri,
+                            mode: LaunchMode.externalApplication,
+                          );
+                        }
+                      },
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: context.isDark
+                              ? AppColors.darkSurface
+                              : AppColors.surface,
+                          borderRadius: const BorderRadius.only(
+                            topLeft: Radius.circular(16),
+                            topRight: Radius.circular(16),
+                          ),
+                          border: Border(
+                            top: BorderSide(
+                              color: context.isDark
+                                  ? AppColors.darkDivider
+                                  : AppColors.divider,
+                              width: 0.5,
+                            ),
+                            left: BorderSide(
+                              color: context.isDark
+                                  ? AppColors.darkDivider
+                                  : AppColors.divider,
+                              width: 0.5,
+                            ),
+                            right: BorderSide(
+                              color: context.isDark
+                                  ? AppColors.darkDivider
+                                  : AppColors.divider,
+                              width: 0.5,
+                            ),
+                          ),
+                        ),
+                        child: ListTile(
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 4),
+                          leading: Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              color: context.isDark
+                                  ? const Color(0xFF3A1212)
+                                  : const Color(0xFFFFEBEB),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.all(7),
+                              child: ColorFiltered(
+                                colorFilter: const ColorFilter.mode(
+                                  Color.fromARGB(255, 232, 39, 42),
+                                  BlendMode.srcIn,
+                                ),
+                                child: Image.asset(
+                                  'assets/images/scrptaty.png',
+                                  fit: BoxFit.contain,
+                                ),
+                              ),
+                            ),
+                          ),
+                          title: Text(
+                            'سكربتاتي',
+                            style: TextStyle(
+                              fontFamily: 'Tajawal',
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: context.appText,
+                            ),
+                          ),
+                          subtitle: Text(
+                            'فريق مطوري تطبيق دندن',
+                            style: TextStyle(
+                              fontFamily: 'Tajawal',
+                              fontSize: 12,
+                              color: context.appTextSec,
+                            ),
+                          ),
+                          trailing: Icon(
+                            CupertinoIcons.chevron_left,
+                            size: 18,
+                            color: context.appTextSec,
+                          ),
+                        ),
+                      ),
+                    ),
+                    GestureDetector(
+                      onTap: () async {
+                        Share.share(
+                          'حمّل تطبيق دندن الآن \nhttps://scrptaty.com',
+                        );
+                      },
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: context.isDark
+                              ? AppColors.darkSurface
+                              : AppColors.surface,
+                          border: Border(
+                            left: BorderSide(
+                              color: context.isDark
+                                  ? AppColors.darkDivider
+                                  : AppColors.divider,
+                              width: 0.5,
+                            ),
+                            right: BorderSide(
+                              color: context.isDark
+                                  ? AppColors.darkDivider
+                                  : AppColors.divider,
+                              width: 0.5,
+                            ),
+                          ),
+                        ),
+                        child: ListTile(
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 4),
+                          leading: Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              color: context.isDark
+                                  ? const Color(0xFF3A1212)
+                                  : const Color(0xFFFFEBEB),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: const Icon(
+                              CupertinoIcons.share,
+                              color: Color.fromARGB(255, 232, 39, 42),
+                              size: 18,
+                            ),
+                          ),
+                          title: Text(
+                            'مشاركة التطبيق',
+                            style: TextStyle(
+                              fontFamily: 'Tajawal',
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: context.appText,
+                            ),
+                          ),
+                          subtitle: Text(
+                            'شارك التطبيق مع اصدقائك لتجربة أمتع !',
+                            style: TextStyle(
+                              fontFamily: 'Tajawal',
+                              fontSize: 12,
+                              color: context.appTextSec,
+                            ),
+                          ),
+                          trailing: Icon(
+                            CupertinoIcons.chevron_left,
+                            size: 18,
+                            color: context.appTextSec,
+                          ),
+                        ),
+                      ),
+                    ),
                     _actionTile(
                       'حذف جميع التنزيلات',
                       'مسح كل الملفات المحملة',
@@ -340,13 +347,109 @@ border: Border(
                       _clearDownloads,
                     ),
                   ]),
-   
+
                   const SizedBox(height: 100),
                 ],
               ),
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  // ✦✦✦ بطاقة وضع الريلز الخاصة ✦✦✦
+  Widget _reelsTile() {
+    final isDark = context.isDark;
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        leading: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: _reelsMode
+                  ? [AppColors.primary, AppColors.primaryDark]
+                  : [
+                      isDark ? AppColors.darkRedLight : AppColors.redLight,
+                      isDark ? AppColors.darkRedLight : AppColors.redLight,
+                    ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: _reelsMode
+                ? [
+                    BoxShadow(
+                        color: AppColors.primary.withOpacity(0.35),
+                        blurRadius: 8,
+                        offset: const Offset(0, 3)),
+                  ]
+                : [],
+          ),
+          child: Icon(
+            CupertinoIcons.play_rectangle_fill,
+            color: _reelsMode ? Colors.white : AppColors.primary,
+            size: 20,
+          ),
+        ),
+        title: Row(
+          children: [
+            Text(
+              'وضع الريلز',
+              style: TextStyle(
+                fontFamily: 'Tajawal',
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: isDark ? AppColors.darkText : AppColors.textPrimary,
+              ),
+            ),
+            const SizedBox(width: 8),
+            // بادج "جديد"
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: AppColors.primary,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: const Text(
+                'جديد',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontFamily: 'Tajawal',
+                  fontSize: 9,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
+        subtitle: Text(
+          _reelsMode
+              ? 'يشغّل الفيديوهات بتجربة ريلز انستكرام ✦'
+              : 'تشغيل الفيديو بأسلوب ريلز انستكرام وتيك توك',
+          style: TextStyle(
+            fontFamily: 'Tajawal',
+            fontSize: 12,
+            color: _reelsMode
+                ? AppColors.primary
+                : (isDark ? AppColors.darkTextSec : AppColors.textSecondary),
+          ),
+        ),
+        trailing: CupertinoSwitch(
+          value: _reelsMode,
+          activeColor: AppColors.primary,
+          onChanged: (v) {
+            setState(() => _reelsMode = v);
+            _savePref('reelsMode', v);
+            ReelsModeNotifier.instance.value = v;
+          },
+        ),
       ),
     );
   }
@@ -385,7 +488,9 @@ border: Border(
                   if (index < children.length - 1)
                     Divider(
                         height: 1,
-                        color: isDark ? AppColors.darkDivider : AppColors.divider,
+                        color: isDark
+                            ? AppColors.darkDivider
+                            : AppColors.divider,
                         indent: 16,
                         endIndent: 16),
                 ],
@@ -401,8 +506,7 @@ border: Border(
       Function(bool) onChanged) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return ListTile(
-      contentPadding:
-          const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       leading: Container(
         width: 36,
         height: 36,
@@ -410,7 +514,8 @@ border: Border(
           color: isDark ? AppColors.darkRedLight : AppColors.redLight,
           borderRadius: BorderRadius.circular(10),
         ),
-        child: Icon(icon, color: const Color.fromARGB(255, 232, 39, 42), size: 18),
+        child:
+            Icon(icon, color: const Color.fromARGB(255, 232, 39, 42), size: 18),
       ),
       title: Text(title,
           style: TextStyle(
@@ -422,17 +527,17 @@ border: Border(
           style: TextStyle(
               fontFamily: 'Tajawal',
               fontSize: 12,
-              color: isDark ? AppColors.darkTextSec : AppColors.textSecondary)),
-      trailing:
-          CupertinoSwitch(value: value, onChanged: onChanged, activeColor: AppColors.primary),
+              color:
+                  isDark ? AppColors.darkTextSec : AppColors.textSecondary)),
+      trailing: CupertinoSwitch(
+          value: value, onChanged: onChanged, activeColor: AppColors.primary),
     );
   }
 
   Widget _infoTile(String title, String value, IconData icon) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return ListTile(
-      contentPadding:
-          const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       leading: Container(
         width: 36,
         height: 36,
@@ -452,20 +557,23 @@ border: Border(
           style: TextStyle(
               fontFamily: 'Tajawal',
               fontSize: 13,
-              color: isDark ? AppColors.darkTextSec : AppColors.textSecondary)),
+              color:
+                  isDark ? AppColors.darkTextSec : AppColors.textSecondary)),
     );
   }
 
   Widget _qualityTile() {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return ListTile(
-      contentPadding:
-          const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       leading: Container(
         width: 36,
         height: 36,
         decoration: BoxDecoration(
-          color: isDark ? const Color.from(alpha: 1, red: 0.227, green: 0.071, blue: 0.071) : AppColors.redLight,
+          color: isDark
+              ? const Color.from(
+                  alpha: 1, red: 0.227, green: 0.071, blue: 0.071)
+              : AppColors.redLight,
           borderRadius: BorderRadius.circular(10),
         ),
         child: const Icon(CupertinoIcons.dial_fill,
@@ -483,10 +591,14 @@ border: Border(
         children: const {
           'high': Padding(
               padding: EdgeInsets.symmetric(horizontal: 8),
-              child: Text('عالية', style: TextStyle(fontSize: 11, fontFamily: 'Tajawal'))),
+              child: Text('عالية',
+                  style:
+                      TextStyle(fontSize: 11, fontFamily: 'Tajawal'))),
           'medium': Padding(
               padding: EdgeInsets.symmetric(horizontal: 8),
-              child: Text('متوسطة', style: TextStyle(fontSize: 11, fontFamily: 'Tajawal'))),
+              child: Text('متوسطة',
+                  style:
+                      TextStyle(fontSize: 11, fontFamily: 'Tajawal'))),
         },
         onValueChanged: (v) {
           if (v != null) {
@@ -502,8 +614,7 @@ border: Border(
       VoidCallback onTap) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return ListTile(
-      contentPadding:
-          const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       leading: Container(
         width: 36,
         height: 36,
@@ -516,13 +627,29 @@ border: Border(
       title: Text(title,
           style: TextStyle(
               fontFamily: 'Tajawal',
-              fontSize: 14, fontWeight: FontWeight.w500, color: color)),
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: color)),
       subtitle: Text(subtitle,
           style: TextStyle(
               fontFamily: 'Tajawal',
               fontSize: 12,
-              color: isDark ? AppColors.darkTextSec : AppColors.textSecondary)),
+              color:
+                  isDark ? AppColors.darkTextSec : AppColors.textSecondary)),
       onTap: onTap,
     );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  REELS MODE NOTIFIER — مشاركة حالة وضع الريلز
+// ═══════════════════════════════════════════════════════════════
+class ReelsModeNotifier extends ValueNotifier<bool> {
+  ReelsModeNotifier._() : super(false);
+  static final ReelsModeNotifier instance = ReelsModeNotifier._();
+
+  Future<void> load() async {
+    final prefs = await SharedPreferences.getInstance();
+    value = prefs.getBool('reelsMode') ?? false;
   }
 }

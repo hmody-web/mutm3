@@ -29,6 +29,7 @@ import 'package:http/http.dart' as http;
 import 'listen_page.dart';
 import 'browse_page.dart';
 import 'settings_page.dart';
+import 'reels_player.dart';
 
 // ═══════════════════════════════════════════════════════════
 //  MODEL — مجلد موسيقى
@@ -1168,211 +1169,302 @@ class _ListenPageState extends State<ListenPage> with TickerProviderStateMixin {
     );
   }
 
-  // ── شريط الإجراءات العائم عند التحديد ──
+  // ── شريط الإجراءات العائم عند التحديد (زجاجي مدمج) ──
   Widget _buildSelectionActionBar() {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    // احسب الارتفاع الصحيح: فوق المشغل الصغير + البار الزجاجي
     final bottomInset = MediaQuery.of(context).padding.bottom;
-    // ارتفاع المشغل الصغير ≈ 72 + ارتفاع الـ navbar ≈ 65 + padding
-    const miniPlayerHeight = 72.0;
+    // ارتفاع الـ navbar الثابت
     const navbarHeight = 65.0;
-    final totalBottom = bottomInset + miniPlayerHeight + navbarHeight + 12;
+    // المشغل الصغير: 72 عندما يكون نشطاً، 0 عندما لا يوجد
+    // نستخدم ValueListenableBuilder لمراقبة حالة المشغل بشكل انسيابي
+    return ValueListenableBuilder<int>(
+      valueListenable: audioService.currentIndex,
+      builder: (context, currentIdx, _) {
+        final hasMiniPlayer = currentIdx >= 0 && audioService.currentItem != null;
+        const miniPlayerHeight = 72.0;
+        final targetBottom = bottomInset +
+            navbarHeight +
+            (hasMiniPlayer ? miniPlayerHeight : 0) +
+            22;
 
-    return Positioned(
-      bottom: totalBottom,
-      left: 16,
-      right: 16,
-      child: AnimatedBuilder(
-        animation: _selectionBarAnim,
-        builder: (_, __) => Transform.translate(
-          offset: Offset(0, 100 * (1 - _selectionBarAnim.value)),
-          child: Opacity(
-            opacity: _selectionBarAnim.value.clamp(0.0, 1.0),
-            child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-              decoration: BoxDecoration(
-                color: isDark ? AppColors.darkSurface : Colors.white,
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: isDark ? 0.45 : 0.18),
-                    blurRadius: 30,
-                    offset: const Offset(0, 8),
-                  ),
-                  BoxShadow(
-                    color: AppColors.primary.withValues(alpha: 0.06),
-                    blurRadius: 20,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-                border: Border.all(
-                  color: isDark
-                      ? AppColors.darkDivider.withValues(alpha: 0.5)
-                      : AppColors.divider.withValues(alpha: 0.8),
-                  width: 0.8,
-                ),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // ── صف العداد وزر الإلغاء ──
-                  Row(
-                    children: [
-                      Container(
+        return AnimatedPositioned(
+          duration: const Duration(milliseconds: 350),
+          curve: Curves.easeOutCubic,
+          bottom: targetBottom,
+          left: 20,
+          right: 20,
+          child: AnimatedBuilder(
+            animation: _selectionBarAnim,
+            builder: (_, __) {
+              final t = _selectionBarAnim.value.clamp(0.0, 1.0);
+              return Transform.translate(
+                offset: Offset(0, 80 * (1 - t)),
+                child: Opacity(
+                  opacity: t,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(22),
+                    child: BackdropFilter(
+                      filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+                      child: Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 5),
+                            horizontal: 14, vertical: 10),
                         decoration: BoxDecoration(
-                          color: AppColors.primary.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Text(
-                          '${_selectedPaths.length} محدد',
-                          style: TextStyle(
-                            fontFamily: 'Tajawal',
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.primary,
+                          // طبقة زجاجية متدرجة
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: isDark
+                                ? [
+                                    const Color(0xFF1E1E2E).withValues(alpha: 0.82),
+                                    const Color(0xFF16213E).withValues(alpha: 0.88),
+                                  ]
+                                : [
+                                    Colors.white.withValues(alpha: 0.78),
+                                    Colors.white.withValues(alpha: 0.92),
+                                  ],
                           ),
-                        ),
-                      ),
-                      const Spacer(),
-                      GestureDetector(
-                        onTap: _toggleSelectionMode,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 5),
-                          decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(22),
+                          border: Border.all(
                             color: isDark
-                                ? AppColors.darkSurfaceAlt
-                                : AppColors.surfaceAlt,
-                            borderRadius: BorderRadius.circular(10),
+                                ? Colors.white.withValues(alpha: 0.10)
+                                : Colors.white.withValues(alpha: 0.70),
+                            width: 1.0,
                           ),
-                          child: Text(
-                            'إلغاء',
-                            style: TextStyle(
-                              fontFamily: 'Tajawal',
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: isDark
-                                  ? AppColors.darkTextSec
-                                  : AppColors.textSecondary,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black
+                                  .withValues(alpha: isDark ? 0.50 : 0.14),
+                              blurRadius: 32,
+                              spreadRadius: -2,
+                              offset: const Offset(0, 10),
                             ),
-                          ),
+                            BoxShadow(
+                              color: AppColors.primary
+                                  .withValues(alpha: isDark ? 0.12 : 0.08),
+                              blurRadius: 20,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
                         ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  // ── صف الأزرار ──
-                  Row(
-                    children: [
-                      // ── زر النقل ──
-                      Expanded(
-                        child: GestureDetector(
-                          onTap: _selectedPaths.isNotEmpty
-                              ? _moveSelectedToFolder
-                              : null,
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 200),
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            decoration: BoxDecoration(
-                              color: _selectedPaths.isNotEmpty
-                                  ? AppColors.primary.withValues(alpha: 0.12)
-                                  : (isDark
-                                      ? AppColors.darkSurfaceAlt
-                                      : AppColors.surfaceAlt),
-                              borderRadius: BorderRadius.circular(14),
-                              border: _selectedPaths.isNotEmpty
-                                  ? Border.all(
-                                      color: AppColors.primary
-                                          .withValues(alpha: 0.35),
-                                      width: 1)
-                                  : null,
+                        child: Row(
+                          children: [
+                            // ── عداد المحدد ──
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 5),
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    AppColors.primary.withValues(alpha: 0.22),
+                                    AppColors.primary.withValues(alpha: 0.12),
+                                  ],
+                                ),
+                                borderRadius: BorderRadius.circular(30),
+                                border: Border.all(
+                                  color:
+                                      AppColors.primary.withValues(alpha: 0.30),
+                                  width: 0.8,
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    CupertinoIcons.checkmark_circle_fill,
+                                    size: 13,
+                                    color: AppColors.primary,
+                                  ),
+                                  const SizedBox(width: 5),
+                                  Text(
+                                    '${_selectedPaths.length}',
+                                    style: TextStyle(
+                                      fontFamily: 'Tajawal',
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w800,
+                                      color: AppColors.primary,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(CupertinoIcons.folder_fill,
-                                    size: 20,
-                                    color: _selectedPaths.isNotEmpty
-                                        ? AppColors.primary
-                                        : context.appTextSec),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'نقل',
-                                  style: TextStyle(
-                                    fontFamily: 'Tajawal',
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                    color: _selectedPaths.isNotEmpty
-                                        ? AppColors.primary
-                                        : context.appTextSec,
+                            const SizedBox(width: 10),
+
+                            // ── زر النقل ──
+                            Expanded(
+                              child: GestureDetector(
+                                onTap: _selectedPaths.isNotEmpty
+                                    ? _moveSelectedToFolder
+                                    : null,
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 200),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 9),
+                                  decoration: BoxDecoration(
+                                    gradient: _selectedPaths.isNotEmpty
+                                        ? LinearGradient(
+                                            colors: [
+                                              AppColors.primary
+                                                  .withValues(alpha: 0.20),
+                                              AppColors.primary
+                                                  .withValues(alpha: 0.10),
+                                            ],
+                                          )
+                                        : null,
+                                    color: _selectedPaths.isEmpty
+                                        ? (isDark
+                                            ? Colors.white.withValues(alpha: 0.05)
+                                            : Colors.black
+                                                .withValues(alpha: 0.04))
+                                        : null,
+                                    borderRadius: BorderRadius.circular(13),
+                                    border: _selectedPaths.isNotEmpty
+                                        ? Border.all(
+                                            color: AppColors.primary
+                                                .withValues(alpha: 0.35),
+                                            width: 0.8)
+                                        : Border.all(
+                                            color: isDark
+                                                ? Colors.white
+                                                    .withValues(alpha: 0.07)
+                                                : Colors.black
+                                                    .withValues(alpha: 0.07),
+                                            width: 0.6),
+                                  ),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        CupertinoIcons.folder_fill,
+                                        size: 15,
+                                        color: _selectedPaths.isNotEmpty
+                                            ? AppColors.primary
+                                            : context.appTextSec,
+                                      ),
+                                      const SizedBox(width: 5),
+                                      Text(
+                                        'نقل',
+                                        style: TextStyle(
+                                          fontFamily: 'Tajawal',
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w700,
+                                          color: _selectedPaths.isNotEmpty
+                                              ? AppColors.primary
+                                              : context.appTextSec,
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
-                              ],
+                              ),
                             ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      // ── زر الحذف ──
-                      Expanded(
-                        child: GestureDetector(
-                          onTap: _selectedPaths.isNotEmpty
-                              ? _deleteSelected
-                              : null,
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 200),
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            decoration: BoxDecoration(
-                              color: _selectedPaths.isNotEmpty
-                                  ? const Color(0xFFB71C1C)
-                                      .withValues(alpha: 0.12)
-                                  : (isDark
-                                      ? AppColors.darkSurfaceAlt
-                                      : AppColors.surfaceAlt),
-                              borderRadius: BorderRadius.circular(14),
-                              border: _selectedPaths.isNotEmpty
-                                  ? Border.all(
-                                      color: const Color(0xFFB71C1C)
-                                          .withValues(alpha: 0.35),
-                                      width: 1)
-                                  : null,
-                            ),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(CupertinoIcons.trash_fill,
-                                    size: 20,
-                                    color: _selectedPaths.isNotEmpty
-                                        ? const Color(0xFFEF5350)
-                                        : context.appTextSec),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'حذف',
-                                  style: TextStyle(
-                                    fontFamily: 'Tajawal',
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                    color: _selectedPaths.isNotEmpty
-                                        ? const Color(0xFFEF5350)
-                                        : context.appTextSec,
+                            const SizedBox(width: 8),
+
+                            // ── زر الحذف ──
+                            Expanded(
+                              child: GestureDetector(
+                                onTap: _selectedPaths.isNotEmpty
+                                    ? _deleteSelected
+                                    : null,
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 200),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 9),
+                                  decoration: BoxDecoration(
+                                    gradient: _selectedPaths.isNotEmpty
+                                        ? const LinearGradient(
+                                            colors: [
+                                              Color(0x33EF5350),
+                                              Color(0x1AEF5350),
+                                            ],
+                                          )
+                                        : null,
+                                    color: _selectedPaths.isEmpty
+                                        ? (isDark
+                                            ? Colors.white.withValues(alpha: 0.05)
+                                            : Colors.black
+                                                .withValues(alpha: 0.04))
+                                        : null,
+                                    borderRadius: BorderRadius.circular(13),
+                                    border: _selectedPaths.isNotEmpty
+                                        ? Border.all(
+                                            color: const Color(0xFFEF5350)
+                                                .withValues(alpha: 0.35),
+                                            width: 0.8)
+                                        : Border.all(
+                                            color: isDark
+                                                ? Colors.white
+                                                    .withValues(alpha: 0.07)
+                                                : Colors.black
+                                                    .withValues(alpha: 0.07),
+                                            width: 0.6),
+                                  ),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        CupertinoIcons.trash_fill,
+                                        size: 15,
+                                        color: _selectedPaths.isNotEmpty
+                                            ? const Color(0xFFEF5350)
+                                            : context.appTextSec,
+                                      ),
+                                      const SizedBox(width: 5),
+                                      Text(
+                                        'حذف',
+                                        style: TextStyle(
+                                          fontFamily: 'Tajawal',
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w700,
+                                          color: _selectedPaths.isNotEmpty
+                                              ? const Color(0xFFEF5350)
+                                              : context.appTextSec,
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
-                              ],
+                              ),
                             ),
-                          ),
+                            const SizedBox(width: 8),
+
+                            // ── زر إلغاء ──
+                            GestureDetector(
+                              onTap: _toggleSelectionMode,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 11, vertical: 9),
+                                decoration: BoxDecoration(
+                                  color: isDark
+                                      ? Colors.white.withValues(alpha: 0.08)
+                                      : Colors.black.withValues(alpha: 0.06),
+                                  borderRadius: BorderRadius.circular(13),
+                                  border: Border.all(
+                                    color: isDark
+                                        ? Colors.white.withValues(alpha: 0.10)
+                                        : Colors.black.withValues(alpha: 0.08),
+                                    width: 0.6,
+                                  ),
+                                ),
+                                child: Icon(
+                                  CupertinoIcons.xmark,
+                                  size: 15,
+                                  color: isDark
+                                      ? AppColors.darkTextSec
+                                      : AppColors.textSecondary,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                    ],
+                    ),
                   ),
-                ],
-              ),
-            ),
+                ),
+              );
+            },
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
@@ -3080,7 +3172,39 @@ class _FolderItemTileState extends State<_FolderItemTile>
                     _closeSwipe();
                     return;
                   }
-                  // تشغيل الأغنية كما هو في صفحة استمع
+
+                  // ✦ وضع الريلز — يفتح مشغل الريلز للفيديوهات فقط
+                  if (ReelsModeNotifier.instance.value && widget.item.isVideo) {
+                    final videoItems = widget.allItems.where((e) => e.isVideo).toList();
+                    final videoIndex = videoItems.indexOf(widget.item);
+                    Navigator.of(context).push(
+                      PageRouteBuilder(
+                        pageBuilder: (_, __, ___) => ReelsVideoPlayer(
+                          items: videoItems,
+                          initialIndex: videoIndex < 0 ? 0 : videoIndex,
+                          folders: const [],
+                          onFoldersChanged: () async {},
+                        ),
+                        transitionsBuilder: (_, anim, __, child) {
+                          return FadeTransition(
+                            opacity: anim,
+                            child: SlideTransition(
+                              position: Tween<Offset>(
+                                begin: const Offset(0, 1),
+                                end: Offset.zero,
+                              ).animate(CurvedAnimation(
+                                  parent: anim, curve: Curves.easeOutCubic)),
+                              child: child,
+                            ),
+                          );
+                        },
+                        transitionDuration: const Duration(milliseconds: 450),
+                      ),
+                    );
+                    return;
+                  }
+
+                  // المشغل الأصلي (صوت أو وضع الريلز معطّل)
                   audioService.playList(
                     List<LocalMediaItem>.unmodifiable(widget.allItems),
                     widget.index,
@@ -3652,6 +3776,39 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
                     _closeSwipe();
                     return;
                   }
+
+                  // ✦ وضع الريلز — يفتح مشغل الريلز للفيديوهات فقط
+                  if (ReelsModeNotifier.instance.value && widget.item.isVideo) {
+                    final videoItems = widget.allItems.where((e) => e.isVideo).toList();
+                    final videoIndex = videoItems.indexOf(widget.item);
+                    Navigator.of(context).push(
+                      PageRouteBuilder(
+                        pageBuilder: (_, __, ___) => ReelsVideoPlayer(
+                          items: videoItems,
+                          initialIndex: videoIndex < 0 ? 0 : videoIndex,
+                          folders: const [],
+                          onFoldersChanged: () async {},
+                        ),
+                        transitionsBuilder: (_, anim, __, child) {
+                          return FadeTransition(
+                            opacity: anim,
+                            child: SlideTransition(
+                              position: Tween<Offset>(
+                                begin: const Offset(0, 1),
+                                end: Offset.zero,
+                              ).animate(CurvedAnimation(
+                                  parent: anim, curve: Curves.easeOutCubic)),
+                              child: child,
+                            ),
+                          );
+                        },
+                        transitionDuration: const Duration(milliseconds: 450),
+                      ),
+                    );
+                    return;
+                  }
+
+                  // المشغل الأصلي (صوت أو وضع الريلز معطّل)
                   audioService.playList(
                     List<LocalMediaItem>.unmodifiable(widget.allItems),
                     widget.index,

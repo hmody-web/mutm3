@@ -53,7 +53,9 @@ Future<void> main() async {
     statusBarColor: Colors.transparent,
     statusBarBrightness: Brightness.light,
   ));
-
+await SystemChrome.setPreferredOrientations([
+  DeviceOrientation.portraitUp,
+]);
   _warmUpDioConnection();
   runApp(const Mustami3App());
 }
@@ -931,7 +933,8 @@ class _MainShellState extends State<MainShell> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: context.appBg,
+  resizeToAvoidBottomInset: false,
+  backgroundColor: context.appBg,
       body: GestureDetector(
         onHorizontalDragEnd: _onSwipe,
         child: Stack(children: [
@@ -4087,7 +4090,7 @@ Positioned(
   height: totalH -
     ((MediaQuery.of(context).size.width * (9 / 16)) +
     MediaQuery.of(context).padding.top +
-    68),
+    66),
   child: ClipRect(
     child: BackdropFilter(
       filter: ImageFilter.blur(
@@ -4101,9 +4104,9 @@ Positioned(
             end: Alignment.topCenter,
             colors: [
               Color(0xD0A30000),
-              Color(0x88E8272A),
+              Color.fromARGB(155, 163, 0, 0),
+              Color.fromARGB(131, 232, 39, 42),
               Color(0x40C0181B),
-              Color(0x12A01015),
               Colors.transparent,
             ],
             stops: [0.0, 0.32, 0.58, 0.82, 1.0],

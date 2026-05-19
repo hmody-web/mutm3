@@ -511,6 +511,16 @@ class AudioPlayerService {
     isRepeat.value = v;
     // نبقى دائماً على LoopMode.off حتى تعمل أزرار التالي/السابق في الإشعار
     player.setLoopMode(LoopMode.off);
+    // إذا فُعّل التكرار والأغنية منتهية حالياً → أعِد التشغيل فوراً
+    if (v && player.processingState == ProcessingState.completed) {
+      _isSettingSource = true;
+      _userPaused = false;
+      player.seek(Duration.zero).then((_) {
+        _isSettingSource = false;
+        videoLoopSignal.value++;
+        try { player.play(); } catch (_) {}
+      }).catchError((_) { _isSettingSource = false; });
+    }
   }
 
   Future<void> init() async {
@@ -542,14 +552,22 @@ class AudioPlayerService {
       }
     });
 
-    // ── انتهاء الأغنية — نُدير التكرار يدوياً (طريقتان مزدوجتان للضمان الكامل) ──
+    // ── انتهاء الأغنية — نُدير التكرار يدوياً (ثلاث طرق للضمان الكامل) ──
     // الطريقة ١: processingStateStream.completed
-    // الطريقة ٢: positionStream fallback (تعمل حتى لو لم يُطلق completed)
+    // الطريقة ٢: positionStream fallback (آخر 300ms)
+    // الطريقة ٣: playingStream — عند توقف التشغيل بعد اكتمال الأغنية
     bool _repeatInProgress = false; // منع التكرار المزدوج
+    DateTime? _lastRepeatTime; // منع التكرار المتكرر في فترة قصيرة
 
     void _doRepeat() {
       if (_repeatInProgress) return;
       if (!isRepeat.value) return;
+      if (_isSettingSource) return;
+      // منع التكرار أكثر من مرة في 500ms
+      final now = DateTime.now();
+      if (_lastRepeatTime != null &&
+          now.difference(_lastRepeatTime!).inMilliseconds < 500) return;
+      _lastRepeatTime = now;
       _repeatInProgress = true;
       _userPaused = false;
       _isSettingSource = true;
@@ -576,24 +594,33 @@ class AudioPlayerService {
       }
     });
 
-    // ── Fallback: مراقبة Position مقارنةً بـ Duration ──
+    // ── Fallback ١: مراقبة Position ──
     // يُغطي حالات عدم إطلاق ProcessingState.completed للملفات المحلية
-    StreamSubscription? _positionRepeatSub;
-    _positionRepeatSub = player.positionStream.listen((pos) {
+    player.positionStream.listen((pos) {
       if (!isRepeat.value) return;
       if (_repeatInProgress) return;
       if (_isSettingSource) return;
       final dur = player.duration;
       if (dur == null || dur.inMilliseconds <= 0) return;
-      // إذا وصلنا لنهاية الأغنية (آخر 200ms) والمشغّل لا يعزف
+      // إذا وصلنا لنهاية الأغنية (آخر 300ms) والمشغّل لا يعزف
       if (!player.playing &&
-          pos.inMilliseconds >= dur.inMilliseconds - 200 &&
+          pos.inMilliseconds >= dur.inMilliseconds - 300 &&
           player.processingState != ProcessingState.loading &&
           player.processingState != ProcessingState.buffering) {
         _doRepeat();
       }
     });
-    // نُلغي الاشتراك عند تدمير الخدمة فقط (يبقى حياً طوال عمر التطبيق)
+
+    // ── Fallback ٢: مراقبة حالة التشغيل عند completed ──
+    player.playingStream.listen((playing) {
+      if (playing) return;
+      if (!isRepeat.value) return;
+      if (_repeatInProgress) return;
+      if (_isSettingSource) return;
+      if (player.processingState == ProcessingState.completed) {
+        _doRepeat();
+      }
+    });
 
     // ── حالة التشغيل/الإيقاف ──
     _playingSub = player.playingStream.listen((playing) {
@@ -3627,6 +3654,129 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                       },
                     );
                   },
+                ),
+              ),
+
+              const SizedBox(height: 8),
+
+              // ── صف أزرار التكرار والعشوائي ──
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    // زر التكرار
+                    ValueListenableBuilder<bool>(
+                      valueListenable: audioService.isRepeat,
+                      builder: (_, isRepeat, __) {
+                        return GestureDetector(
+                          onTap: () => audioService.setRepeat(!isRepeat),
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 200),
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: isRepeat
+                                  ? AppColors.primary.withOpacity(0.15)
+                                  : controlBg,
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: isRepeat
+                                    ? AppColors.primary.withOpacity(0.6)
+                                    : (isDark ? Colors.white.withOpacity(0.10) : Colors.black.withOpacity(0.08)),
+                                width: 1,
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  CupertinoIcons.repeat_1,
+                                  color: isRepeat ? AppColors.primary : textColor,
+                                  size: 18,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  'تكرار',
+                                  style: TextStyle(
+                                    color: isRepeat ? AppColors.primary : textColor,
+                                    fontSize: 13,
+                                    fontFamily: 'Tajawal',
+                                    fontWeight: isRepeat ? FontWeight.w700 : FontWeight.w500,
+                                  ),
+                                ),
+                                if (isRepeat) ...[
+                                  const SizedBox(width: 6),
+                                  Container(
+                                    width: 7, height: 7,
+                                    decoration: const BoxDecoration(
+                                      color: AppColors.primary,
+                                      shape: BoxShape.circle,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(width: 12),
+                    // زر العشوائي
+                    ValueListenableBuilder<bool>(
+                      valueListenable: audioService.isShuffle,
+                      builder: (_, isShuffle, __) {
+                        return GestureDetector(
+                          onTap: () => audioService.isShuffle.value = !isShuffle,
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 200),
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: isShuffle
+                                  ? AppColors.primary.withOpacity(0.15)
+                                  : controlBg,
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: isShuffle
+                                    ? AppColors.primary.withOpacity(0.6)
+                                    : (isDark ? Colors.white.withOpacity(0.10) : Colors.black.withOpacity(0.08)),
+                                width: 1,
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  CupertinoIcons.shuffle,
+                                  color: isShuffle ? AppColors.primary : textColor,
+                                  size: 18,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  'عشوائي',
+                                  style: TextStyle(
+                                    color: isShuffle ? AppColors.primary : textColor,
+                                    fontSize: 13,
+                                    fontFamily: 'Tajawal',
+                                    fontWeight: isShuffle ? FontWeight.w700 : FontWeight.w500,
+                                  ),
+                                ),
+                                if (isShuffle) ...[
+                                  const SizedBox(width: 6),
+                                  Container(
+                                    width: 7, height: 7,
+                                    decoration: const BoxDecoration(
+                                      color: AppColors.primary,
+                                      shape: BoxShape.circle,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ],
                 ),
               ),
 

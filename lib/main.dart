@@ -504,13 +504,13 @@ class AudioPlayerService {
     await playAtIndex(index);
   }
 
-  /// ضبط التكرار — نستخدم LoopMode.one عند تفعيل التكرار كي تتكرر الأغنية الحالية
-  /// وليس فقط عند نهاية القائمة. أزرار التالي/السابق تعمل لأننا نستخدم seek(index) مباشرة.
+  /// ضبط التكرار — دائماً LoopMode.off حتى تعمل أزرار التالي/السابق في الإشعار.
+  /// التكرار يُدار يدوياً: نستمع لـ currentIndexStream ونُعيد الأغنية إذا تغيّر الفهرس
+  /// تلقائياً (نهاية الأغنية)، لكن نسمح بالتغيير إذا جاء من playNext/playPrevious.
   void setRepeat(bool v) {
     isRepeat.value = v;
-    // LoopMode.one يجعل just_audio يُكرر الأغنية الحالية تلقائياً بدون انتظار completed
-    // LoopMode.off يعود للسلوك العادي (انتقال للأغنية التالية)
-    player.setLoopMode(v ? LoopMode.one : LoopMode.off);
+    // نبقى دائماً على LoopMode.off حتى تعمل أزرار الإشعار
+    player.setLoopMode(LoopMode.off);
     // إذا فُعّل التكرار والأغنية منتهية حالياً → أعِد التشغيل فوراً
     if (v && player.processingState == ProcessingState.completed) {
       _userPaused = false;
@@ -537,6 +537,24 @@ class AudioPlayerService {
       if (_isSettingSource) return;
 
       if (rawIdx != currentIndex.value) {
+        // ── منطق التكرار: هل هذا انتقال تلقائي (نهاية الأغنية) أم يدوي (next/prev)؟ ──
+        // _expectedIndex يُحدَّث من playNext/playPrevious قبل الـ seek
+        // إذا rawIdx != _expectedIndex → الانتقال تلقائي من just_audio
+        final isAutoAdvance = rawIdx != _expectedIndex;
+        if (isAutoAdvance && isRepeat.value) {
+          // التكرار مفعّل وهذا انتقال تلقائي → أعِد الأغنية السابقة (currentIndex.value)
+          final repeatIdx = currentIndex.value;
+          _userPaused = false;
+          Future.microtask(() async {
+            try {
+              await player.seek(Duration.zero, index: repeatIdx);
+              videoLoopSignal.value++;
+              await player.play();
+            } catch (_) {}
+          });
+          return; // لا تُحدّث currentIndex
+        }
+
         currentIndex.value = rawIdx;
         playlist.value = list;
         if (!isReelsMode) isVisible.value = true;
@@ -550,12 +568,24 @@ class AudioPlayerService {
       }
     });
 
-    // ── انتهاء الأغنية — نُدير التكرار يدوياً ──
-    // ── LoopMode.one يُدير التكرار تلقائياً — لا حاجة لإدارة يدوية ──
-    // _processSub يبقى للاستماع لحالات أخرى مستقبلاً إن لزم
+    // ── انتهاء القائمة (آخر أغنية) — أعِد تشغيل الأغنية الحالية إذا كان التكرار مفعّلاً ──
+    // ملاحظة: هذا يُستدعى فقط عند آخر أغنية في القائمة (LoopMode.off)
+    // الانتقالات وسط القائمة يعالجها _indexSub أعلاه
+    bool _repeatInProgress = false;
     _processSub = player.processingStateStream.distinct().listen((state) {
-      // LoopMode.one يُعيد الأغنية الحالية تلقائياً عند اكتمالها
-      // LoopMode.off ينتقل للأغنية التالية تلقائياً — لا تدخل يدوي مطلوب
+      if (state == ProcessingState.completed) {
+        if (isRepeat.value && !_repeatInProgress && !_isSettingSource) {
+          _repeatInProgress = true;
+          _userPaused = false;
+          player.seek(Duration.zero).then((_) {
+            videoLoopSignal.value++;
+            _repeatInProgress = false;
+            try { player.play(); } catch (_) {}
+          }).catchError((_) { _repeatInProgress = false; });
+        }
+      } else {
+        _repeatInProgress = false;
+      }
     });
 
     // ── حالة التشغيل/الإيقاف ──
@@ -662,8 +692,8 @@ class AudioPlayerService {
           preload: false,
         );
 
-        // طبّق وضع التكرار الحالي بعد تحميل المصدر
-        await player.setLoopMode(isRepeat.value ? LoopMode.one : LoopMode.off);
+        // دائماً LoopMode.off — التكرار يُدار يدوياً عبر _indexSub و _processSub
+        await player.setLoopMode(LoopMode.off);
 
         _isSettingSource = false;
         try { await player.play(); } catch (_) {}

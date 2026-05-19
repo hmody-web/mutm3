@@ -1800,6 +1800,7 @@ class _ListenPageState extends State<ListenPage> with TickerProviderStateMixin {
                                     color: context.appTextSec,
                                   ),
                                 ),
+                              
                               ),
                             )
                           else
@@ -2250,8 +2251,9 @@ class _ListenPageState extends State<ListenPage> with TickerProviderStateMixin {
                           : CupertinoIcons.square_grid_2x2,
                       key: ValueKey(_gridView),
                       size: 17,
-                      color:
-                          _gridView ? Colors.white : context.appTextSec,
+                      color: _gridView
+    ? (isDark ? Colors.white : const Color(0xFF83494F))
+    : context.appTextSec,
                     ),
                   ),
                 ),

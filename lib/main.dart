@@ -35,8 +35,6 @@ import 'package:flutter_dynamic_icon/flutter_dynamic_icon.dart';
 // ─────────────────────────────────────────────
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final session = await AudioSession.instance;
-  await session.configure(const AudioSessionConfiguration.music());
 
   await JustAudioBackground.init(
     androidNotificationChannelId: 'com.mustami3.audio',
@@ -422,6 +420,19 @@ class AudioPlayerService {
   final ValueNotifier<int> currentIndex = ValueNotifier(-1);
   final ValueNotifier<bool> isVisible = ValueNotifier(false);
 
+  // ── إعدادات التشغيل الدائمة (تُحفظ عبر تغيير الأغاني) ──
+  final ValueNotifier<bool> isRepeat = ValueNotifier(false);
+  final ValueNotifier<bool> isShuffle = ValueNotifier(false);
+
+  // ── إشارة للـ video player كي يُعيد الـ seek للبداية عند التكرار ──
+  // القيمة تتزايد عند كل تكرار — أي مستمع يرصد التغيير ويُعيد seek
+  final ValueNotifier<int> videoLoopSignal = ValueNotifier(0);
+
+  void setRepeat(bool v) {
+    isRepeat.value = v;
+    player.setLoopMode(v ? LoopMode.one : LoopMode.off);
+  }
+
   StreamSubscription? _completionSub;
   StreamSubscription? _indexSub;
   StreamSubscription? _playingSub;
@@ -433,6 +444,8 @@ class AudioPlayerService {
 
   // مؤشر لتتبع ما إذا كان الـ pause ناتج عن انتقال تلقائي بين أغاني
   bool _isAutoTransitioning = false;
+  // guard لمنع معالجة completed مرتين أثناء التبديل
+  bool _completionHandled = false;
 
   Future<void> init() async {
     final session = await AudioSession.instance;
@@ -443,8 +456,12 @@ class AudioPlayerService {
         .distinct()
         .listen((state) {
       if (state == ProcessingState.completed) {
+        if (_completionHandled || _isSwitching) return;
+        _completionHandled = true;
         _isAutoTransitioning = true;
         _autoNext();
+      } else if (state == ProcessingState.ready || state == ProcessingState.buffering) {
+        _completionHandled = false;
       }
     });
 
@@ -460,23 +477,16 @@ class AudioPlayerService {
       final currentRawIdx = hasPrev ? 1 : 0;
       if (rawIdx < currentRawIdx) {
         // ── الضغط على السابق من الإشعار/شاشة القفل ──
-        // نُعطّل loopMode مؤقتاً عند الانتقال اليدوي حتى لا تُعاد نفس الأغنية
+        // التكرار لا يُطبَّق هنا — ننتقل دائماً للأغنية السابقة
         _isAutoTransitioning = true;
-        final wasLoop = player.loopMode == LoopMode.one;
-        if (wasLoop) player.setLoopMode(LoopMode.off);
-        Future.microtask(() async {
-          await _playSingleFile(list, cur - 1);
-          if (wasLoop) await player.setLoopMode(LoopMode.one);
-        });
+        _completionHandled = false;
+        Future.microtask(() => _playSingleFile(list, cur - 1));
       } else if (rawIdx > currentRawIdx) {
         // ── الضغط على التالي من الإشعار/شاشة القفل ──
+        // التكرار لا يُطبَّق هنا — ننتقل دائماً للأغنية التالية
         _isAutoTransitioning = true;
-        final wasLoop = player.loopMode == LoopMode.one;
-        if (wasLoop) player.setLoopMode(LoopMode.off);
-        Future.microtask(() async {
-          await _playSingleFile(list, cur + 1);
-          if (wasLoop) await player.setLoopMode(LoopMode.one);
-        });
+        _completionHandled = false;
+        Future.microtask(() => _playSingleFile(list, cur + 1));
       }
     });
 
@@ -520,12 +530,19 @@ class AudioPlayerService {
     _pendingIndex = -1;
     _pendingList = null;
     if (player.loopMode == LoopMode.one) {
-      player.seek(Duration.zero);
-      player.play();
+      // وضع التكرار: أعِد نفس الأغنية عند انتهائها تلقائياً + أشعر الـ video
+      videoLoopSignal.value++;
+      _completionHandled = false;
+      player.seek(Duration.zero).then((_) => player.play());
       return;
     }
     if (idx < list.length - 1) {
+      _completionHandled = false;
       _playSingleFile(list, idx + 1);
+    } else {
+      // آخر أغنية في القائمة
+      _completionHandled = false;
+      _isAutoTransitioning = false;
     }
   }
 
@@ -611,6 +628,7 @@ class AudioPlayerService {
         initialPosition: Duration.zero,
         preload: false,
       );
+      _completionHandled = false; // مصدر جديد — أعِد الاستماع لـ completed
 
       _handlingIndexChange = false;
       _isSwitching = false;
@@ -688,6 +706,7 @@ class AudioPlayerService {
     _isSwitching = false;
     _pendingIndex = -1;
     _pendingList = null;
+    _completionHandled = false;
     final idx = currentIndex.value;
     final list = playlist.value;
     if (idx < list.length - 1) {
@@ -700,6 +719,7 @@ class AudioPlayerService {
     _isSwitching = false;
     _pendingIndex = -1;
     _pendingList = null;
+    _completionHandled = false;
     final pos = player.position;
     if (pos.inSeconds > 3) {
       await player.seek(Duration.zero);
@@ -1681,8 +1701,6 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
   bool _isFullScreen = false;
   bool _showVolumeBar = false;
   bool _showSpeedOptions = false;
-  bool _isShuffle = false;
-  bool _isRepeat = false;
   String? _doubleTapHint;
   Timer? _doubleTapHintTimer;
 
@@ -2256,8 +2274,8 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
     _hideTimer?.cancel();
     double localVolume = widget.volume;
     double localSpeed = widget.speed;
-    bool localRepeat = _isRepeat;
-    bool localShuffle = _isShuffle;
+    bool localRepeat = audioService.isRepeat.value;
+    bool localShuffle = audioService.isShuffle.value;
 
     showModalBottomSheet(
       context: ctx,
@@ -2337,8 +2355,7 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
                   activeColor: AppColors.primary,
                   onChanged: (v) {
                     setSheet(() => localRepeat = v);
-                    setState(() => _isRepeat = v);
-                    widget.audioPlayer.setLoopMode(v ? LoopMode.one : LoopMode.off);
+                    audioService.setRepeat(v);
                   },
                 ),
               ),
@@ -2356,7 +2373,7 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
                   activeColor: AppColors.primary,
                   onChanged: (v) {
                     setSheet(() => localShuffle = v);
-                    setState(() => _isShuffle = v);
+                    audioService.isShuffle.value = v;
                   },
                 ),
               ),
@@ -2406,8 +2423,6 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
   Timer? _hideTimer;
   bool _dragging = false;
   double _dragValue = 0.0;
-  bool _isShuffle = false;
-  bool _isRepeat = false;
 
   // Pinch-to-zoom
   double _scale = 1.0;
@@ -2460,8 +2475,8 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
     _hideTimer?.cancel();
     double localVolume = widget.volume;
     double localSpeed = widget.speed;
-    bool localRepeat = _isRepeat;
-    bool localShuffle = _isShuffle;
+    bool localRepeat = audioService.isRepeat.value;
+    bool localShuffle = audioService.isShuffle.value;
 
     showModalBottomSheet(
       context: ctx,
@@ -2542,8 +2557,7 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
                   activeColor: AppColors.primary,
                   onChanged: (v) {
                     setSheet(() => localRepeat = v);
-                    setState(() => _isRepeat = v);
-                    widget.audioPlayer.setLoopMode(v ? LoopMode.one : LoopMode.off);
+                    audioService.setRepeat(v);
                   },
                 ),
               ),
@@ -2561,7 +2575,7 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
                   activeColor: AppColors.primary,
                   onChanged: (v) {
                     setSheet(() => localShuffle = v);
-                    setState(() => _isShuffle = v);
+                    audioService.isShuffle.value = v;
                   },
                 ),
               ),
@@ -2927,7 +2941,6 @@ class FullScreenPlayer extends StatefulWidget {
 }
 
 class _FullScreenPlayerState extends State<FullScreenPlayer> {
-  bool _isRepeat = false;
   String? _thumbPath;
   VideoPlayerController? _videoCtrl;
   final ValueNotifier<VideoPlayerController?> _videoCtrlNotifier = ValueNotifier(null);
@@ -2948,11 +2961,13 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
     if (item != null && !item.isVideo) _loadThumb();
     _initVideoIfNeeded();
     audioService.currentIndex.addListener(_onTrackChange);
+    audioService.videoLoopSignal.addListener(_onVideoLoop);
   }
 
   @override
   void dispose() {
     audioService.currentIndex.removeListener(_onTrackChange);
+    audioService.videoLoopSignal.removeListener(_onVideoLoop);
     _positionSub?.cancel();
     _positionSub = null;
     _playingSub?.cancel();
@@ -2969,6 +2984,18 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
     });
     _videoCtrlNotifier.dispose();
     super.dispose();
+  }
+
+  /// يُستدعى عند تكرار الأغنية تلقائياً — يُعيد الفيديو للبداية بسلاسة بدون rebuild
+  void _onVideoLoop() {
+    final ctrl = _videoCtrl;
+    if (ctrl == null || !_videoInitialized) return;
+    // إعادة seek للبداية بدون أي dispose أو إعادة تهيئة — هذا يمنع التقطع
+    ctrl.seekTo(Duration.zero).then((_) {
+      if (mounted && _videoCtrl != null && audioService.player.playing) {
+        ctrl.play();
+      }
+    }).catchError((_) {});
   }
 
   void _onTrackChange() {

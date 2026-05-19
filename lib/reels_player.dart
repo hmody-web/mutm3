@@ -8,6 +8,8 @@ import 'package:video_player/video_player.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'main.dart';
 import 'listen_page.dart';
+import 'package:just_audio/just_audio.dart';
+import 'package:just_audio_background/just_audio_background.dart';
 
 // ═══════════════════════════════════════════════════════
 //  REELS VIDEO PLAYER — مشغل ريلز دندن
@@ -42,8 +44,7 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
   bool _autoScroll = false;
   bool _showControls = true;
   bool _isTitleExpanded = false;
-  bool _isDraggingSlider = false;
-  
+
   Timer? _autoScrollTimer;
   Timer? _controlsTimer;
   Timer? _progressTimer;
@@ -57,6 +58,17 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
 
   bool _showHeart = false;
   double _dragPosition = 0;
+
+  // ── شريط التمرير السلس ──
+  bool _isSeeking = false;        // هل المستخدم يسحب الآن؟
+  double _seekProgress = 0.0;    // الموضع المؤقت أثناء السحب (0.0 - 1.0)
+  bool _wasPlayingBeforeSeek = false; // هل كان يعزف قبل السحب؟
+
+  // ── تشغيل في الخلفية (إشعار الميديا) ──
+  // مشغل صوتي خفيف يُشغّل نفس الملف بصمت لإبقاء الإشعار حياً
+  final AudioPlayer _bgAudioPlayer = AudioPlayer();
+  StreamSubscription<int?>? _bgIndexSub;
+  bool _syncingFromNotification = false;
 
   @override
   void initState() {
@@ -91,11 +103,49 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
     if (_currentIndex < widget.items.length - 1)
       _initController(_currentIndex + 1);
 
+    // تشغيل في الخلفية عبر audioService مع إشعار الميديا
+    _setupBackgroundPlayback();
+
+    // الاستماع لتغييرات الأغنية من الإشعار
+    _setupNotificationSync();
+
     // لا نخفي شريط النظام (الوقت والبطارية والشبكة)
+  }
+
+  /// يُعدّ قائمة الريلز في audioService لإظهار إشعار الميديا وإتاحة التحكم من الخلفية
+  Future<void> _setupBackgroundPlayback() async {
+    // نُعيد تشغيل القائمة كاملة عبر audioService ليتولى إدارة الخلفية والإشعار
+    await audioService.playList(
+      List<LocalMediaItem>.unmodifiable(widget.items),
+      _currentIndex,
+    );
+  }
+
+  /// يستمع لتغييرات currentIndex الصادرة من just_audio_background (الإشعار)
+  void _setupNotificationSync() {
+    audioService.currentIndex.addListener(_onNotificationIndexChanged);
+  }
+
+  void _onNotificationIndexChanged() {
+    if (!mounted) return;
+    final newIdx = audioService.currentIndex.value;
+    if (newIdx < 0 || newIdx >= widget.items.length) return;
+    if (newIdx == _currentIndex) return;
+    // التنقل إلى الريل المطلوب من الإشعار
+    _syncingFromNotification = true;
+    _pageController.animateToPage(
+      newIdx,
+      duration: const Duration(milliseconds: 400),
+      curve: Curves.easeInOut,
+    );
   }
 
   @override
   void dispose() {
+    audioService.currentIndex.removeListener(_onNotificationIndexChanged);
+    _bgIndexSub?.cancel();
+    _bgAudioPlayer.dispose();
+    _detachAutoScrollListener();
     for (final ctrl in _controllers.values) {
       ctrl.dispose();
     }
@@ -119,20 +169,13 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
 
     try {
       await ctrl.initialize();
-      ctrl.setLooping(false);
-
-      ctrl.addListener(() async {
-        if (!mounted) return;
-        final value = ctrl.value;
-        if (_autoScroll && value.isInitialized && !value.isPlaying && value.position >= value.duration && widget.items.length > 1) {
-          final next = (_currentIndex + 1) % widget.items.length;
-          await _pageController.animateToPage(next,duration: const Duration(milliseconds: 450),curve: Curves.easeInOutCubic);
-        }
-      });
+      ctrl.setLooping(_isLooping);
       if (mounted) setState(() => _initialized[index] = true);
       if (index == _currentIndex) {
         ctrl.play();
         _startProgressTimer();
+        // إذا كان التصفح التلقائي مفعّلاً، أضف المراقب
+        if (_autoScroll) _attachAutoScrollListener();
       }
     } catch (_) {
       if (mounted) setState(() => _initialized[index] = false);
@@ -162,9 +205,11 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
   }
 
   void _onPageChanged(int index) {
-    HapticFeedback.lightImpact();
     final prevCtrl = _controllers[_currentIndex];
     prevCtrl?.pause();
+
+    // أزل مراقب التصفح من الريل السابق
+    _detachAutoScrollListener();
 
     _currentIndex = index;
     _isTitleExpanded = false;
@@ -174,6 +219,8 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
       curr.setLooping(_isLooping);
       curr.play();
       _startProgressTimer();
+      // أعد تعليق المراقب على الريل الجديد
+      if (_autoScroll) _attachAutoScrollListener();
     } else {
       _initController(index);
     }
@@ -192,25 +239,70 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
       _initialized.remove(k);
     }
 
-    setState(() {});
+    // مزامنة audioService مع الريل الحالي (يُحدّث الإشعار تلقائياً)
+    if (!_syncingFromNotification) {
+      audioService.playAtIndex(index);
+    }
+    _syncingFromNotification = false;
 
-    if (_autoScroll) _scheduleAutoScroll();
+    setState(() {});
+  }
+
+  // ── مراقب انتهاء الفيديو للتصفح التلقائي ──
+  VoidCallback? _videoEndListener;
+
+  void _attachAutoScrollListener() {
+    final ctrl = _controllers[_currentIndex];
+    if (ctrl == null) return;
+
+    // أزل المراقب القديم إن وُجد
+    _detachAutoScrollListener();
+
+    void listener() {
+      if (!_autoScroll) return;
+      if (!mounted) return;
+      final val = ctrl.value;
+      // الفيديو وصل للنهاية (position == duration وليس يعزف)
+      if (val.duration.inMilliseconds > 0 &&
+          val.position.inMilliseconds >= val.duration.inMilliseconds - 100 &&
+          !val.isPlaying) {
+        _goToNextReel();
+      }
+    }
+
+    _videoEndListener = listener;
+    ctrl.addListener(listener);
+  }
+
+  void _detachAutoScrollListener() {
+    if (_videoEndListener == null) return;
+    // أزل المراقب من جميع الكنترولرز
+    for (final c in _controllers.values) {
+      try {
+        c.removeListener(_videoEndListener!);
+      } catch (_) {}
+    }
+    _videoEndListener = null;
+  }
+
+  void _goToNextReel() {
+    _autoScrollTimer?.cancel();
+    final next = _currentIndex + 1;
+    if (!mounted) return;
+    if (next < widget.items.length) {
+      // أنيميشن سحب طبيعي للأعلى مثل الريلز
+      _pageController.animateToPage(
+        next,
+        duration: const Duration(milliseconds: 500),
+        curve: Curves.easeInOutCubic,
+      );
+    }
   }
 
   void _scheduleAutoScroll() {
     _autoScrollTimer?.cancel();
-    final ctrl = _controllers[_currentIndex];
-    if (ctrl == null) return;
-    final dur = ctrl.value.duration;
-    _autoScrollTimer = Timer(dur, () {
-      if (!mounted) return;
-      final next = _currentIndex + 1;
-      if (next < widget.items.length) {
-        _pageController.animateToPage(next,
-            duration: const Duration(milliseconds: 500),
-            curve: Curves.easeInOut);
-      }
-    });
+    // الاستماع المباشر للكنترولر أدق من Timer
+    _attachAutoScrollListener();
   }
 
   void _onDoubleTap() {
@@ -237,16 +329,28 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
         folders: widget.folders,
         currentItem: widget.items[_currentIndex],
         onLoopChanged: (v) {
-          setState(() => _isLooping = v);
+          setState(() {
+            _isLooping = v;
+            // تفعيل التكرار يُطفئ التصفح التلقائي
+            if (v && _autoScroll) {
+              _autoScroll = false;
+              _detachAutoScrollListener();
+            }
+          });
           _controllers[_currentIndex]?.setLooping(v);
         },
         onAutoScrollChanged: (v) {
-          setState(() => _autoScroll = v);
-          if (v) {
-            _scheduleAutoScroll();
-          } else {
-            _autoScrollTimer?.cancel();
-          }
+          setState(() {
+            _autoScroll = v;
+            // تفعيل التصفح التلقائي يُطفئ التكرار
+            if (v) {
+              _isLooping = false;
+              _controllers[_currentIndex]?.setLooping(false);
+              _attachAutoScrollListener();
+            } else {
+              _detachAutoScrollListener();
+            }
+          });
         },
         onAddToFolder: _addToFolder,
       ),
@@ -288,7 +392,6 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
             PageView.builder(
               controller: _pageController,
               scrollDirection: Axis.vertical,
-              physics: const BouncingScrollPhysics(),
               onPageChanged: _onPageChanged,
               itemCount: widget.items.length,
               itemBuilder: (_, index) {
@@ -440,19 +543,49 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
               ),
               const SizedBox(height: 14),
 
-              // ── تكرار ──
+              // ── تكرار (معطّل عند تفعيل التصفح التلقائي) ──
               _buildSideButton(
                 child: Icon(
                   CupertinoIcons.repeat,
-                  color: _isLooping ? AppColors.primary : Colors.white,
+                  color: _isLooping && !_autoScroll
+                      ? AppColors.primary
+                      : Colors.white.withOpacity(_autoScroll ? 0.3 : 1.0),
                   size: 20,
                 ),
                 label: 'تكرار',
                 onTap: () {
-                  setState(() => _isLooping = !_isLooping);
-                  _controllers[_currentIndex]?.setLooping(_isLooping);
+                  if (_autoScroll) return; // معطّل عند تفعيل التصفح
+                  final newVal = !_isLooping;
+                  setState(() => _isLooping = newVal);
+                  _controllers[_currentIndex]?.setLooping(newVal);
                 },
-                isActive: _isLooping,
+                isActive: _isLooping && !_autoScroll,
+              ),
+              const SizedBox(height: 14),
+
+              // ── تصفح تلقائي (يُعطّل التكرار عند تفعيله) ──
+              _buildSideButton(
+                child: Icon(
+                  CupertinoIcons.forward_end_fill,
+                  color: _autoScroll ? AppColors.primary : Colors.white,
+                  size: 20,
+                ),
+                label: 'تلقائي',
+                onTap: () {
+                  final newVal = !_autoScroll;
+                  setState(() {
+                    _autoScroll = newVal;
+                    // علاقة عكسية: تفعيل التصفح يُطفئ التكرار
+                    if (newVal) {
+                      _isLooping = false;
+                      _controllers[_currentIndex]?.setLooping(false);
+                      _attachAutoScrollListener();
+                    } else {
+                      _detachAutoScrollListener();
+                    }
+                  });
+                },
+                isActive: _autoScroll,
               ),
               const SizedBox(height: 14),
 
@@ -638,47 +771,87 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
                 ),
                 const SizedBox(height: 8),
 
-                // ── شريط التمرير القابل للتحكم ──
+                // ── شريط التمرير السلس ──
                 LayoutBuilder(
                   builder: (ctx, constraints) {
                     final trackWidth = constraints.maxWidth;
+                    // أثناء السحب نعرض الموضع المؤقت، وإلا الموضع الحقيقي
+                    final displayProgress =
+                        _isSeeking ? _seekProgress : progress;
+
                     return GestureDetector(
                       behavior: HitTestBehavior.opaque,
-                      // سحب أفقي للتقديم/التأخير
-                      onHorizontalDragUpdate: (d) {
+
+                      // ── بداية السحب: نوقف مؤقتاً ونحفظ الموضع ──
+                      onHorizontalDragStart: (d) {
                         if (ctrl == null || !isInit) return;
-                        final delta = d.delta.dx / trackWidth;
-                        final newProgress =
-                            (progress + delta).clamp(0.0, 1.0);
-                        ctrl.seekTo(duration * newProgress);
+                        _wasPlayingBeforeSeek = ctrl.value.isPlaying;
+                        if (_wasPlayingBeforeSeek) ctrl.pause();
+                        _progressTimer?.cancel();
+                        setState(() {
+                          _isSeeking = true;
+                          _seekProgress = progress;
+                        });
                       },
-                      // نقر مباشر على مكان معين في الشريط
-                      onTapDown: (d) {
+
+                      // ── أثناء السحب: نحرّك المؤشر فقط بدون seek ──
+                      onHorizontalDragUpdate: (d) {
+                        if (ctrl == null || !isInit || !_isSeeking) return;
+                        final delta = d.delta.dx / trackWidth;
+                        setState(() {
+                          _seekProgress =
+                              (_seekProgress + delta).clamp(0.0, 1.0);
+                        });
+                      },
+
+                      // ── نهاية السحب: seek مرة واحدة فقط ثم نستأنف ──
+                      onHorizontalDragEnd: (_) async {
+                        if (ctrl == null || !isInit) return;
+                        await ctrl.seekTo(duration * _seekProgress);
+                        if (_wasPlayingBeforeSeek) ctrl.play();
+                        _startProgressTimer();
+                        setState(() => _isSeeking = false);
+                      },
+
+                      onHorizontalDragCancel: () async {
+                        if (ctrl == null || !isInit) return;
+                        if (_wasPlayingBeforeSeek) ctrl.play();
+                        _startProgressTimer();
+                        setState(() => _isSeeking = false);
+                      },
+
+                      // ── نقر مباشر: seek فوري ──
+                      onTapDown: (d) async {
                         if (ctrl == null || !isInit) return;
                         final tapFraction =
                             (d.localPosition.dx / trackWidth).clamp(0.0, 1.0);
-                        ctrl.seekTo(duration * tapFraction);
+                        await ctrl.seekTo(duration * tapFraction);
+                        setState(() {});
                       },
+
                       child: SizedBox(
-                        height: 28,
+                        // منطقة لمس أكبر = أسهل للسحب
+                        height: 40,
                         child: Stack(
                           alignment: Alignment.center,
                           children: [
                             // مسار الخلفية
                             Container(
-                              height: 4,
+                              height: _isSeeking ? 6 : 4,
                               decoration: BoxDecoration(
                                 color: Colors.white.withOpacity(0.25),
-                                borderRadius: BorderRadius.circular(3),
+                                borderRadius: BorderRadius.circular(6),
                               ),
                             ),
+
                             // شريط التقدم
                             Align(
                               alignment: Alignment.centerLeft,
                               child: FractionallySizedBox(
-                                widthFactor: progress.clamp(0.0, 1.0),
-                                child: Container(
-                                  height: 4,
+                                widthFactor: displayProgress.clamp(0.0, 1.0),
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 80),
+                                  height: _isSeeking ? 6 : 4,
                                   decoration: BoxDecoration(
                                     gradient: LinearGradient(
                                       colors: [
@@ -686,36 +859,71 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
                                         AppColors.primary.withOpacity(0.7),
                                       ],
                                     ),
-                                    borderRadius: BorderRadius.circular(3),
+                                    borderRadius: BorderRadius.circular(6),
                                     boxShadow: [
                                       BoxShadow(
-                                          color:
-                                              AppColors.primary.withOpacity(0.55),
-                                          blurRadius: 6,
-                                          spreadRadius: 1),
+                                        color: AppColors.primary
+                                            .withOpacity(_isSeeking ? 0.8 : 0.55),
+                                        blurRadius: _isSeeking ? 12 : 6,
+                                        spreadRadius: _isSeeking ? 2 : 1,
+                                      ),
                                     ],
                                   ),
                                 ),
                               ),
                             ),
-                            // دائرة السحب
+
+                            // دائرة السحب — تكبر عند الضغط
                             Positioned(
-                              left: (progress.clamp(0.0, 1.0) * trackWidth) - 8,
-                              child: Container(
-                                width: 16,
-                                height: 16,
+                              left: (displayProgress.clamp(0.0, 1.0) *
+                                      trackWidth) -
+                                  (_isSeeking ? 12 : 8),
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 150),
+                                curve: Curves.easeOutBack,
+                                width: _isSeeking ? 24 : 16,
+                                height: _isSeeking ? 24 : 16,
                                 decoration: BoxDecoration(
                                   color: Colors.white,
                                   shape: BoxShape.circle,
                                   boxShadow: [
                                     BoxShadow(
-                                        color: AppColors.primary.withOpacity(0.6),
-                                        blurRadius: 8,
-                                        spreadRadius: 1),
+                                      color: AppColors.primary
+                                          .withOpacity(_isSeeking ? 0.9 : 0.6),
+                                      blurRadius: _isSeeking ? 16 : 8,
+                                      spreadRadius: _isSeeking ? 3 : 1,
+                                    ),
                                   ],
                                 ),
                               ),
                             ),
+
+                            // وقت السحب المؤقت يظهر فوق المؤشر
+                            if (_isSeeking)
+                              Positioned(
+                                left: (displayProgress.clamp(0.0, 1.0) *
+                                        trackWidth -
+                                    24).clamp(0, trackWidth - 48),
+                                bottom: 28,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.primary,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text(
+                                    _formatDuration(
+                                        duration * displayProgress),
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 11,
+                                      fontFamily: 'Tajawal',
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                              ),
                           ],
                         ),
                       ),

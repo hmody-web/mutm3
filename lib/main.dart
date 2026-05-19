@@ -528,22 +528,22 @@ class AudioPlayerService {
     await session.configure(const AudioSessionConfiguration.music());
 
     // ── مزامنة currentIndex مع just_audio_background ──
-    // هذا هو المحور الأساسي: كل ضغطة على التالي/السابق في الإشعار
-    // تُغيّر currentIndexStream مباشرة — نستمع ونُحدّث currentIndex
+    // يُعالج تغييرات الأغنية القادمة من الإشعار (التالي/السابق في شريط الإشعارات)
+    // أما التغييرات من playNext/playPrevious فتُحدَّث currentIndex.value مباشرة قبل الـ seek
     _indexSub = player.currentIndexStream.distinct().listen((rawIdx) {
-      if (rawIdx == null || _isSettingSource) return;
+      if (rawIdx == null) return;
       final list = _loadedList;
       if (list.isEmpty || rawIdx < 0 || rawIdx >= list.length) return;
 
-      // في وضع التكرار (LoopMode.one): الإشعار يضغط next/prev
-      // just_audio يُغيّر الفهرس فعلاً — نتركه يعمل بشكل طبيعي
+      // إذا كان _isSettingSource=true فهذا يعني أننا نُحمّل مصدراً جديداً — تجاهل
+      if (_isSettingSource) return;
+
       if (rawIdx != currentIndex.value) {
         currentIndex.value = rawIdx;
         playlist.value = list;
         if (!isReelsMode) isVisible.value = true;
         _expectedIndex = rawIdx;
 
-        // تحميل الـ thumbnail في الخلفية
         Future.microtask(() async {
           try {
             await ThumbnailManager.generateLocalThumbnail(list[rawIdx].path);
@@ -552,32 +552,25 @@ class AudioPlayerService {
       }
     });
 
-    // ── انتهاء الأغنية — نُدير التكرار يدوياً (ثلاث طرق للضمان الكامل) ──
-    // الطريقة ١: processingStateStream.completed
-    // الطريقة ٢: positionStream fallback (آخر 300ms)
-    // الطريقة ٣: playingStream — عند توقف التشغيل بعد اكتمال الأغنية
-    bool _repeatInProgress = false; // منع التكرار المزدوج
-    DateTime? _lastRepeatTime; // منع التكرار المتكرر في فترة قصيرة
+    // ── انتهاء الأغنية — نُدير التكرار يدوياً ──
+    bool _repeatInProgress = false;
+    DateTime? _lastRepeatTime;
 
     void _doRepeat() {
       if (_repeatInProgress) return;
       if (!isRepeat.value) return;
       if (_isSettingSource) return;
-      // منع التكرار أكثر من مرة في 500ms
       final now = DateTime.now();
       if (_lastRepeatTime != null &&
-          now.difference(_lastRepeatTime!).inMilliseconds < 500) return;
+          now.difference(_lastRepeatTime!).inMilliseconds < 800) return;
       _lastRepeatTime = now;
       _repeatInProgress = true;
       _userPaused = false;
-      _isSettingSource = true;
       player.seek(Duration.zero).then((_) {
         videoLoopSignal.value++;
-        _isSettingSource = false;
         _repeatInProgress = false;
         try { player.play(); } catch (_) {}
       }).catchError((_) {
-        _isSettingSource = false;
         _repeatInProgress = false;
       });
     }
@@ -587,38 +580,9 @@ class AudioPlayerService {
         if (isRepeat.value) {
           _doRepeat();
         }
-        // LoopMode.off بدون تكرار: just_audio يتوقف — سلوك طبيعي
       } else {
         // إعادة تعيين العلامة عند أي حالة غير completed
         _repeatInProgress = false;
-      }
-    });
-
-    // ── Fallback ١: مراقبة Position ──
-    // يُغطي حالات عدم إطلاق ProcessingState.completed للملفات المحلية
-    player.positionStream.listen((pos) {
-      if (!isRepeat.value) return;
-      if (_repeatInProgress) return;
-      if (_isSettingSource) return;
-      final dur = player.duration;
-      if (dur == null || dur.inMilliseconds <= 0) return;
-      // إذا وصلنا لنهاية الأغنية (آخر 300ms) والمشغّل لا يعزف
-      if (!player.playing &&
-          pos.inMilliseconds >= dur.inMilliseconds - 300 &&
-          player.processingState != ProcessingState.loading &&
-          player.processingState != ProcessingState.buffering) {
-        _doRepeat();
-      }
-    });
-
-    // ── Fallback ٢: مراقبة حالة التشغيل عند completed ──
-    player.playingStream.listen((playing) {
-      if (playing) return;
-      if (!isRepeat.value) return;
-      if (_repeatInProgress) return;
-      if (_isSettingSource) return;
-      if (player.processingState == ProcessingState.completed) {
-        _doRepeat();
       }
     });
 
@@ -816,37 +780,40 @@ class AudioPlayerService {
   }
 
   /// التالي — يعمل دائماً بغض النظر عن وضع التكرار
-  /// الضغط على التالي دائماً يُغيّر الأغنية حتى لو كان التكرار مفعّلاً
   Future<void> playNext() async {
     _userPaused = false;
     final list = _loadedList.isEmpty ? playlist.value : _loadedList;
     final idx = currentIndex.value;
-    if (idx < list.length - 1) {
-      // إعادة تعيين حالة التكرار المؤقتة لمنع تعارضها مع الـ seek القادم
-      _isSettingSource = true;
-      await player.seek(Duration.zero, index: idx + 1);
-      _isSettingSource = false;
-      try { await player.play(); } catch (_) {}
-    }
+    if (list.isEmpty) return;
+    final nextIdx = idx < list.length - 1 ? idx + 1 : idx;
+    if (nextIdx == idx && idx == list.length - 1) return; // آخر عنصر
+    // تحديث الـ index فوراً حتى يعكس الـ UI الأغنية الصحيحة
+    currentIndex.value = nextIdx;
+    _expectedIndex = nextIdx;
+    try { await player.seek(Duration.zero, index: nextIdx); } catch (_) {}
+    try { await player.play(); } catch (_) {}
   }
 
   /// السابق — يعمل دائماً بغض النظر عن وضع التكرار
-  /// الضغط على السابق دائماً يُغيّر الأغنية حتى لو كان التكرار مفعّلاً
   Future<void> playPrevious() async {
     _userPaused = false;
     final pos = player.position;
     final list = _loadedList.isEmpty ? playlist.value : _loadedList;
     final idx = currentIndex.value;
+    if (list.isEmpty) return;
     if (pos.inSeconds > 3) {
-      await player.seek(Duration.zero);
+      // إذا مضى أكثر من 3 ثواني: أعِد للبداية بدون تغيير الأغنية
+      try { await player.seek(Duration.zero); } catch (_) {}
       try { await player.play(); } catch (_) {}
     } else if (idx > 0) {
-      _isSettingSource = true;
-      await player.seek(Duration.zero, index: idx - 1);
-      _isSettingSource = false;
+      final prevIdx = idx - 1;
+      // تحديث الـ index فوراً
+      currentIndex.value = prevIdx;
+      _expectedIndex = prevIdx;
+      try { await player.seek(Duration.zero, index: prevIdx); } catch (_) {}
       try { await player.play(); } catch (_) {}
     } else {
-      await player.seek(Duration.zero);
+      try { await player.seek(Duration.zero); } catch (_) {}
       try { await player.play(); } catch (_) {}
     }
   }
@@ -865,7 +832,8 @@ class AudioPlayerService {
 
   LocalMediaItem? get currentItem {
     final idx = currentIndex.value;
-    final list = playlist.value;
+    // نستخدم _loadedList أولاً لأنه يعكس القائمة المُحمّلة فعلياً في المشغّل
+    final list = _loadedList.isNotEmpty ? _loadedList : playlist.value;
     if (idx < 0 || idx >= list.length) return null;
     return list[idx];
   }

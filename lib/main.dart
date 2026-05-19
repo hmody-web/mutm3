@@ -3258,6 +3258,108 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
     _videoCtrl?.setPlaybackSpeed(s);
   }
 
+  void _showSettingsSheet(BuildContext ctx) {
+    double localVolume = _volume;
+    double localSpeed = _speed;
+
+    showModalBottomSheet(
+      context: ctx,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => StatefulBuilder(
+        builder: (_, setSheet) {
+          final isDark = context.isDark;
+          return Container(
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 36),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36, height: 4,
+                    decoration: BoxDecoration(
+                      color: isDark ? Colors.white24 : Colors.black12,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Row(children: [
+                  Icon(CupertinoIcons.speedometer,
+                      color: isDark ? Colors.white70 : Colors.black54, size: 18),
+                  const SizedBox(width: 8),
+                  Text('سرعة التشغيل',
+                      style: TextStyle(
+                        color: isDark ? Colors.white70 : Colors.black54,
+                        fontFamily: 'Tajawal', fontSize: 13,
+                      )),
+                ]),
+                const SizedBox(height: 6),
+                Row(children: [
+                  Expanded(
+                    child: SliderTheme(
+                      data: const SliderThemeData(
+                        trackHeight: 3,
+                        thumbShape: RoundSliderThumbShape(enabledThumbRadius: 7),
+                        activeTrackColor: AppColors.primary,
+                        inactiveTrackColor: Colors.white24,
+                        thumbColor: Colors.white,
+                      ),
+                      child: Slider(
+                        value: localSpeed.clamp(0.5, 2.0),
+                        min: 0.5, max: 2.0,
+                        divisions: 30,
+                        onChanged: (v) {
+                          final r = (v * 20).round() / 20.0;
+                          setSheet(() => localSpeed = r);
+                          _setSpeed(r);
+                        },
+                      ),
+                    ),
+                  ),
+                  SizedBox(
+                    width: 40,
+                    child: Text('${localSpeed.toStringAsFixed(2)}×',
+                        style: TextStyle(
+                          color: isDark ? Colors.white70 : Colors.black54,
+                          fontSize: 11, fontFamily: 'Tajawal',
+                        ),
+                        textAlign: TextAlign.end),
+                  ),
+                ]),
+                Divider(color: isDark ? Colors.white12 : Colors.black12, height: 20),
+                // ── تشغيل عشوائي ──
+                ValueListenableBuilder<bool>(
+                  valueListenable: audioService.isShuffle,
+                  builder: (_, isShuffle, __) => ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(CupertinoIcons.shuffle,
+                        color: isDark ? Colors.white70 : Colors.black54, size: 20),
+                    title: Text('تشغيل عشوائي',
+                        style: TextStyle(
+                          color: isDark ? Colors.white : Colors.black87,
+                          fontFamily: 'Tajawal', fontSize: 15,
+                        )),
+                    trailing: CupertinoSwitch(
+                      value: isShuffle,
+                      activeColor: AppColors.primary,
+                      onChanged: (v) => audioService.isShuffle.value = v,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = context.isDark;
@@ -3326,7 +3428,84 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                     ],
                   ),
                   const Spacer(),
-                  const SizedBox(width: 38),
+                  // ── زر التكرار + زر الإعدادات ──
+                  Row(
+                    children: [
+                      // زر التكرار
+                      ValueListenableBuilder<bool>(
+                        valueListenable: audioService.isRepeat,
+                        builder: (_, isRepeat, __) {
+                          return GestureDetector(
+                            onTap: () => audioService.setRepeat(!isRepeat),
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 220),
+                              padding: const EdgeInsets.all(9),
+                              decoration: BoxDecoration(
+                                color: isRepeat
+                                    ? AppColors.primary.withOpacity(0.18)
+                                    : controlBg,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: isRepeat
+                                      ? AppColors.primary.withOpacity(0.55)
+                                      : (isDark ? Colors.white.withOpacity(0.10) : Colors.black.withOpacity(0.08)),
+                                  width: 0.5,
+                                ),
+                                boxShadow: isRepeat
+                                    ? [
+                                        BoxShadow(
+                                          color: AppColors.primary.withOpacity(0.25),
+                                          blurRadius: 8,
+                                          offset: const Offset(0, 2),
+                                        ),
+                                      ]
+                                    : null,
+                              ),
+                              child: Stack(
+                                clipBehavior: Clip.none,
+                                children: [
+                                  Icon(
+                                    CupertinoIcons.repeat_1,
+                                    color: isRepeat ? AppColors.primary : textColor,
+                                    size: 20,
+                                  ),
+                                  if (isRepeat)
+                                    Positioned(
+                                      top: -3, right: -3,
+                                      child: Container(
+                                        width: 7, height: 7,
+                                        decoration: const BoxDecoration(
+                                          color: AppColors.primary,
+                                          shape: BoxShape.circle,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(width: 8),
+                      // زر الإعدادات
+                      GestureDetector(
+                        onTap: () => _showSettingsSheet(context),
+                        child: Container(
+                          padding: const EdgeInsets.all(9),
+                          decoration: BoxDecoration(
+                            color: controlBg,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: isDark ? Colors.white.withOpacity(0.10) : Colors.black.withOpacity(0.08),
+                              width: 0.5,
+                            ),
+                          ),
+                          child: Icon(CupertinoIcons.settings,
+                              color: textColor, size: 20),
+                        ),
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),
@@ -3627,69 +3806,12 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
 
               const SizedBox(height: 8),
 
-              // ── صف أزرار التكرار والعشوائي ──
+              // ── زر العشوائي (التكرار انتقل للـ Top Bar) ──
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 24),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    // زر التكرار
-                    ValueListenableBuilder<bool>(
-                      valueListenable: audioService.isRepeat,
-                      builder: (_, isRepeat, __) {
-                        return GestureDetector(
-                          onTap: () => audioService.setRepeat(!isRepeat),
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 200),
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                            decoration: BoxDecoration(
-                              color: isRepeat
-                                  ? AppColors.primary.withOpacity(0.15)
-                                  : controlBg,
-                              borderRadius: BorderRadius.circular(20),
-                              border: Border.all(
-                                color: isRepeat
-                                    ? AppColors.primary.withOpacity(0.6)
-                                    : (isDark ? Colors.white.withOpacity(0.10) : Colors.black.withOpacity(0.08)),
-                                width: 1,
-                              ),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  CupertinoIcons.repeat_1,
-                                  color: isRepeat ? AppColors.primary : textColor,
-                                  size: 18,
-                                ),
-                                const SizedBox(width: 6),
-                                Text(
-                                  'تكرار',
-                                  style: TextStyle(
-                                    color: isRepeat ? AppColors.primary : textColor,
-                                    fontSize: 13,
-                                    fontFamily: 'Tajawal',
-                                    fontWeight: isRepeat ? FontWeight.w700 : FontWeight.w500,
-                                  ),
-                                ),
-                                if (isRepeat) ...[
-                                  const SizedBox(width: 6),
-                                  Container(
-                                    width: 7, height: 7,
-                                    decoration: const BoxDecoration(
-                                      color: AppColors.primary,
-                                      shape: BoxShape.circle,
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                    const SizedBox(width: 12),
-                    // زر العشوائي
                     ValueListenableBuilder<bool>(
                       valueListenable: audioService.isShuffle,
                       builder: (_, isShuffle, __) {

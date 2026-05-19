@@ -954,6 +954,8 @@ class _MainShellState extends State<MainShell> {
   }
 
   void _onSwipe(DragEndDetails d) {
+    // قسم استمع (index 0): منع السحب يمين/يسار للتنقل
+    if (_currentIndex == 0) return;
     final v = d.primaryVelocity ?? 0;
     final cur = _navIndexNotifier.value;
     if (v < -350 && cur > 0) {

@@ -504,22 +504,20 @@ class AudioPlayerService {
     await playAtIndex(index);
   }
 
-  /// ضبط التكرار — نستخدم LoopMode.off دائماً مع just_audio_background
-  /// ونُدير التكرار يدوياً عبر processingStateStream
-  /// السبب: LoopMode.one يمنع just_audio من تغيير الفهرس عند أوامر next/prev من الإشعار
+  /// ضبط التكرار — نستخدم LoopMode.one عند تفعيل التكرار كي تتكرر الأغنية الحالية
+  /// وليس فقط عند نهاية القائمة. أزرار التالي/السابق تعمل لأننا نستخدم seek(index) مباشرة.
   void setRepeat(bool v) {
     isRepeat.value = v;
-    // نبقى دائماً على LoopMode.off حتى تعمل أزرار التالي/السابق في الإشعار
-    player.setLoopMode(LoopMode.off);
+    // LoopMode.one يجعل just_audio يُكرر الأغنية الحالية تلقائياً بدون انتظار completed
+    // LoopMode.off يعود للسلوك العادي (انتقال للأغنية التالية)
+    player.setLoopMode(v ? LoopMode.one : LoopMode.off);
     // إذا فُعّل التكرار والأغنية منتهية حالياً → أعِد التشغيل فوراً
     if (v && player.processingState == ProcessingState.completed) {
-      _isSettingSource = true;
       _userPaused = false;
       player.seek(Duration.zero).then((_) {
-        _isSettingSource = false;
         videoLoopSignal.value++;
         try { player.play(); } catch (_) {}
-      }).catchError((_) { _isSettingSource = false; });
+      }).catchError((_) {});
     }
   }
 
@@ -553,37 +551,11 @@ class AudioPlayerService {
     });
 
     // ── انتهاء الأغنية — نُدير التكرار يدوياً ──
-    bool _repeatInProgress = false;
-    DateTime? _lastRepeatTime;
-
-    void _doRepeat() {
-      if (_repeatInProgress) return;
-      if (!isRepeat.value) return;
-      if (_isSettingSource) return;
-      final now = DateTime.now();
-      if (_lastRepeatTime != null &&
-          now.difference(_lastRepeatTime!).inMilliseconds < 800) return;
-      _lastRepeatTime = now;
-      _repeatInProgress = true;
-      _userPaused = false;
-      player.seek(Duration.zero).then((_) {
-        videoLoopSignal.value++;
-        _repeatInProgress = false;
-        try { player.play(); } catch (_) {}
-      }).catchError((_) {
-        _repeatInProgress = false;
-      });
-    }
-
+    // ── LoopMode.one يُدير التكرار تلقائياً — لا حاجة لإدارة يدوية ──
+    // _processSub يبقى للاستماع لحالات أخرى مستقبلاً إن لزم
     _processSub = player.processingStateStream.distinct().listen((state) {
-      if (state == ProcessingState.completed) {
-        if (isRepeat.value) {
-          _doRepeat();
-        }
-      } else {
-        // إعادة تعيين العلامة عند أي حالة غير completed
-        _repeatInProgress = false;
-      }
+      // LoopMode.one يُعيد الأغنية الحالية تلقائياً عند اكتمالها
+      // LoopMode.off ينتقل للأغنية التالية تلقائياً — لا تدخل يدوي مطلوب
     });
 
     // ── حالة التشغيل/الإيقاف ──
@@ -690,9 +662,8 @@ class AudioPlayerService {
           preload: false,
         );
 
-        // دائماً LoopMode.off — التكرار يُدار يدوياً عبر processingStateStream
-        // هذا يضمن أن أزرار التالي/السابق من الإشعار تعمل دائماً
-        await player.setLoopMode(LoopMode.off);
+        // طبّق وضع التكرار الحالي بعد تحميل المصدر
+        await player.setLoopMode(isRepeat.value ? LoopMode.one : LoopMode.off);
 
         _isSettingSource = false;
         try { await player.play(); } catch (_) {}

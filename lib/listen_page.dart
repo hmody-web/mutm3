@@ -1026,8 +1026,13 @@ class _ListenPageState extends State<ListenPage> with TickerProviderStateMixin {
         folder.songPaths.remove(item.path);
       }
       await _saveFolders();
+      // ── إزالة فورية من القائمة بدون إعادة تحميل ──
+      if (mounted) {
+        setState(() {
+          _localItems.removeWhere((i) => i.path == item.path);
+        });
+      }
     } catch (_) {}
-    _loadFiles();
   }
 
   Future<void> _saveToGallery(LocalMediaItem item) async {
@@ -2749,23 +2754,88 @@ class FolderDetailPage extends StatefulWidget {
   State<FolderDetailPage> createState() => _FolderDetailPageState();
 }
 
-class _FolderDetailPageState extends State<FolderDetailPage> {
+class _FolderDetailPageState extends State<FolderDetailPage>
+    with TickerProviderStateMixin {
   late List<LocalMediaItem> _items;
+
+  // ── وضع العرض (قائمة / مكتبي) ──
+  bool _gridView = false;
+
+  // ── وضع التحديد ──
+  bool _selectionMode = false;
+  final Set<String> _selectedPaths = {};
+  late AnimationController _selectionBarCtrl;
+  late Animation<double> _selectionBarAnim;
 
   @override
   void initState() {
     super.initState();
     _items = List.from(widget.items);
     audioService.currentIndex.addListener(_onIndexChange);
+    _selectionBarCtrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 320));
+    _selectionBarAnim = CurvedAnimation(
+        parent: _selectionBarCtrl, curve: Curves.easeOutBack);
   }
 
   void _onIndexChange() {
     if (mounted) setState(() {});
   }
 
+  void _toggleSelectionMode() {
+    setState(() {
+      _selectionMode = !_selectionMode;
+      if (!_selectionMode) _selectedPaths.clear();
+    });
+    if (_selectionMode) {
+      _selectionBarCtrl.forward();
+    } else {
+      _selectionBarCtrl.reverse();
+    }
+  }
+
+  Future<void> _deleteSelected() async {
+    if (_selectedPaths.isEmpty) return;
+    final count = _selectedPaths.length;
+    final confirm = await showCupertinoDialog<bool>(
+      context: context,
+      builder: (_) => CupertinoAlertDialog(
+        title: const Text('حذف الملفات'),
+        content: Text('هل تريد حذف $count ملف/ملفات؟'),
+        actions: [
+          CupertinoDialogAction(
+            isDestructiveAction: true,
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('حذف'),
+          ),
+          CupertinoDialogAction(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('إلغاء'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    for (final path in _selectedPaths) {
+      try {
+        await File(path).delete();
+        ThumbnailManager.clearCache(path);
+        widget.folder.songPaths.remove(path);
+      } catch (_) {}
+    }
+    setState(() {
+      _items = _items.where((i) => !_selectedPaths.contains(i.path)).toList();
+      _selectedPaths.clear();
+      _selectionMode = false;
+    });
+    _selectionBarCtrl.reverse();
+    widget.onUpdate();
+  }
+
   @override
   void dispose() {
     audioService.currentIndex.removeListener(_onIndexChange);
+    _selectionBarCtrl.dispose();
     super.dispose();
   }
 
@@ -2912,6 +2982,90 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
                                     color: Colors.white, size: 18),
                               ),
                             ),
+                            const Spacer(),
+                            // ── زر تبديل العرض ──
+                            GestureDetector(
+                              onTap: () => setState(() => _gridView = !_gridView),
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 280),
+                                curve: Curves.easeOutCubic,
+                                width: 36,
+                                height: 36,
+                                decoration: BoxDecoration(
+                                  gradient: _gridView
+                                      ? LinearGradient(
+                                          colors: [
+                                            Colors.white.withOpacity(0.35),
+                                            Colors.white.withOpacity(0.20),
+                                          ],
+                                          begin: Alignment.topLeft,
+                                          end: Alignment.bottomRight,
+                                        )
+                                      : null,
+                                  color: _gridView
+                                      ? null
+                                      : Colors.white.withOpacity(0.15),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: Colors.white.withOpacity(0.25),
+                                    width: 1,
+                                  ),
+                                ),
+                                child: AnimatedSwitcher(
+                                  duration: const Duration(milliseconds: 220),
+                                  transitionBuilder: (child, anim) =>
+                                      ScaleTransition(scale: anim, child: child),
+                                  child: Icon(
+                                    _gridView
+                                        ? CupertinoIcons.square_grid_2x2_fill
+                                        : CupertinoIcons.list_bullet,
+                                    key: ValueKey(_gridView),
+                                    color: Colors.white,
+                                    size: 16,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            // ── زر التحديد ──
+                            GestureDetector(
+                              onTap: _toggleSelectionMode,
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 280),
+                                curve: Curves.easeOutCubic,
+                                width: 36,
+                                height: 36,
+                                decoration: BoxDecoration(
+                                  gradient: _selectionMode
+                                      ? const LinearGradient(
+                                          colors: [
+                                            Color(0xFFFFFFFF),
+                                            Color(0xCCFFFFFF),
+                                          ],
+                                          begin: Alignment.topLeft,
+                                          end: Alignment.bottomRight,
+                                        )
+                                      : null,
+                                  color: _selectionMode
+                                      ? null
+                                      : Colors.white.withOpacity(0.15),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: Colors.white.withOpacity(0.25),
+                                    width: 1,
+                                  ),
+                                ),
+                                child: Icon(
+                                  _selectionMode
+                                      ? CupertinoIcons.xmark
+                                      : CupertinoIcons.checkmark_circle,
+                                  color: _selectionMode
+                                      ? widget.folder.color
+                                      : Colors.white,
+                                  size: 16,
+                                ),
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -2949,6 +3103,150 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
                   ),
                 ),
               ),
+              // ── شريط إجراءات التحديد ──
+              if (_selectionMode)
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                    child: AnimatedBuilder(
+                      animation: _selectionBarAnim,
+                      builder: (_, __) {
+                        final t = _selectionBarAnim.value.clamp(0.0, 1.0);
+                        return Opacity(
+                          opacity: t,
+                          child: Transform.translate(
+                            offset: Offset(0, 20 * (1 - t)),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 10),
+                              decoration: BoxDecoration(
+                                color: widget.folder.color.withOpacity(0.12),
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(
+                                  color: widget.folder.color.withOpacity(0.25),
+                                  width: 1,
+                                ),
+                              ),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 10, vertical: 5),
+                                    decoration: BoxDecoration(
+                                      color: widget.folder.color.withOpacity(0.18),
+                                      borderRadius: BorderRadius.circular(20),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          CupertinoIcons.checkmark_circle_fill,
+                                          size: 13,
+                                          color: widget.folder.color,
+                                        ),
+                                        const SizedBox(width: 5),
+                                        Text(
+                                          '${_selectedPaths.length}',
+                                          style: TextStyle(
+                                            fontFamily: 'Tajawal',
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w800,
+                                            color: widget.folder.color,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                  GestureDetector(
+                                    onTap: () {
+                                      setState(() {
+                                        if (_selectedPaths.length == _items.length) {
+                                          _selectedPaths.clear();
+                                        } else {
+                                          _selectedPaths.addAll(_items.map((i) => i.path));
+                                        }
+                                      });
+                                    },
+                                    child: Text(
+                                      _selectedPaths.length == _items.length
+                                          ? 'إلغاء الكل'
+                                          : 'تحديد الكل',
+                                      style: TextStyle(
+                                        fontFamily: 'Tajawal',
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                        color: widget.folder.color,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  GestureDetector(
+                                    onTap: _selectedPaths.isNotEmpty
+                                        ? _deleteSelected
+                                        : null,
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 14, vertical: 7),
+                                      decoration: BoxDecoration(
+                                        gradient: _selectedPaths.isNotEmpty
+                                            ? const LinearGradient(
+                                                colors: [
+                                                  Color(0xFFFF3B30),
+                                                  Color(0xFFFF6B6B),
+                                                ],
+                                              )
+                                            : null,
+                                        color: _selectedPaths.isEmpty
+                                            ? Colors.grey.withOpacity(0.2)
+                                            : null,
+                                        borderRadius: BorderRadius.circular(12),
+                                        boxShadow: _selectedPaths.isNotEmpty
+                                            ? [
+                                                BoxShadow(
+                                                  color: const Color(0xFFFF3B30)
+                                                      .withOpacity(0.35),
+                                                  blurRadius: 8,
+                                                  offset: const Offset(0, 3),
+                                                )
+                                              ]
+                                            : null,
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            CupertinoIcons.trash_fill,
+                                            size: 13,
+                                            color: _selectedPaths.isNotEmpty
+                                                ? Colors.white
+                                                : Colors.grey,
+                                          ),
+                                          const SizedBox(width: 5),
+                                          Text(
+                                            'حذف',
+                                            style: TextStyle(
+                                              fontFamily: 'Tajawal',
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.w700,
+                                              color: _selectedPaths.isNotEmpty
+                                                  ? Colors.white
+                                                  : Colors.grey,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
               if (_items.isEmpty)
                 SliverFillRemaining(
                   child: Center(
@@ -2968,6 +3266,67 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
                           ),
                         ),
                       ],
+                    ),
+                  ),
+                )
+              else if (_gridView && !_selectionMode)
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
+                  sliver: SliverGrid(
+                    delegate: SliverChildBuilderDelegate(
+                      (_, i) {
+                        final item = _items[i];
+                        return _FolderGridCard(
+                          key: ValueKey(item.path),
+                          item: item,
+                          folderColor: widget.folder.color,
+                          allItems: _items,
+                          onTap: () {
+                            audioService.playList(
+                              List<LocalMediaItem>.unmodifiable(_items),
+                              i,
+                            );
+                          },
+                          onDelete: () => _deleteItem(item),
+                          onSave: () => _saveToGallery(item),
+                          onRemoveFromFolder: () => _removeFromFolder(item),
+                        );
+                      },
+                      childCount: _items.length,
+                    ),
+                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 2,
+                      mainAxisSpacing: 16,
+                      crossAxisSpacing: 16,
+                      childAspectRatio: 0.72,
+                    ),
+                  ),
+                )
+              else if (_selectionMode)
+                SliverPadding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  sliver: SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (_, i) {
+                        final item = _items[i];
+                        final isSelected = _selectedPaths.contains(item.path);
+                        return _SelectableMediaTile(
+                          key: ValueKey('sel_${item.path}'),
+                          item: item,
+                          isSelected: isSelected,
+                          onToggle: () {
+                            setState(() {
+                              if (isSelected) {
+                                _selectedPaths.remove(item.path);
+                              } else {
+                                _selectedPaths.add(item.path);
+                              }
+                            });
+                          },
+                        );
+                      },
+                      childCount: _items.length,
                     ),
                   ),
                 )
@@ -3664,6 +4023,485 @@ class _FolderItemTileState extends State<_FolderItemTile>
                 ? Colors.white70
                 : AppColors.primary,
         size: 24,
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  FOLDER GRID CARD — كارت مكتبي داخل المجلد
+// ═══════════════════════════════════════════════════════════
+class _FolderGridCard extends StatefulWidget {
+  final LocalMediaItem item;
+  final Color folderColor;
+  final List<LocalMediaItem> allItems;
+  final VoidCallback onTap;
+  final VoidCallback onDelete;
+  final VoidCallback onSave;
+  final VoidCallback onRemoveFromFolder;
+
+  const _FolderGridCard({
+    super.key,
+    required this.item,
+    required this.folderColor,
+    required this.allItems,
+    required this.onTap,
+    required this.onDelete,
+    required this.onSave,
+    required this.onRemoveFromFolder,
+  });
+
+  @override
+  State<_FolderGridCard> createState() => _FolderGridCardState();
+}
+
+class _FolderGridCardState extends State<_FolderGridCard>
+    with SingleTickerProviderStateMixin {
+  String? _thumbPath;
+  late AnimationController _flipCtrl;
+  late Animation<double> _flipAnim;
+  bool _isFlipped = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadThumb();
+    _flipCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 550),
+    );
+    _flipAnim = Tween<double>(begin: 0, end: 1).animate(
+      CurvedAnimation(parent: _flipCtrl, curve: Curves.easeInOutBack),
+    );
+  }
+
+  @override
+  void dispose() {
+    _flipCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadThumb() async {
+    final thumb = await ThumbnailManager.getLocalThumbnail(widget.item.path);
+    if (mounted) setState(() => _thumbPath = thumb);
+  }
+
+  void _toggleFlip() {
+    if (_isFlipped) {
+      _flipCtrl.reverse();
+    } else {
+      _flipCtrl.forward();
+    }
+    setState(() => _isFlipped = !_isFlipped);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final title = widget.item.title.replaceAll(RegExp(r'\.\w+$'), '');
+
+    return AnimatedBuilder(
+      animation: _flipAnim,
+      builder: (context, child) {
+        final angle = _flipAnim.value * 3.14159;
+        final isFront = angle < 1.5708;
+
+        return GestureDetector(
+          onLongPress: _toggleFlip,
+          onTap: isFront ? widget.onTap : null,
+          child: Transform(
+            alignment: Alignment.center,
+            transform: Matrix4.identity()
+              ..setEntry(3, 2, 0.001)
+              ..rotateY(angle),
+            child: isFront
+                ? _buildFront(title)
+                : Transform(
+                    alignment: Alignment.center,
+                    transform: Matrix4.identity()..rotateY(3.14159),
+                    child: _buildBack(title),
+                  ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildFront(String title) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 220),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(30),
+        gradient: context.isDark
+            ? LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.white.withOpacity(0.08),
+                  Colors.white.withOpacity(0.03),
+                ],
+              )
+            : LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  widget.folderColor.withOpacity(0.85),
+                  widget.folderColor.withOpacity(0.65),
+                ],
+              ),
+        border: Border.all(
+          color: context.isDark
+              ? Colors.white.withOpacity(0.06)
+              : widget.folderColor.withOpacity(0.3),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: widget.folderColor.withOpacity(0.20),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(30),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: _thumbPath != null
+                        ? Image.file(File(_thumbPath!), fit: BoxFit.cover)
+                        : Container(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: [
+                                  widget.folderColor,
+                                  widget.folderColor.withOpacity(0.6),
+                                ],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                            ),
+                            child: Center(
+                              child: Icon(
+                                widget.item.isVideo
+                                    ? CupertinoIcons.play_rectangle_fill
+                                    : CupertinoIcons.music_note,
+                                color: Colors.white.withOpacity(0.7),
+                                size: 36,
+                              ),
+                            ),
+                          ),
+                  ),
+                  Positioned(
+                    top: 8,
+                    right: 8,
+                    child: Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.35),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        widget.item.isVideo
+                            ? CupertinoIcons.play_rectangle
+                            : CupertinoIcons.music_note,
+                        color: Colors.white,
+                        size: 12,
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    child: Container(
+                      height: 50,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.bottomCenter,
+                          end: Alignment.topCenter,
+                          colors: [
+                            Colors.black.withOpacity(0.55),
+                            Colors.transparent,
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      height: 1.4,
+                      fontWeight: FontWeight.w700,
+                      fontFamily: 'Tajawal',
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.18),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          widget.item.isVideo
+                              ? CupertinoIcons.play_rectangle
+                              : CupertinoIcons.music_note,
+                          color: Colors.white70,
+                          size: 11,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          widget.item.isVideo ? 'فيديو' : 'صوت',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                            fontFamily: 'Tajawal',
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBack(String title) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 220),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(30),
+        gradient: context.isDark
+            ? LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.white.withOpacity(0.09),
+                  Colors.white.withOpacity(0.04),
+                ],
+              )
+            : LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  widget.folderColor.withOpacity(0.85),
+                  widget.folderColor.withOpacity(0.65),
+                ],
+              ),
+        border: Border.all(
+          color: context.isDark
+              ? Colors.white.withOpacity(0.07)
+              : widget.folderColor.withOpacity(0.3),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: widget.folderColor.withOpacity(0.22),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(30),
+        child: Stack(
+          children: [
+            Positioned(
+              top: -20,
+              left: -20,
+              child: Container(
+                width: 90,
+                height: 90,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.07),
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+            Positioned(
+              bottom: -15,
+              right: -15,
+              child: Container(
+                width: 70,
+                height: 70,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.05),
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+            Column(
+              children: [
+                Container(
+                  padding: const EdgeInsets.fromLTRB(12, 14, 12, 10),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 28,
+                        height: 28,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.22),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(CupertinoIcons.music_note,
+                            color: Colors.white, size: 13),
+                      ),
+                      const SizedBox(width: 7),
+                      Expanded(
+                        child: Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                            fontFamily: 'Tajawal',
+                          ),
+                        ),
+                      ),
+                      GestureDetector(
+                        onTap: _toggleFlip,
+                        child: Container(
+                          width: 24,
+                          height: 24,
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.15),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(CupertinoIcons.xmark,
+                              color: Colors.white70, size: 10),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  height: 1,
+                  margin: const EdgeInsets.symmetric(horizontal: 10),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(colors: [
+                      Colors.transparent,
+                      Colors.white.withOpacity(0.20),
+                      Colors.transparent,
+                    ]),
+                  ),
+                ),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        _buildFolderActionButton(
+                          icon: CupertinoIcons.trash_fill,
+                          label: 'حذف',
+                          color: const Color(0xFFFF3B30),
+                          onTap: () {
+                            _toggleFlip();
+                            Future.delayed(
+                                const Duration(milliseconds: 300), widget.onDelete);
+                          },
+                        ),
+                        _buildFolderActionButton(
+                          icon: CupertinoIcons.arrow_uturn_left,
+                          label: 'إزالة من المجلد',
+                          color: const Color(0xFFFF9F0A),
+                          onTap: () {
+                            _toggleFlip();
+                            Future.delayed(const Duration(milliseconds: 300),
+                                widget.onRemoveFromFolder);
+                          },
+                        ),
+                        _buildFolderActionButton(
+                          icon: CupertinoIcons.arrow_down_to_line_alt,
+                          label: 'حفظ في المعرض',
+                          color: const Color(0xFF34C759),
+                          onTap: () {
+                            _toggleFlip();
+                            Future.delayed(
+                                const Duration(milliseconds: 300), widget.onSave);
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFolderActionButton({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [color.withOpacity(0.25), color.withOpacity(0.10)],
+            begin: Alignment.centerRight,
+            end: Alignment.centerLeft,
+          ),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: color.withOpacity(0.35), width: 1),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.25),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(icon, color: color, size: 13),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: TextStyle(
+                color: Colors.white,
+                fontFamily: 'Tajawal',
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -4831,121 +5669,201 @@ class _ModernMusicCardState extends State<_ModernMusicCard>
   }
 
   Widget _buildBack(String title) {
-    return Container(
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 220),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(30),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            const Color(0xFF1A1A2E),
-            const Color(0xFF16213E),
-            AppColors.primary.withOpacity(0.25),
-          ],
-        ),
+        gradient: context.isDark
+            ? LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.white.withOpacity(0.09),
+                  Colors.white.withOpacity(0.04),
+                ],
+              )
+            : const LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Color(0xFF69383D),
+                  Color(0xFF69383D),
+                ],
+              ),
         border: Border.all(
-          color: AppColors.primary.withOpacity(0.35),
-          width: 1.5,
+          color: context.isDark
+              ? Colors.white.withOpacity(0.07)
+              : Colors.black.withOpacity(0.05),
+          width: 1,
         ),
         boxShadow: [
           BoxShadow(
-            color: AppColors.primary.withOpacity(0.3),
-            blurRadius: 24,
-            offset: const Offset(0, 8),
+            color: Colors.black.withValues(alpha: 0.22),
+            blurRadius: 22,
+            offset: const Offset(0, 12),
+          ),
+          BoxShadow(
+            color: AppColors.primary.withValues(alpha: 0.10),
+            blurRadius: 20,
+            offset: const Offset(0, 6),
           ),
         ],
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(30),
-        child: Column(
+        child: Stack(
           children: [
-            // عنوان الكارت الخلفي
-            Container(
-              padding: const EdgeInsets.fromLTRB(14, 16, 14, 10),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(7),
-                    decoration: BoxDecoration(
-                      color: AppColors.primary.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Icon(CupertinoIcons.music_note_2,
-                        color: AppColors.primary, size: 14),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        fontFamily: 'Tajawal',
-                      ),
-                    ),
-                  ),
-                  GestureDetector(
-                    onTap: _toggleFlip,
-                    child: Container(
-                      padding: const EdgeInsets.all(5),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.08),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(CupertinoIcons.xmark,
-                          color: Colors.white60, size: 12),
-                    ),
-                  ),
-                ],
+            // ── خلفية زخرفية متوهجة ──
+            Positioned(
+              top: -20,
+              left: -20,
+              child: Container(
+                width: 100,
+                height: 100,
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withOpacity(0.10),
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+            Positioned(
+              bottom: -15,
+              right: -15,
+              child: Container(
+                width: 80,
+                height: 80,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF5E5CE6).withOpacity(0.08),
+                  shape: BoxShape.circle,
+                ),
               ),
             ),
 
-            const Divider(color: Colors.white12, height: 1),
-
-            // الأزرار الثلاثة
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    // زر الحذف
-                    _buildActionButton(
-                      icon: CupertinoIcons.trash_fill,
-                      label: 'حذف',
-                      color: const Color(0xFFFF3B30),
-                      onTap: () {
-                        _toggleFlip();
-                        Future.delayed(const Duration(milliseconds: 300),
-                            widget.onDelete);
-                      },
-                    ),
-
-                    // زر النقل إلى مجلد
-                    _buildActionButton(
-                      icon: CupertinoIcons.folder_badge_plus,
-                      label: 'نقل إلى مجلد',
-                      color: const Color(0xFF5E5CE6),
-                      onTap: _showFolderPicker,
-                    ),
-
-                    // زر الحفظ
-                    _buildActionButton(
-                      icon: CupertinoIcons.arrow_down_to_line_alt,
-                      label: 'حفظ في المعرض',
-                      color: const Color(0xFF34C759),
-                      onTap: () {
-                        _toggleFlip();
-                        Future.delayed(const Duration(milliseconds: 300),
-                            widget.onSave);
-                      },
-                    ),
-                  ],
+            // ── المحتوى ──
+            Column(
+              children: [
+                // ── رأس الكارت: اسم الأغنية + زر إغلاق ──
+                Container(
+                  padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 30,
+                        height: 30,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [AppColors.primary, AppColors.primaryDark],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(9),
+                          boxShadow: [
+                            BoxShadow(
+                              color: AppColors.primary.withOpacity(0.4),
+                              blurRadius: 8,
+                              offset: const Offset(0, 3),
+                            ),
+                          ],
+                        ),
+                        child: const Icon(CupertinoIcons.music_note,
+                            color: Colors.white, size: 14),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            fontFamily: 'Tajawal',
+                          ),
+                        ),
+                      ),
+                      GestureDetector(
+                        onTap: _toggleFlip,
+                        child: Container(
+                          width: 26,
+                          height: 26,
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.12),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: Colors.white.withOpacity(0.18),
+                              width: 1,
+                            ),
+                          ),
+                          child: const Icon(CupertinoIcons.xmark,
+                              color: Colors.white70, size: 11),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
+
+                // ── فاصل ناعم ──
+                Container(
+                  height: 1,
+                  margin: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        Colors.transparent,
+                        Colors.white.withOpacity(0.15),
+                        Colors.transparent,
+                      ],
+                    ),
+                  ),
+                ),
+
+                // ── الأزرار الثلاثة ──
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        // زر الحذف
+                        _buildActionButton(
+                          icon: CupertinoIcons.trash_fill,
+                          label: 'حذف',
+                          sublabel: 'إزالة الملف نهائياً',
+                          color: const Color(0xFFFF3B30),
+                          onTap: () {
+                            _toggleFlip();
+                            Future.delayed(const Duration(milliseconds: 300),
+                                widget.onDelete);
+                          },
+                        ),
+
+                        // زر النقل إلى مجلد
+                        _buildActionButton(
+                          icon: CupertinoIcons.folder_badge_plus,
+                          label: 'نقل إلى مجلد',
+                          sublabel: 'تنظيم في مجلد',
+                          color: const Color(0xFF5E5CE6),
+                          onTap: _showFolderPicker,
+                        ),
+
+                        // زر الحفظ
+                        _buildActionButton(
+                          icon: CupertinoIcons.arrow_down_to_line_alt,
+                          label: 'حفظ في المعرض',
+                          sublabel: 'تصدير للجهاز',
+                          color: const Color(0xFF34C759),
+                          onTap: () {
+                            _toggleFlip();
+                            Future.delayed(const Duration(milliseconds: 300),
+                                widget.onSave);
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -4956,6 +5874,7 @@ class _ModernMusicCardState extends State<_ModernMusicCard>
   Widget _buildActionButton({
     required IconData icon,
     required String label,
+    required String sublabel,
     required Color color,
     required VoidCallback onTap,
   }) {
@@ -4963,36 +5882,79 @@ class _ModernMusicCardState extends State<_ModernMusicCard>
       onTap: onTap,
       child: Container(
         width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
         decoration: BoxDecoration(
-          color: color.withOpacity(0.12),
+          gradient: LinearGradient(
+            begin: Alignment.centerRight,
+            end: Alignment.centerLeft,
+            colors: [
+              color.withOpacity(0.18),
+              color.withOpacity(0.06),
+            ],
+          ),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: color.withOpacity(0.35), width: 1),
+          border: Border.all(color: color.withOpacity(0.30), width: 1),
+          boxShadow: [
+            BoxShadow(
+              color: color.withOpacity(0.12),
+              blurRadius: 8,
+              offset: const Offset(0, 3),
+            ),
+          ],
         ),
         child: Row(
           children: [
             Container(
-              width: 32,
-              height: 32,
+              width: 34,
+              height: 34,
               decoration: BoxDecoration(
-                color: color.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(9),
+                gradient: LinearGradient(
+                  colors: [color.withOpacity(0.30), color.withOpacity(0.15)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: color.withOpacity(0.25), width: 1),
               ),
               child: Icon(icon, color: color, size: 16),
             ),
             const SizedBox(width: 10),
-            Text(
-              label,
-              style: TextStyle(
-                color: color,
-                fontFamily: 'Tajawal',
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: TextStyle(
+                      color: color,
+                      fontFamily: 'Tajawal',
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      height: 1.2,
+                    ),
+                  ),
+                  Text(
+                    sublabel,
+                    style: TextStyle(
+                      color: color.withOpacity(0.6),
+                      fontFamily: 'Tajawal',
+                      fontSize: 10,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
               ),
             ),
-            const Spacer(),
-            Icon(CupertinoIcons.chevron_left,
-                color: color.withOpacity(0.5), size: 13),
+            Container(
+              width: 22,
+              height: 22,
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.12),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(CupertinoIcons.chevron_left,
+                  color: color.withOpacity(0.7), size: 11),
+            ),
           ],
         ),
       ),

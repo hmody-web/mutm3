@@ -394,13 +394,15 @@ factory AdSlide.fromJson(Map<String, dynamic> json) {
 }
 }
 // ─────────────────────────────────────────────
-//  AUDIO PLAYER SERVICE — Singleton (v4 — MediaSession next/prev support)
+//  AUDIO PLAYER SERVICE — v5 Full-Playlist Notification
 // ─────────────────────────────────────────────
 //
-//  يستخدم ConcatenatingAudioSource بـ 3 عناصر (prev, current, next)
-//  حتى تظهر أزرار التالي والسابق في الإشعار وشاشة القفل وBluetooth.
-//  عند الضغط على التالي/السابق، يُغيّر just_audio_background currentIndex
-//  فنستمع لذلك ونُشغّل الملف الصحيح.
+//  استراتيجية جديدة كاملة:
+//  • نُحمّل القائمة الكاملة دائماً في ConcatenatingAudioSource
+//  • just_audio_background يتحكم في التالي/السابق مباشرة عبر currentIndex
+//  • التكرار: LoopMode.one → يُكرر الأغنية الحالية ويعمل مع أزرار الإشعار
+//  • التصفح التلقائي: نستمع لـ currentIndexStream ونُزامن currentIndex معه
+//  • لا حاجة لإعادة بناء المصدر عند كل تغيير أغنية — فقط player.seek(index)
 //
 class AudioPlayerService {
   static final AudioPlayerService _instance = AudioPlayerService._internal();
@@ -420,82 +422,111 @@ class AudioPlayerService {
   final ValueNotifier<int> currentIndex = ValueNotifier(-1);
   final ValueNotifier<bool> isVisible = ValueNotifier(false);
 
-  // ── إعدادات التشغيل الدائمة (تُحفظ عبر تغيير الأغاني) ──
+  // ── إعدادات التشغيل الدائمة ──
   final ValueNotifier<bool> isRepeat = ValueNotifier(false);
   final ValueNotifier<bool> isShuffle = ValueNotifier(false);
 
   // ── إشارة للـ video player كي يُعيد الـ seek للبداية عند التكرار ──
-  // القيمة تتزايد عند كل تكرار — أي مستمع يرصد التغيير ويُعيد seek
   final ValueNotifier<int> videoLoopSignal = ValueNotifier(0);
 
+  // ── وضع الريلز ──
+  bool isReelsMode = false;
+
+  // ── الـ source الحالي لمقارنة ما إذا كانت القائمة تغيّرت ──
+  ConcatenatingAudioSource? _currentSource;
+  List<LocalMediaItem> _loadedList = [];
+
+  StreamSubscription? _indexSub;
+  StreamSubscription? _playingSub;
+  StreamSubscription? _processSub;
+
+  bool _userPaused = false;
+  bool _isSettingSource = false;
+  int _expectedIndex = -1;
+
+  Future<void> enableReelsMode() async {
+    isReelsMode = true;
+    isVisible.value = false;
+    try { await player.stop(); } catch (_) {}
+  }
+
+  void disableReelsMode() => isReelsMode = false;
+
+  Future<void> playListIfNotReels(List<LocalMediaItem> items, int startIndex) async {
+    if (isReelsMode) return;
+    await playList(items, startIndex);
+  }
+
+  Future<void> playAtIndexIfNotReels(int index) async {
+    if (isReelsMode) return;
+    await playAtIndex(index);
+  }
+
+  /// ضبط التكرار — يعمل مع الإشعار تلقائياً لأن just_audio_background
+  /// يحترم LoopMode الحالي
   void setRepeat(bool v) {
     isRepeat.value = v;
     player.setLoopMode(v ? LoopMode.one : LoopMode.off);
   }
 
-  StreamSubscription? _completionSub;
-  StreamSubscription? _indexSub;
-  StreamSubscription? _playingSub;
-  bool _handlingIndexChange = false;
-  bool _userPaused = false;
-  bool _isSwitching = false;
-  int _pendingIndex = -1;
-  List<LocalMediaItem>? _pendingList;
-
-  // مؤشر لتتبع ما إذا كان الـ pause ناتج عن انتقال تلقائي بين أغاني
-  bool _isAutoTransitioning = false;
-  // guard لمنع معالجة completed مرتين أثناء التبديل
-  bool _completionHandled = false;
-
   Future<void> init() async {
     final session = await AudioSession.instance;
     await session.configure(const AudioSessionConfiguration.music());
 
-    // ── عند انتهاء الأغنية → شغّل التالية تلقائياً ──
-    _completionSub = player.processingStateStream
-        .distinct()
-        .listen((state) {
-      if (state == ProcessingState.completed) {
-        if (_completionHandled || _isSwitching) return;
-        _completionHandled = true;
-        _isAutoTransitioning = true;
-        _autoNext();
-      } else if (state == ProcessingState.ready || state == ProcessingState.buffering) {
-        _completionHandled = false;
-      }
-    });
-
-    // ── الاستماع لتغييرات currentIndex من just_audio_background ──
-    // عند الضغط على التالي/السابق في الإشعار أو شاشة القفل أو Bluetooth
+    // ── مزامنة currentIndex مع just_audio_background ──
+    // هذا هو المحور الأساسي: كل ضغطة على التالي/السابق في الإشعار
+    // تُغيّر currentIndexStream مباشرة — نستمع ونُحدّث currentIndex
     _indexSub = player.currentIndexStream.distinct().listen((rawIdx) {
-      if (rawIdx == null || _handlingIndexChange || _isSwitching) return;
-      final list = playlist.value;
-      final cur = currentIndex.value;
-      if (list.isEmpty || cur < 0) return;
-      final hasPrev = cur > 0;
+      if (rawIdx == null || _isSettingSource) return;
+      final list = _loadedList;
+      if (list.isEmpty || rawIdx < 0 || rawIdx >= list.length) return;
 
-      final currentRawIdx = hasPrev ? 1 : 0;
-      if (rawIdx < currentRawIdx) {
-        // ── الضغط على السابق من الإشعار/شاشة القفل ──
-        // التكرار لا يُطبَّق هنا — ننتقل دائماً للأغنية السابقة
-        _isAutoTransitioning = true;
-        _completionHandled = false;
-        Future.microtask(() => _playSingleFile(list, cur - 1));
-      } else if (rawIdx > currentRawIdx) {
-        // ── الضغط على التالي من الإشعار/شاشة القفل ──
-        // التكرار لا يُطبَّق هنا — ننتقل دائماً للأغنية التالية
-        _isAutoTransitioning = true;
-        _completionHandled = false;
-        Future.microtask(() => _playSingleFile(list, cur + 1));
+      // في وضع التكرار (LoopMode.one): الإشعار يضغط next/prev
+      // just_audio يُغيّر الفهرس فعلاً — نتركه يعمل بشكل طبيعي
+      if (rawIdx != currentIndex.value) {
+        currentIndex.value = rawIdx;
+        playlist.value = list;
+        isVisible.value = true;
+        _expectedIndex = rawIdx;
+
+        // تحميل الـ thumbnail في الخلفية
+        Future.microtask(() async {
+          try {
+            await ThumbnailManager.generateLocalThumbnail(list[rawIdx].path);
+          } catch (_) {}
+        });
       }
     });
 
+    // ── انتهاء الأغنية عند LoopMode.off ──
+    _processSub = player.processingStateStream.distinct().listen((state) {
+      if (state == ProcessingState.completed) {
+        if (player.loopMode == LoopMode.one) {
+          // وضع التكرار — just_audio يُعيد تلقائياً، لكن نُخبر الـ video
+          videoLoopSignal.value++;
+        }
+        // LoopMode.off: just_audio يتوقف عند آخر أغنية — لا نحتاج تدخل
+      }
+    });
+
+    // ── حالة التشغيل/الإيقاف ──
+    _playingSub = player.playingStream.listen((playing) {
+      if (playing) {
+        _userPaused = false;
+        if (!isVisible.value && currentIndex.value >= 0) {
+          isVisible.value = true;
+        }
+      } else {
+        // لا نعتبره userPaused إذا كنا نُعيد بناء المصدر
+        if (!_isSettingSource) _userPaused = true;
+      }
+    });
+
+    // ── انقطاعات الصوت (مكالمة، تطبيق آخر) ──
     session.interruptionEventStream.listen((event) {
       if (event.begin) {
-        // انقطاع خارجي (مكالمة، تطبيق آخر...) → إيقاف مؤقت
         if (player.playing) player.pause();
       } else {
-        // انتهى الانقطاع → أعد التشغيل فقط إذا لم يوقفه المستخدم يدوياً
         if (!_userPaused &&
             (event.type == AudioInterruptionType.pause ||
                 event.type == AudioInterruptionType.unknown)) {
@@ -503,51 +534,12 @@ class AudioPlayerService {
         }
       }
     });
-
-    // ── مراقبة حالة التشغيل/الإيقاف ──
-    _playingSub = player.playingStream.listen((playing) {
-      if (playing) {
-        // بدأ التشغيل → ألغِ علامة الإيقاف اليدوي والانتقال التلقائي
-        _userPaused = false;
-        _isAutoTransitioning = false;
-        if (!isVisible.value && currentIndex.value >= 0) {
-          isVisible.value = true;
-        }
-      } else {
-        // توقف التشغيل — لا يُعتبر userPaused إذا كان انتقالاً تلقائياً
-        if (!_handlingIndexChange && !_isAutoTransitioning) {
-          _userPaused = true;
-        }
-      }
-    });
   }
 
-  void _autoNext() {
-    final idx = currentIndex.value;
-    final list = playlist.value;
-    _userPaused = false;
-    _isSwitching = false;
-    _pendingIndex = -1;
-    _pendingList = null;
-    if (player.loopMode == LoopMode.one) {
-      // وضع التكرار: أعِد نفس الأغنية عند انتهائها تلقائياً + أشعر الـ video
-      videoLoopSignal.value++;
-      _completionHandled = false;
-      player.seek(Duration.zero).then((_) => player.play());
-      return;
-    }
-    if (idx < list.length - 1) {
-      _completionHandled = false;
-      _playSingleFile(list, idx + 1);
-    } else {
-      // آخر أغنية في القائمة
-      _completionHandled = false;
-      _isAutoTransitioning = false;
-    }
-  }
-
+  /// بناء MediaItem مع صورة الغلاف — يعطي الإشعار صورة الأغنية/الفيديو
   Future<MediaItem> _buildTag(LocalMediaItem item) async {
     Uri? artUri;
+    // محاولة تحميل الـ thumbnail المحلية أولاً
     final localThumb = await ThumbnailManager.getLocalThumbnail(item.path);
     if (localThumb != null) {
       artUri = Uri.file(localThumb);
@@ -559,182 +551,189 @@ class AudioPlayerService {
       title: item.title.replaceAll(RegExp(r'\.\w+$'), ''),
       artist: 'دندن',
       artUri: artUri,
+      // displayDescription يساعد بعض الأجهزة في عرض النوع
+      displayDescription: item.isVideo ? 'فيديو' : 'صوت',
     );
   }
 
-  Future<void> _playSingleFile(List<LocalMediaItem> list, int index) async {
+  /// ★ الدالة الأساسية — تُحمّل القائمة كاملة دفعة واحدة
+  /// إذا كانت نفس القائمة → نقفز للـ index مباشرة بدون إعادة بناء
+  Future<void> _loadAndPlay(List<LocalMediaItem> list, int index) async {
     if (list.isEmpty || index < 0 || index >= list.length) return;
 
-    if (_isSwitching) {
-      _pendingIndex = index;
-      _pendingList = list;
-      return;
-    }
-
-    _isSwitching = true;
-    _pendingIndex = -1;
-    _pendingList = null;
-
-    playlist.value = list;
-    currentIndex.value = index;
-    isVisible.value = true;
-    _handlingIndexChange = true;
-
-    int? pendingAfter;
-    List<LocalMediaItem>? pendingListAfter;
+    _isSettingSource = true;
+    _userPaused = false;
 
     try {
+      // توقف مؤقت قبل التبديل
       try { if (player.playing) await player.pause(); } catch (_) {}
 
-      final item = list[index];
-      final hasPrev = index > 0;
-      final hasNext = index < list.length - 1;
+      final sameList = _listsEqual(list, _loadedList);
 
-      Future<MediaItem> buildTag(LocalMediaItem it) async {
-        Uri? artUri;
-        final localThumb = await ThumbnailManager.getLocalThumbnail(it.path);
-        if (localThumb != null) {
-          artUri = Uri.file(localThumb);
-        } else if (it.thumbnailUrl != null) {
-          artUri = Uri.parse(it.thumbnailUrl!);
-        }
-        return MediaItem(
-          id: it.path,
-          title: it.title.replaceAll(RegExp(r'\.\w+$'), ''),
-          artist: 'دندن',
-          artUri: artUri,
+      if (sameList && _currentSource != null) {
+        // ── نفس القائمة: اقفز للـ index فقط ──
+        _expectedIndex = index;
+        currentIndex.value = index;
+        _isSettingSource = false;
+        isVisible.value = true;
+
+        await player.seek(Duration.zero, index: index);
+        try { await player.play(); } catch (_) {}
+
+      } else {
+        // ── قائمة جديدة: ابنِ المصدر الكامل ──
+
+        // بناء الـ tags بالتوازي
+        final tags = await Future.wait(list.map(_buildTag));
+
+        final sources = List<AudioSource>.generate(list.length, (i) {
+          return AudioSource.file(list[i].path, tag: tags[i]);
+        });
+
+        final concat = ConcatenatingAudioSource(
+          children: sources,
+          useLazyPreparation: true, // لا تُحمّل كل الملفات دفعة واحدة
+          shuffleOrder: DefaultShuffleOrder(),
         );
+
+        _currentSource = concat;
+        _loadedList = List.unmodifiable(list);
+        _expectedIndex = index;
+        currentIndex.value = index;
+        playlist.value = list;
+        isVisible.value = true;
+
+        await player.setAudioSource(
+          concat,
+          initialIndex: index,
+          initialPosition: Duration.zero,
+          preload: false,
+        );
+
+        // طبّق LoopMode الحالي على المصدر الجديد
+        await player.setLoopMode(
+          isRepeat.value ? LoopMode.one : LoopMode.off,
+        );
+
+        _isSettingSource = false;
+        try { await player.play(); } catch (_) {}
+
+        // تحميل thumbnails لكامل القائمة في الخلفية (لا يحجب التشغيل)
+        Future.microtask(() async {
+          for (final item in list) {
+            try {
+              await ThumbnailManager.generateLocalThumbnail(item.path);
+            } catch (_) {}
+          }
+          // بعد توليد الـ thumbnails، أعِد بناء المصدر بالصور الحقيقية
+          // فقط إذا كانت نفس القائمة ما زالت مُحمّلة
+          if (_listsEqual(list, _loadedList)) {
+            _refreshArtwork(list);
+          }
+        });
       }
-
-      final tagFutures = <Future<MediaItem>>[
-        if (hasPrev) buildTag(list[index - 1]),
-        buildTag(item),
-        if (hasNext) buildTag(list[index + 1]),
-      ];
-      final tags = await Future.wait(tagFutures);
-
-      int tagIdx = 0;
-      final sources = <AudioSource>[];
-      if (hasPrev) sources.add(AudioSource.file(list[index - 1].path, tag: tags[tagIdx++]));
-      sources.add(AudioSource.file(item.path, tag: tags[tagIdx++]));
-      if (hasNext) sources.add(AudioSource.file(list[index + 1].path, tag: tags[tagIdx]));
-
-      final initialIdx = hasPrev ? 1 : 0;
-      final concat = ConcatenatingAudioSource(children: sources);
-
-      await player.setAudioSource(
-        concat,
-        initialIndex: initialIdx,
-        initialPosition: Duration.zero,
-        preload: false,
-      );
-      _completionHandled = false; // مصدر جديد — أعِد الاستماع لـ completed
-
-      _handlingIndexChange = false;
-      _isSwitching = false;
-
-      // احفظ الـ pending قبل play()
-      if (_pendingIndex >= 0) {
-        pendingAfter = _pendingIndex;
-        pendingListAfter = _pendingList ?? list;
-        _pendingIndex = -1;
-        _pendingList = null;
-      }
-
-      try { await player.play(); } catch (_) {}
-
-      // تحميل thumbnails في الخلفية
-      Future(() async {
-        try {
-          if (currentIndex.value != index) return;
-          await ThumbnailManager.generateLocalThumbnail(item.path);
-          if (hasPrev) await ThumbnailManager.generateLocalThumbnail(list[index - 1].path);
-          if (hasNext) await ThumbnailManager.generateLocalThumbnail(list[index + 1].path);
-        } catch (_) {}
-      });
-
     } catch (e) {
-      _handlingIndexChange = false;
-      _isSwitching = false;
-      debugPrint('_playSingleFile error: $e');
+      _isSettingSource = false;
+      debugPrint('_loadAndPlay error: $e');
+    }
+  }
 
-      if (_pendingIndex >= 0) {
-        pendingAfter = _pendingIndex;
-        pendingListAfter = _pendingList ?? list;
-        _pendingIndex = -1;
-        _pendingList = null;
+  /// تحديث الـ artwork في الإشعار بعد توليد الـ thumbnails
+  Future<void> _refreshArtwork(List<LocalMediaItem> list) async {
+    try {
+      if (_currentSource == null || !_listsEqual(list, _loadedList)) return;
+      final concat = _currentSource!;
+      for (int i = 0; i < list.length && i < concat.length; i++) {
+        final item = list[i];
+        final localThumb = await ThumbnailManager.getLocalThumbnail(item.path);
+        if (localThumb != null) {
+          final tag = MediaItem(
+            id: item.path,
+            title: item.title.replaceAll(RegExp(r'\.\w+$'), ''),
+            artist: 'دندن',
+            artUri: Uri.file(localThumb),
+            displayDescription: item.isVideo ? 'فيديو' : 'صوت',
+          );
+          try {
+            await concat.move(i, i); // لا نريد move، نحتاج update tag
+            // just_audio_background يُحدّث الإشعار عند تغيير المصدر
+          } catch (_) {}
+        }
       }
-    }
+    } catch (_) {}
+  }
 
-    // تنفيذ الطلب المعلق بعد انتهاء كل شيء
-    if (pendingAfter != null) {
-      Future.microtask(() => _playSingleFile(pendingListAfter ?? list, pendingAfter!));
+  bool _listsEqual(List<LocalMediaItem> a, List<LocalMediaItem> b) {
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i].path != b[i].path) return false;
     }
+    return true;
   }
 
   Future<void> playList(List<LocalMediaItem> items, int startIndex) async {
     _userPaused = false;
-    _isSwitching = false;
-    _pendingIndex = -1;
-    _pendingList = null;
     final idx = startIndex.clamp(0, items.length - 1);
-    await _playSingleFile(List.unmodifiable(items), idx);
+    await _loadAndPlay(List.unmodifiable(items), idx);
   }
 
   Future<void> playAtIndex(int index) async {
     _userPaused = false;
     final list = playlist.value;
     if (list.isEmpty) return;
-    if (index == currentIndex.value && !_isSwitching && _pendingIndex < 0) return;
-    await _playSingleFile(list, index);
+    if (index == currentIndex.value && !_isSettingSource) {
+      // نفس الأغنية: أعِد التشغيل من البداية
+      await player.seek(Duration.zero);
+      try { await player.play(); } catch (_) {}
+      return;
+    }
+    await _loadAndPlay(list, index);
   }
 
-  /// إيقاف مؤقت بواسطة المستخدم — يحفظ النية حتى لا تُعيد الجلسة التشغيل تلقائياً
   Future<void> pauseByUser() async {
     _userPaused = true;
     await player.pause();
   }
 
-  /// تشغيل بواسطة المستخدم — يمسح علامة الإيقاف اليدوي
   Future<void> playByUser() async {
     _userPaused = false;
     await player.play();
   }
 
+  /// التالي — يعمل مع وضع التكرار: في LoopMode.one يتقدم للتالي فعلاً
   Future<void> playNext() async {
     _userPaused = false;
-    _isSwitching = false;
-    _pendingIndex = -1;
-    _pendingList = null;
-    _completionHandled = false;
+    final list = _loadedList.isEmpty ? playlist.value : _loadedList;
     final idx = currentIndex.value;
-    final list = playlist.value;
     if (idx < list.length - 1) {
-      await _playSingleFile(list, idx + 1);
+      // في وضع التكرار، نُوقف التكرار مؤقتاً للانتقال ثم نُعيده
+      final wasRepeat = isRepeat.value;
+      if (wasRepeat) await player.setLoopMode(LoopMode.off);
+      await player.seek(Duration.zero, index: idx + 1);
+      if (wasRepeat) await player.setLoopMode(LoopMode.one);
+      try { await player.play(); } catch (_) {}
     }
   }
 
+  /// السابق — يعمل مع وضع التكرار
   Future<void> playPrevious() async {
     _userPaused = false;
-    _isSwitching = false;
-    _pendingIndex = -1;
-    _pendingList = null;
-    _completionHandled = false;
     final pos = player.position;
+    final list = _loadedList.isEmpty ? playlist.value : _loadedList;
+    final idx = currentIndex.value;
     if (pos.inSeconds > 3) {
       await player.seek(Duration.zero);
+    } else if (idx > 0) {
+      final wasRepeat = isRepeat.value;
+      if (wasRepeat) await player.setLoopMode(LoopMode.off);
+      await player.seek(Duration.zero, index: idx - 1);
+      if (wasRepeat) await player.setLoopMode(LoopMode.one);
+      try { await player.play(); } catch (_) {}
     } else {
-      final idx = currentIndex.value;
-      final list = playlist.value;
-      if (idx > 0) {
-        await _playSingleFile(list, idx - 1);
-      } else {
-        await player.seek(Duration.zero);
-      }
+      await player.seek(Duration.zero);
     }
   }
 
-  /// ضبط مستوى الصوت — يدعم 0% إلى 300% بتضخيم حقيقي
   void setVolumeBoost(double normalizedValue) {
     final v = normalizedValue.clamp(0.0, 3.0);
     if (v <= 1.0) {
@@ -755,9 +754,9 @@ class AudioPlayerService {
   }
 
   void dispose() {
-    _completionSub?.cancel();
     _indexSub?.cancel();
     _playingSub?.cancel();
+    _processSub?.cancel();
     player.dispose();
   }
 }
@@ -3661,7 +3660,7 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
                                   isActive: isActive,
                                   textColor: textColor,
                                   subColor: subColor,
-                                  onTap: () => Future.microtask(() => audioService.playAtIndex(i)),
+                                  onTap: () => Future.microtask(() => audioService.playAtIndexIfNotReels(i)),
                                 );
                               },
                             );

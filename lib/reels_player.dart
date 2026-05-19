@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
@@ -34,7 +35,7 @@ class ReelsVideoPlayer extends StatefulWidget {
 }
 
 class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   late PageController _pageController;
   late int _currentIndex;
   final Map<int, VideoPlayerController> _controllers = {};
@@ -74,6 +75,10 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
   StreamSubscription<int?>? _bgIndexSub;
   bool _syncingFromNotification = false;
 
+  // ── حالة الخلفية ──
+  bool _isInBackground = false;     // هل التطبيق في الخلفية الآن؟
+  bool _wasPlayingBeforeBackground = false; // هل كان يعزف قبل الذهاب للخلفية؟
+
   @override
   void initState() {
     super.initState();
@@ -106,6 +111,9 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
     if (_currentIndex > 0) _initController(_currentIndex - 1);
     if (_currentIndex < widget.items.length - 1)
       _initController(_currentIndex + 1);
+
+    // تسجيل مراقب دورة حياة التطبيق (خلفية / أمام)
+    WidgetsBinding.instance.addObserver(this);
 
     // تشغيل في الخلفية عبر audioService مع إشعار الميديا
     _setupBackgroundPlayback();
@@ -144,8 +152,73 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
     );
   }
 
+  // ══════════════════════════════════════════════════════════
+  //  إدارة دورة حياة التطبيق — تشغيل في الخلفية وشاشة القفل
+  // ══════════════════════════════════════════════════════════
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    final videoCtrl = _controllers[_currentIndex];
+
+    switch (state) {
+      // ── التطبيق ذهب للخلفية أو شاشة القفل ──
+      case AppLifecycleState.paused:
+      case AppLifecycleState.inactive:
+        _isInBackground = true;
+        // احفظ حالة التشغيل الحالية
+        _wasPlayingBeforeBackground = videoCtrl?.value.isPlaying ?? false;
+        // أوقف الفيديو (الصورة فقط) لتوفير الموارد
+        // لكن اجعل audioService يستمر في التشغيل لإبقاء الإشعار حياً
+        if (_wasPlayingBeforeBackground) {
+          videoCtrl?.pause();
+          // أبلغ audioService بالاستمرار في التشغيل (صوت الخلفية)
+          audioService.playAtIndex(_currentIndex);
+        }
+        break;
+
+      // ── التطبيق عاد للواجهة ──
+      case AppLifecycleState.resumed:
+        _isInBackground = false;
+        // استأنف الفيديو إذا كان يعزف قبل الذهاب للخلفية
+        if (_wasPlayingBeforeBackground) {
+          // تزامن موضع الفيديو مع موضع الصوت في audioService
+          _syncVideoPositionFromAudio().then((_) {
+            videoCtrl?.play();
+          });
+        }
+        _wasPlayingBeforeBackground = false;
+        break;
+
+      case AppLifecycleState.detached:
+      case AppLifecycleState.hidden:
+        break;
+    }
+  }
+
+  /// يزامن موضع الفيديو مع موضع صوت audioService بعد العودة من الخلفية
+  Future<void> _syncVideoPositionFromAudio() async {
+    final videoCtrl = _controllers[_currentIndex];
+    if (videoCtrl == null) return;
+    try {
+      // محاولة المزامنة مع موضع الصوت إن أمكن
+      // نستخدم try/catch لأن audioService قد يختلف تبعاً لتنفيذ main.dart
+      final dynamic svc = audioService;
+      final dynamic audioPos = svc?.player?.position;
+      if (audioPos is Duration) {
+        final videoDuration = videoCtrl.value.duration;
+        if (videoDuration.inMilliseconds > 0 &&
+            audioPos.inMilliseconds <= videoDuration.inMilliseconds) {
+          await videoCtrl.seekTo(audioPos);
+        }
+      }
+    } catch (_) {
+      // تجاهل أخطاء المزامنة بصمت — الفيديو سيستأنف من آخر موضعه
+    }
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     audioService.currentIndex.removeListener(_onNotificationIndexChanged);
     _bgIndexSub?.cancel();
     _bgAudioPlayer.dispose();
@@ -494,10 +567,59 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
     return Stack(
       fit: StackFit.expand,
       children: [
-        // خلفية سوداء
-        Container(color: Colors.black),
+        // ══════════════════════════════════════════════
+        //  طبقة الإضاءة السينمائية — نفس الفيديو مكبّر
+        //  ومشوّش يعكس ألوان الفيديو على الخلفية
+        // ══════════════════════════════════════════════
+        if (ctrl != null && isInit) ...[
+          // الفيديو كخلفية مكبّرة (overflow مقصود)
+          Positioned.fill(
+            child: ClipRect(
+              child: OverflowBox(
+                maxWidth: size.width * 2.2,
+                maxHeight: size.height * 2.2,
+                child: Center(
+                  child: AspectRatio(
+                    aspectRatio: ctrl.value.aspectRatio,
+                    child: VideoPlayer(ctrl),
+                  ),
+                ),
+              ),
+            ),
+          ),
 
-        // الفيديو بداخل حاوية مع الحفاظ على النسبة
+          // طبقة ضبابية فوقها لتليين الألوان وتناثرها
+          Positioned.fill(
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 55, sigmaY: 55),
+              child: Container(
+                color: Colors.black.withOpacity(0.38),
+              ),
+            ),
+          ),
+
+          // تشبّع وإشراق إضافي — يُعطي الإضاءة دفئاً سينمائياً
+          Positioned.fill(
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: RadialGradient(
+                  center: Alignment.center,
+                  radius: 1.2,
+                  colors: [
+                    Colors.transparent,
+                    Colors.black.withOpacity(0.55),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ] else
+          // خلفية سوداء عند التحميل
+          Container(color: Colors.black),
+
+        // ══════════════════════════════════════════════
+        //  الفيديو الرئيسي في المنتصف
+        // ══════════════════════════════════════════════
         if (ctrl != null && isInit)
           Center(
             child: AspectRatio(

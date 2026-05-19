@@ -550,9 +550,16 @@ class AudioPlayerService {
       if (state == ProcessingState.completed) {
         if (isRepeat.value) {
           // تكرار الأغنية الحالية يدوياً
-          videoLoopSignal.value++;
+          // نعيد _userPaused=false لأن هذا الإيقاف ليس من المستخدم بل نهاية طبيعية
+          _userPaused = false;
+          _isSettingSource = true; // نمنع playingStream من تعيين _userPaused=true
           player.seek(Duration.zero).then((_) {
+            // نُرسل إشارة الفيديو بعد اكتمال الـ seek حتى يتزامن VideoPlayerController
+            videoLoopSignal.value++;
+            _isSettingSource = false;
             try { player.play(); } catch (_) {}
+          }).catchError((_) {
+            _isSettingSource = false;
           });
         }
         // LoopMode.off بدون تكرار: just_audio يتوقف — سلوك طبيعي
@@ -3034,12 +3041,14 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
   }
 
   /// يُستدعى عند تكرار الأغنية تلقائياً — يُعيد الفيديو للبداية بسلاسة بدون rebuild
+  /// الإشارة تصل بعد اكتمال seek الصوت وقبل play() مباشرةً — نُعيد الفيديو فوراً
   void _onVideoLoop() {
     final ctrl = _videoCtrl;
     if (ctrl == null || !_videoInitialized) return;
     // إعادة seek للبداية بدون أي dispose أو إعادة تهيئة — هذا يمنع التقطع
     ctrl.seekTo(Duration.zero).then((_) {
-      if (mounted && _videoCtrl != null && audioService.player.playing) {
+      if (mounted && _videoCtrl != null) {
+        // نُشغّل الفيديو دائماً — الإشارة تصل عند التكرار فقط
         ctrl.play();
       }
     }).catchError((_) {});

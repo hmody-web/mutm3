@@ -51,7 +51,7 @@ class ReelsModeNotifier extends ValueNotifier<bool> {
     if (v) {
       await audioService.enableReelsMode();
     } else {
-      audioService.disableReelsMode();
+      await audioService.disableReelsMode();
     }
   }
 }
@@ -478,11 +478,21 @@ class AudioPlayerService {
 
   Future<void> enableReelsMode() async {
     isReelsMode = true;
+    _userPaused = true; // يمنع إعادة التشغيل التلقائي عند انقطاعات الصوت
     isVisible.value = false;
     try { await player.stop(); } catch (_) {}
   }
 
-  void disableReelsMode() => isReelsMode = false;
+  Future<void> disableReelsMode() async {
+    isReelsMode = false;
+    // أوقف أي صوت كان يعمل أثناء وضع الريلز تماماً
+    try { await player.stop(); } catch (_) {}
+    // أعِد تعيين الحالة حتى لا يظهر الكرت تلقائياً
+    isVisible.value = false;
+    currentIndex.value = -1;
+    _currentSource = null;
+    _loadedList = [];
+  }
 
   Future<void> playListIfNotReels(List<LocalMediaItem> items, int startIndex) async {
     if (isReelsMode) return;
@@ -567,7 +577,7 @@ class AudioPlayerService {
       if (event.begin) {
         if (player.playing) player.pause();
       } else {
-        if (!_userPaused &&
+        if (!_userPaused && !isReelsMode &&
             (event.type == AudioInterruptionType.pause ||
                 event.type == AudioInterruptionType.unknown)) {
           player.play();
@@ -600,6 +610,9 @@ class AudioPlayerService {
   /// إذا كانت نفس القائمة → نقفز للـ index مباشرة بدون إعادة بناء
   Future<void> _loadAndPlay(List<LocalMediaItem> list, int index) async {
     if (list.isEmpty || index < 0 || index >= list.length) return;
+
+    // ── لا تُشغّل شيئاً في وضع الريلز ──
+    if (isReelsMode) return;
 
     _isSettingSource = true;
     _userPaused = false;

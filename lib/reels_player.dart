@@ -59,6 +59,10 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
   bool _showHeart = false;
   double _dragPosition = 0;
 
+  // ── سحب الصفحة الكاملة (TikTok/Instagram style) ──
+  double _dragOffset = 0.0;       // الإزاحة العمودية الحالية أثناء السحب
+  bool _isDraggingPage = false;   // هل المستخدم يسحب الصفحة الآن؟
+
   // ── شريط التمرير السلس ──
   bool _isSeeking = false;        // هل المستخدم يسحب الآن؟
   double _seekProgress = 0.0;    // الموضع المؤقت أثناء السحب (0.0 - 1.0)
@@ -96,7 +100,7 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
     ]).animate(_heartAnimCtrl);
 
     _pageTransitionCtrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 400));
+        vsync: this, duration: const Duration(milliseconds: 220));
 
     _initController(_currentIndex);
     if (_currentIndex > 0) _initController(_currentIndex - 1);
@@ -135,7 +139,7 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
     _syncingFromNotification = true;
     _pageController.animateToPage(
       newIdx,
-      duration: const Duration(milliseconds: 400),
+      duration: const Duration(milliseconds: 250),
       curve: Curves.easeInOut,
     );
   }
@@ -293,7 +297,7 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
       // أنيميشن سحب طبيعي للأعلى مثل الريلز
       _pageController.animateToPage(
         next,
-        duration: const Duration(milliseconds: 500),
+        duration: const Duration(milliseconds: 300),
         curve: Curves.easeInOutCubic,
       );
     }
@@ -384,14 +388,76 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
     return Scaffold(
       backgroundColor: Colors.black,
       body: GestureDetector(
+        // ── اكتشاف اتجاه السحب ──
+        onVerticalDragStart: (details) {
+          _dragOffset = 0.0;
+          _isDraggingPage = true;
+        },
+        onVerticalDragUpdate: (details) {
+          if (!_isDraggingPage) return;
+          setState(() {
+            _dragOffset += details.delta.dy;
+          });
+          // تحريك الـ PageView يدوياً بناءً على الإزاحة
+          final currentPagePixels = _currentIndex * size.height;
+          // مقاومة طبيعية عند الأطراف (أول/آخر ريل)
+          double effectiveOffset = _dragOffset;
+          final isAtFirst = _currentIndex == 0 && _dragOffset > 0;
+          final isAtLast = _currentIndex == widget.items.length - 1 && _dragOffset < 0;
+          if (isAtFirst || isAtLast) {
+            effectiveOffset = _dragOffset * 0.25; // مقاومة 75%
+          }
+          final newOffset = currentPagePixels - effectiveOffset;
+          _pageController.jumpTo(newOffset.clamp(0.0, (widget.items.length - 1) * size.height));
+        },
+        onVerticalDragEnd: (details) {
+          if (!_isDraggingPage) return;
+          _isDraggingPage = false;
+
+          final velocity = details.primaryVelocity ?? 0;
+          final threshold = size.height * 0.22; // 22% من الشاشة كافٍ للتصفح
+
+          int targetPage = _currentIndex;
+
+          if (_dragOffset < -threshold || velocity < -700) {
+            // سحب للأعلى → الريل التالي
+            if (_currentIndex < widget.items.length - 1) {
+              targetPage = _currentIndex + 1;
+            }
+          } else if (_dragOffset > threshold || velocity > 700) {
+            // سحب للأسفل → الريل السابق
+            if (_currentIndex > 0) {
+              targetPage = _currentIndex - 1;
+            }
+          }
+
+          _dragOffset = 0.0;
+          _pageController.animateToPage(
+            targetPage,
+            duration: const Duration(milliseconds: 280),
+            curve: Curves.easeOutCubic,
+          );
+        },
+        onVerticalDragCancel: () {
+          if (!_isDraggingPage) return;
+          _isDraggingPage = false;
+          _dragOffset = 0.0;
+          _pageController.animateToPage(
+            _currentIndex,
+            duration: const Duration(milliseconds: 280),
+            curve: Curves.easeOutCubic,
+          );
+        },
+        // ── النقر والدبل تاب ──
         onTap: _toggleControls,
         onDoubleTap: _onDoubleTap,
         child: Stack(
           children: [
-            // ── صفحات الفيديو ──
+            // ── صفحات الفيديو (NeverScrollableScrollPhysics → نتحكم يدوياً) ──
             PageView.builder(
               controller: _pageController,
               scrollDirection: Axis.vertical,
+              physics: const NeverScrollableScrollPhysics(),
               onPageChanged: _onPageChanged,
               itemCount: widget.items.length,
               itemBuilder: (_, index) {

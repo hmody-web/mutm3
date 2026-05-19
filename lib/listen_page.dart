@@ -5484,8 +5484,8 @@ class _ModernMusicCardState extends State<_ModernMusicCard>
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
                 colors: [
-                  Color.fromARGB(255, 207, 207, 207).withOpacity(0.7),
-                  Color.fromARGB(255, 207, 207, 207).withOpacity(0.7),
+                  Color.fromARGB(255, 236, 236, 236).withOpacity(0.7),
+                  Color.fromARGB(255, 236, 236, 236).withOpacity(0.7),
                 ],
               ),
         border: Border.all(
@@ -5494,18 +5494,33 @@ class _ModernMusicCardState extends State<_ModernMusicCard>
               : Color(0xFF69383D).withOpacity(0.1),
           width: 1,
         ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.22),
-            blurRadius: 22,
-            offset: const Offset(0, 12),
-          ),
-          BoxShadow(
-            color: AppColors.primary.withValues(alpha: 0.10),
-            blurRadius: 20,
-            offset: const Offset(0, 6),
-          ),
-        ],
+boxShadow: context.isDark
+    ? [
+        // الوضع الداكن
+        BoxShadow(
+          color: Colors.black.withValues(alpha: 0.30),
+          blurRadius: 22,
+          offset: const Offset(0, 12),
+        ),
+        BoxShadow(
+          color: AppColors.primary.withValues(alpha: 0.10),
+          blurRadius: 20,
+          offset: const Offset(0, 6),
+        ),
+      ]
+    : [
+        // الوضع الفاتح
+        BoxShadow(
+          color: Colors.black.withValues(alpha: 0.08),
+          blurRadius: 18,
+          offset: const Offset(0, 8),
+        ),
+        BoxShadow(
+          color: Colors.white.withValues(alpha: 0.50),
+          blurRadius: 12,
+          offset: const Offset(0, -2),
+        ),
+      ],
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(30),

@@ -4915,7 +4915,7 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
     return _buildTileWithoutThumb(active, size);
   }
 
-Widget _buildTileWithThumb(bool active, double size) {
+  Widget _buildTileWithThumb(bool active, double size) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     final Color bgColor = active
@@ -4939,17 +4939,10 @@ Widget _buildTileWithThumb(bool active, double size) {
         boxShadow: active
             ? [
                 BoxShadow(
-                  color: AppColors.primary.withValues(alpha: 0.28),
-                  blurRadius: 20,
-                  spreadRadius: 0,
-                  offset: const Offset(0, 6),
-                ),
-                BoxShadow(
-                  color: AppColors.primary.withValues(alpha: 0.10),
-                  blurRadius: 40,
-                  spreadRadius: -4,
-                  offset: const Offset(0, 2),
-                ),
+                  color: AppColors.primary.withValues(alpha: 0.22),
+                  blurRadius: 16,
+                  offset: const Offset(0, 5),
+                )
               ]
             : [
                 BoxShadow(
@@ -4959,199 +4952,135 @@ Widget _buildTileWithThumb(bool active, double size) {
                 )
               ],
       ),
-      child: Stack(
-        children: [
-          // ── الشريط الجانبي المتوهج عند التشغيل ──
-          if (active)
-            Positioned(
-              top: 10,
-              bottom: 10,
-              left: 0,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 300),
-                curve: Curves.easeOutCubic,
-                width: 3.5,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      AppColors.primary,
-                      AppColors.primary.withValues(alpha: 0.4),
-                    ],
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                  ),
-                  borderRadius: const BorderRadius.only(
-                    topRight: Radius.circular(4),
-                    bottomRight: Radius.circular(4),
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: AppColors.primary.withValues(alpha: 0.7),
-                      blurRadius: 8,
-                      spreadRadius: 1,
-                    ),
-                  ],
-                ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Image.file(
+                File(_thumbPath!),
+                width: size,
+                height: size,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => _defaultThumb(active, size),
               ),
             ),
-          Padding(
-            padding: EdgeInsets.only(
-              left: active ? 16 : 12,
-              right: 12,
-              top: 10,
-              bottom: 10,
-            ),
-            child: Row(
-              children: [
-                // ── الصورة المصغرة مع حلقة توهج عند التشغيل ──
-                Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    if (active)
-                      AnimatedContainer(
-                        duration: const Duration(milliseconds: 300),
-                        width: size + 8,
-                        height: size + 8,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(15),
-                          gradient: RadialGradient(
-                            colors: [
-                              AppColors.primary.withValues(alpha: 0.30),
-                              AppColors.primary.withValues(alpha: 0.0),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: Image.file(
-                        File(_thumbPath!),
-                        width: size,
-                        height: size,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => _defaultThumb(active, size),
-                      ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    widget.item.title.replaceAll(RegExp(r'\.\w+$'), ''),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontFamily: 'Tajawal',
+                      fontWeight: FontWeight.w600,
+                      color: active
+                          ? AppColors.primary
+                          : (isDark
+                              ? AppColors.darkText
+                              : AppColors.textPrimary),
                     ),
-                  ],
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
                     children: [
-                      Text(
-                        widget.item.title.replaceAll(RegExp(r'\.\w+$'), ''),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontFamily: 'Tajawal',
-                          fontWeight: FontWeight.w600,
-                          color: active
-                              ? AppColors.primary
-                              : (isDark
-                                  ? AppColors.darkText
-                                  : AppColors.textPrimary),
-                        ),
+                      Icon(
+                        widget.item.isVideo
+                            ? CupertinoIcons.play_rectangle
+                            : CupertinoIcons.music_note,
+                        size: 11,
+                        color: active
+                            ? AppColors.primary.withValues(alpha: 0.7)
+                            : (isDark
+                                ? AppColors.darkTextSec
+                                : AppColors.textSecondary),
                       ),
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          Icon(
-                            widget.item.isVideo
-                                ? CupertinoIcons.play_rectangle
-                                : CupertinoIcons.music_note,
-                            size: 11,
+                      const SizedBox(width: 4),
+                      Text(
+                        widget.item.isVideo ? 'فيديو' : 'صوت',
+                        style: TextStyle(
+                            fontFamily: 'Tajawal',
+                            fontSize: 12,
                             color: active
                                 ? AppColors.primary.withValues(alpha: 0.7)
                                 : (isDark
                                     ? AppColors.darkTextSec
-                                    : AppColors.textSecondary),
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            widget.item.isVideo ? 'فيديو' : 'صوت',
-                            style: TextStyle(
-                                fontFamily: 'Tajawal',
-                                fontSize: 12,
-                                color: active
-                                    ? AppColors.primary.withValues(alpha: 0.7)
-                                    : (isDark
-                                        ? AppColors.darkTextSec
-                                        : AppColors.textSecondary)),
-                          ),
-                        ],
+                                    : AppColors.textSecondary)),
                       ),
                     ],
                   ),
-                ),
-                if (active)
-                  StreamBuilder<bool>(
-                    stream: audioService.player.playingStream,
-                    builder: (_, snap) {
-                      final playing = snap.data ?? false;
-                      return GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: () {
-                          if (playing) {
-                            audioService.pauseByUser();
-                          } else {
-                            audioService.playByUser();
-                          }
-                        },
-                        child: Container(
-                          width: 38,
-                          height: 38,
-                          decoration: BoxDecoration(
-                            color: AppColors.primary,
-                            shape: BoxShape.circle,
-                            boxShadow: [
-                              BoxShadow(
-                                color: AppColors.primary.withValues(alpha: 0.45),
-                                blurRadius: 12,
-                                spreadRadius: 1,
-                                offset: const Offset(0, 3),
-                              ),
-                            ],
-                          ),
-                          child: Icon(
-                            playing
-                                ? CupertinoIcons.pause_fill
-                                : CupertinoIcons.play_fill,
-                            color: Colors.white,
-                            size: 16,
-                          ),
-                        ),
-                      );
-                    },
-                  )
-                else
-                  Container(
-                    width: 32,
-                    height: 32,
-                    decoration: BoxDecoration(
-                      color: isDark
-                          ? AppColors.darkSurfaceAlt
-                          : AppColors.surfaceAlt,
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      CupertinoIcons.play_fill,
-                      color: isDark
-                          ? AppColors.darkTextSec
-                          : AppColors.textSecondary,
-                      size: 13,
-                    ),
-                  ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ],
+            if (active)
+              StreamBuilder<bool>(
+                stream: audioService.player.playingStream,
+                builder: (_, snap) {
+                  final playing = snap.data ?? false;
+                  return GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () {
+                      if (playing) {
+                        audioService.pauseByUser();
+                      } else {
+                        audioService.playByUser();
+                      }
+                    },
+                    child: Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: AppColors.primary,
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.primary.withValues(alpha: 0.35),
+                            blurRadius: 10,
+                            offset: const Offset(0, 3),
+                          ),
+                        ],
+                      ),
+                      child: Icon(
+                        playing
+                            ? CupertinoIcons.pause_fill
+                            : CupertinoIcons.play_fill,
+                        color: Colors.white,
+                        size: 16,
+                      ),
+                    ),
+                  );
+                },
+              )
+            else
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: isDark
+                      ? AppColors.darkSurfaceAlt
+                      : AppColors.surfaceAlt,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  CupertinoIcons.play_fill,
+                  color: isDark
+                      ? AppColors.darkTextSec
+                      : AppColors.textSecondary,
+                  size: 13,
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
 
-Widget _buildTileWithoutThumb(bool active, double size) {
+  Widget _buildTileWithoutThumb(bool active, double size) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     final Color bgColor = active
@@ -5175,17 +5104,10 @@ Widget _buildTileWithoutThumb(bool active, double size) {
         boxShadow: active
             ? [
                 BoxShadow(
-                  color: AppColors.primary.withValues(alpha: 0.28),
-                  blurRadius: 20,
-                  spreadRadius: 0,
-                  offset: const Offset(0, 6),
-                ),
-                BoxShadow(
-                  color: AppColors.primary.withValues(alpha: 0.10),
-                  blurRadius: 40,
-                  spreadRadius: -4,
-                  offset: const Offset(0, 2),
-                ),
+                  color: AppColors.primary.withValues(alpha: 0.22),
+                  blurRadius: 16,
+                  offset: const Offset(0, 5),
+                )
               ]
             : [
                 BoxShadow(
@@ -5195,185 +5117,121 @@ Widget _buildTileWithoutThumb(bool active, double size) {
                 )
               ],
       ),
-      child: Stack(
-        children: [
-          // ── الشريط الجانبي المتوهج عند التشغيل ──
-          if (active)
-            Positioned(
-              top: 10,
-              bottom: 10,
-              left: 0,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 300),
-                curve: Curves.easeOutCubic,
-                width: 3.5,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      AppColors.primary,
-                      AppColors.primary.withValues(alpha: 0.4),
-                    ],
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                  ),
-                  borderRadius: const BorderRadius.only(
-                    topRight: Radius.circular(4),
-                    bottomRight: Radius.circular(4),
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: AppColors.primary.withValues(alpha: 0.7),
-                      blurRadius: 8,
-                      spreadRadius: 1,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          children: [
+            _defaultThumb(active, size),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    widget.item.title.replaceAll(RegExp(r'\.\w+$'), ''),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontFamily: 'Tajawal',
+                      fontWeight: FontWeight.w600,
+                      color: active
+                          ? AppColors.primary
+                          : (isDark
+                              ? AppColors.darkText
+                              : AppColors.textPrimary),
                     ),
-                  ],
-                ),
-              ),
-            ),
-          Padding(
-            padding: EdgeInsets.only(
-              left: active ? 16 : 12,
-              right: 12,
-              top: 10,
-              bottom: 10,
-            ),
-            child: Row(
-              children: [
-                // ── الأيقونة الافتراضية مع حلقة توهج ──
-                Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    if (active)
-                      AnimatedContainer(
-                        duration: const Duration(milliseconds: 300),
-                        width: size + 8,
-                        height: size + 8,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(15),
-                          gradient: RadialGradient(
-                            colors: [
-                              AppColors.primary.withValues(alpha: 0.30),
-                              AppColors.primary.withValues(alpha: 0.0),
-                            ],
-                          ),
-                        ),
-                      ),
-                    _defaultThumb(active, size),
-                  ],
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
                     children: [
-                      Text(
-                        widget.item.title.replaceAll(RegExp(r'\.\w+$'), ''),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontFamily: 'Tajawal',
-                          fontWeight: FontWeight.w600,
-                          color: active
-                              ? AppColors.primary
-                              : (isDark
-                                  ? AppColors.darkText
-                                  : AppColors.textPrimary),
-                        ),
+                      Icon(
+                        widget.item.isVideo
+                            ? CupertinoIcons.play_rectangle
+                            : CupertinoIcons.music_note,
+                        size: 11,
+                        color: active
+                            ? AppColors.primary.withValues(alpha: 0.7)
+                            : (isDark
+                                ? AppColors.darkTextSec
+                                : AppColors.textSecondary),
                       ),
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          Icon(
-                            widget.item.isVideo
-                                ? CupertinoIcons.play_rectangle
-                                : CupertinoIcons.music_note,
-                            size: 11,
+                      const SizedBox(width: 4),
+                      Text(
+                        widget.item.isVideo ? 'فيديو' : 'صوت',
+                        style: TextStyle(
+                            fontFamily: 'Tajawal',
+                            fontSize: 12,
                             color: active
                                 ? AppColors.primary.withValues(alpha: 0.7)
                                 : (isDark
                                     ? AppColors.darkTextSec
-                                    : AppColors.textSecondary),
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            widget.item.isVideo ? 'فيديو' : 'صوت',
-                            style: TextStyle(
-                                fontFamily: 'Tajawal',
-                                fontSize: 12,
-                                color: active
-                                    ? AppColors.primary.withValues(alpha: 0.7)
-                                    : (isDark
-                                        ? AppColors.darkTextSec
-                                        : AppColors.textSecondary)),
-                          ),
-                        ],
+                                    : AppColors.textSecondary)),
                       ),
                     ],
                   ),
-                ),
-                if (active)
-                  StreamBuilder<bool>(
-                    stream: audioService.player.playingStream,
-                    builder: (_, snap) {
-                      final playing = snap.data ?? false;
-                      return GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: () {
-                          if (playing) {
-                            audioService.pauseByUser();
-                          } else {
-                            audioService.playByUser();
-                          }
-                        },
-                        child: Container(
-                          width: 38,
-                          height: 38,
-                          decoration: BoxDecoration(
-                            color: AppColors.primary,
-                            shape: BoxShape.circle,
-                            boxShadow: [
-                              BoxShadow(
-                                color: AppColors.primary.withValues(alpha: 0.45),
-                                blurRadius: 12,
-                                spreadRadius: 1,
-                                offset: const Offset(0, 3),
-                              ),
-                            ],
-                          ),
-                          child: Icon(
-                            playing
-                                ? CupertinoIcons.pause_fill
-                                : CupertinoIcons.play_fill,
-                            color: Colors.white,
-                            size: 16,
-                          ),
-                        ),
-                      );
-                    },
-                  )
-                else
-                  Container(
-                    width: 32,
-                    height: 32,
-                    decoration: BoxDecoration(
-                      color: isDark
-                          ? AppColors.darkSurfaceAlt
-                          : AppColors.surfaceAlt,
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      CupertinoIcons.play_fill,
-                      color: isDark
-                          ? AppColors.darkTextSec
-                          : AppColors.textSecondary,
-                      size: 13,
-                    ),
-                  ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ],
+            if (active)
+              StreamBuilder<bool>(
+                stream: audioService.player.playingStream,
+                builder: (_, snap) {
+                  final playing = snap.data ?? false;
+                  return GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () {
+                      if (playing) {
+                        audioService.pauseByUser();
+                      } else {
+                        audioService.playByUser();
+                      }
+                    },
+                    child: Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: AppColors.primary,
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.primary.withValues(alpha: 0.35),
+                            blurRadius: 10,
+                            offset: const Offset(0, 3),
+                          ),
+                        ],
+                      ),
+                      child: Icon(
+                        playing
+                            ? CupertinoIcons.pause_fill
+                            : CupertinoIcons.play_fill,
+                        color: Colors.white,
+                        size: 16,
+                      ),
+                    ),
+                  );
+                },
+              )
+            else
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: isDark
+                      ? AppColors.darkSurfaceAlt
+                      : AppColors.surfaceAlt,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  CupertinoIcons.play_fill,
+                  color: isDark
+                      ? AppColors.darkTextSec
+                      : AppColors.textSecondary,
+                  size: 13,
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -5622,18 +5480,18 @@ class _ModernMusicCardState extends State<_ModernMusicCard>
                   Colors.white.withOpacity(0.03),
                 ],
               )
-            : const LinearGradient(
+            : LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
                 colors: [
-                  Color(0xFF69383D),
-                  Color(0xFF69383D),
+                  Color.fromARGB(255, 207, 207, 207).withOpacity(0.7),
+                  Color.fromARGB(255, 207, 207, 207).withOpacity(0.7),
                 ],
               ),
         border: Border.all(
           color: context.isDark
               ? Colors.white.withOpacity(0.06)
-              : Colors.black.withOpacity(0.05),
+              : Color(0xFF69383D).withOpacity(0.1),
           width: 1,
         ),
         boxShadow: [
@@ -5811,42 +5669,27 @@ class _ModernMusicCardState extends State<_ModernMusicCard>
   }
 
   Widget _buildBack(String title) {
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 220),
+    return Container(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(30),
-        gradient: context.isDark
-            ? LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Colors.white.withOpacity(0.09),
-                  Colors.white.withOpacity(0.04),
-                ],
-              )
-            : const LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Color(0xFF69383D),
-                  Color(0xFF69383D),
-                ],
-              ),
-        border: Border.all(
-          color: context.isDark
-              ? Colors.white.withOpacity(0.07)
-              : Colors.black.withOpacity(0.05),
-          width: 1,
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Color(0xFF1A1A2E),
+            Color(0xFF16213E),
+            Color(0xFF0F3460),
+          ],
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.22),
-            blurRadius: 22,
-            offset: const Offset(0, 12),
+            color: Colors.black.withOpacity(0.35),
+            blurRadius: 28,
+            offset: const Offset(0, 14),
           ),
           BoxShadow(
-            color: AppColors.primary.withValues(alpha: 0.10),
-            blurRadius: 20,
+            color: AppColors.primary.withOpacity(0.18),
+            blurRadius: 24,
             offset: const Offset(0, 6),
           ),
         ],
@@ -5855,28 +5698,57 @@ class _ModernMusicCardState extends State<_ModernMusicCard>
         borderRadius: BorderRadius.circular(30),
         child: Stack(
           children: [
-            // ── خلفية زخرفية متوهجة ──
+            // ── توهج علوي أيمن ──
             Positioned(
-              top: -20,
-              left: -20,
+              top: -30,
+              right: -30,
               child: Container(
-                width: 100,
-                height: 100,
+                width: 110,
+                height: 110,
                 decoration: BoxDecoration(
-                  color: AppColors.primary.withOpacity(0.10),
                   shape: BoxShape.circle,
+                  gradient: RadialGradient(
+                    colors: [
+                      AppColors.primary.withOpacity(0.22),
+                      Colors.transparent,
+                    ],
+                  ),
                 ),
               ),
             ),
+            // ── توهج سفلي أيسر ──
             Positioned(
-              bottom: -15,
-              right: -15,
+              bottom: -25,
+              left: -25,
               child: Container(
-                width: 80,
-                height: 80,
+                width: 90,
+                height: 90,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF5E5CE6).withOpacity(0.08),
                   shape: BoxShape.circle,
+                  gradient: RadialGradient(
+                    colors: [
+                      const Color(0xFF5E5CE6).withOpacity(0.20),
+                      Colors.transparent,
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            // ── خط توهج علوي ──
+            Positioned(
+              top: 0,
+              left: 20,
+              right: 20,
+              child: Container(
+                height: 1,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      Colors.transparent,
+                      Colors.white.withOpacity(0.18),
+                      Colors.transparent,
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -5884,40 +5756,43 @@ class _ModernMusicCardState extends State<_ModernMusicCard>
             // ── المحتوى ──
             Column(
               children: [
-                // ── رأس الكارت: اسم الأغنية + زر إغلاق ──
-                Container(
+                // ── رأس الكارت ──
+                Padding(
                   padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
                   child: Row(
                     children: [
                       Container(
-                        width: 30,
-                        height: 30,
+                        width: 32,
+                        height: 32,
                         decoration: BoxDecoration(
                           gradient: LinearGradient(
-                            colors: [AppColors.primary, AppColors.primaryDark],
+                            colors: [
+                              AppColors.primary,
+                              AppColors.primaryDark,
+                            ],
                             begin: Alignment.topLeft,
                             end: Alignment.bottomRight,
                           ),
-                          borderRadius: BorderRadius.circular(9),
+                          borderRadius: BorderRadius.circular(10),
                           boxShadow: [
                             BoxShadow(
-                              color: AppColors.primary.withOpacity(0.4),
-                              blurRadius: 8,
-                              offset: const Offset(0, 3),
+                              color: AppColors.primary.withOpacity(0.50),
+                              blurRadius: 10,
+                              offset: const Offset(0, 4),
                             ),
                           ],
                         ),
                         child: const Icon(CupertinoIcons.music_note,
-                            color: Colors.white, size: 14),
+                            color: Colors.white, size: 15),
                       ),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 9),
                       Expanded(
                         child: Text(
                           title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.92),
                             fontSize: 11,
                             fontWeight: FontWeight.w700,
                             fontFamily: 'Tajawal',
@@ -5927,78 +5802,78 @@ class _ModernMusicCardState extends State<_ModernMusicCard>
                       GestureDetector(
                         onTap: _toggleFlip,
                         child: Container(
-                          width: 26,
-                          height: 26,
+                          width: 28,
+                          height: 28,
                           decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.12),
+                            color: Colors.white.withOpacity(0.10),
                             shape: BoxShape.circle,
                             border: Border.all(
-                              color: Colors.white.withOpacity(0.18),
+                              color: Colors.white.withOpacity(0.15),
                               width: 1,
                             ),
                           ),
-                          child: const Icon(CupertinoIcons.xmark,
-                              color: Colors.white70, size: 11),
+                          child: Icon(
+                            CupertinoIcons.xmark,
+                            color: Colors.white.withOpacity(0.65),
+                            size: 11,
+                          ),
                         ),
                       ),
                     ],
                   ),
                 ),
 
-                // ── فاصل ناعم ──
+                // ── فاصل ──
                 Container(
                   height: 1,
-                  margin: const EdgeInsets.symmetric(horizontal: 12),
+                  margin: const EdgeInsets.symmetric(horizontal: 14),
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
                       colors: [
                         Colors.transparent,
-                        Colors.white.withOpacity(0.15),
+                        Colors.white.withOpacity(0.12),
                         Colors.transparent,
                       ],
                     ),
                   ),
                 ),
 
-                // ── الأزرار الثلاثة (أفقية مضغوطة) ──
+                // ── الأزرار الثلاثة عمودياً ──
                 Expanded(
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(10, 6, 10, 10),
-                    child: Row(
+                    padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+                    child: Column(
                       children: [
-                        // زر الحذف
                         Expanded(
                           child: _buildActionButton(
                             icon: CupertinoIcons.trash_fill,
                             label: 'حذف',
+                            sublabel: 'إزالة من المكتبة',
                             color: const Color(0xFFFF3B30),
-                            onTap: () {
-                              _toggleFlip();
-                              Future.delayed(const Duration(milliseconds: 300),
-                                  widget.onDelete);
-                            },
+                            onTap: () => widget.onDelete(),
                           ),
                         ),
-                        const SizedBox(width: 7),
-                        // زر النقل إلى مجلد
+                        const SizedBox(height: 7),
                         Expanded(
                           child: _buildActionButton(
                             icon: CupertinoIcons.folder_badge_plus,
                             label: 'نقل',
+                            sublabel: 'إضافة إلى مجلد',
                             color: const Color(0xFF5E5CE6),
                             onTap: _showFolderPicker,
                           ),
                         ),
-                        const SizedBox(width: 7),
-                        // زر الحفظ
+                        const SizedBox(height: 7),
                         Expanded(
                           child: _buildActionButton(
                             icon: CupertinoIcons.arrow_down_to_line_alt,
                             label: 'حفظ',
-                            color: const Color(0xFF34C759),
+                            sublabel: 'تصدير إلى المعرض',
+                            color: const Color(0xFF30D158),
                             onTap: () {
                               _toggleFlip();
-                              Future.delayed(const Duration(milliseconds: 300),
+                              Future.delayed(
+                                  const Duration(milliseconds: 300),
                                   widget.onSave);
                             },
                           ),
@@ -6018,68 +5893,87 @@ class _ModernMusicCardState extends State<_ModernMusicCard>
   Widget _buildActionButton({
     required IconData icon,
     required String label,
+    required String sublabel,
     required Color color,
     required VoidCallback onTap,
   }) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 14),
         decoration: BoxDecoration(
           gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
+            begin: Alignment.centerRight,
+            end: Alignment.centerLeft,
             colors: [
-              color.withOpacity(0.20),
-              color.withOpacity(0.08),
+              color.withOpacity(0.18),
+              color.withOpacity(0.07),
             ],
           ),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: color.withOpacity(0.35), width: 1),
-          boxShadow: [
-            BoxShadow(
-              color: color.withOpacity(0.15),
-              blurRadius: 8,
-              offset: const Offset(0, 3),
-            ),
-          ],
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: color.withOpacity(0.28),
+            width: 1,
+          ),
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          mainAxisAlignment: MainAxisAlignment.center,
+        child: Row(
           children: [
             Container(
-              width: 36,
-              height: 36,
+              width: 38,
+              height: 38,
               decoration: BoxDecoration(
                 gradient: LinearGradient(
-                  colors: [color.withOpacity(0.35), color.withOpacity(0.18)],
+                  colors: [
+                    color.withOpacity(0.40),
+                    color.withOpacity(0.22),
+                  ],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
                 shape: BoxShape.circle,
-                border: Border.all(color: color.withOpacity(0.30), width: 1),
                 boxShadow: [
                   BoxShadow(
-                    color: color.withOpacity(0.25),
-                    blurRadius: 6,
-                    offset: const Offset(0, 2),
+                    color: color.withOpacity(0.28),
+                    blurRadius: 8,
+                    offset: const Offset(0, 3),
                   ),
                 ],
               ),
-              child: Icon(icon, color: color, size: 16),
+              child: Icon(icon, color: color, size: 17),
             ),
-            const SizedBox(height: 6),
-            Text(
-              label,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: color,
-                fontFamily: 'Tajawal',
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                height: 1.1,
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: TextStyle(
+                      color: color,
+                      fontFamily: 'Tajawal',
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      height: 1.2,
+                    ),
+                  ),
+                  Text(
+                    sublabel,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.38),
+                      fontFamily: 'Tajawal',
+                      fontSize: 10,
+                      fontWeight: FontWeight.w500,
+                      height: 1.3,
+                    ),
+                  ),
+                ],
               ),
+            ),
+            Icon(
+              CupertinoIcons.chevron_left,
+              color: color.withOpacity(0.50),
+              size: 13,
             ),
           ],
         ),

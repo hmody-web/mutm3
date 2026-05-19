@@ -30,6 +30,32 @@ import 'listen_page.dart';
 import 'browse_page.dart';
 import 'settings_page.dart';
 import 'package:flutter_dynamic_icon/flutter_dynamic_icon.dart';
+// ═══════════════════════════════════════════════════════════════
+//  REELS MODE NOTIFIER — مشاركة حالة وضع الريلز (محفوظ ومزامَن)
+// ═══════════════════════════════════════════════════════════════
+class ReelsModeNotifier extends ValueNotifier<bool> {
+  ReelsModeNotifier._() : super(false);
+  static final ReelsModeNotifier instance = ReelsModeNotifier._();
+
+  Future<void> load() async {
+    final prefs = await SharedPreferences.getInstance();
+    // الافتراضي false — وضع الريلز مطفي عند أول تشغيل
+    value = prefs.getBool('reelsMode') ?? false;
+  }
+
+  Future<void> set(bool v) async {
+    value = v;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('reelsMode', v);
+    // مزامنة مباشرة مع audioService
+    if (v) {
+      await audioService.enableReelsMode();
+    } else {
+      audioService.disableReelsMode();
+    }
+  }
+}
+
 // ─────────────────────────────────────────────
 //  ENTRY POINT
 // ─────────────────────────────────────────────
@@ -48,6 +74,12 @@ Future<void> main() async {
 
   // تحميل الثيم المحفوظ أولاً
   await ThemeNotifier.instance.load();
+
+  // تحميل وضع الريلز المحفوظ وتطبيقه على audioService
+  await ReelsModeNotifier.instance.load();
+  if (ReelsModeNotifier.instance.value) {
+    await audioService.enableReelsMode();
+  }
 
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
@@ -462,11 +494,13 @@ class AudioPlayerService {
     await playAtIndex(index);
   }
 
-  /// ضبط التكرار — يعمل مع الإشعار تلقائياً لأن just_audio_background
-  /// يحترم LoopMode الحالي
+  /// ضبط التكرار — نستخدم LoopMode.off دائماً مع just_audio_background
+  /// ونُدير التكرار يدوياً عبر processingStateStream
+  /// السبب: LoopMode.one يمنع just_audio من تغيير الفهرس عند أوامر next/prev من الإشعار
   void setRepeat(bool v) {
     isRepeat.value = v;
-    player.setLoopMode(v ? LoopMode.one : LoopMode.off);
+    // نبقى دائماً على LoopMode.off حتى تعمل أزرار التالي/السابق في الإشعار
+    player.setLoopMode(LoopMode.off);
   }
 
   Future<void> init() async {
@@ -486,7 +520,7 @@ class AudioPlayerService {
       if (rawIdx != currentIndex.value) {
         currentIndex.value = rawIdx;
         playlist.value = list;
-        isVisible.value = true;
+        if (!isReelsMode) isVisible.value = true;
         _expectedIndex = rawIdx;
 
         // تحميل الـ thumbnail في الخلفية
@@ -498,14 +532,20 @@ class AudioPlayerService {
       }
     });
 
-    // ── انتهاء الأغنية عند LoopMode.off ──
+    // ── انتهاء الأغنية — نُدير التكرار يدوياً ──
+    // السبب: نستخدم LoopMode.off دائماً حتى تعمل أزرار التالي/السابق من الإشعار
+    // عند انتهاء الأغنية: إذا كان التكرار مفعّلاً → أعِد الأغنية الحالية
+    //                     إذا لم يكن → just_audio يتوقف تلقائياً (سلوك طبيعي)
     _processSub = player.processingStateStream.distinct().listen((state) {
       if (state == ProcessingState.completed) {
-        if (player.loopMode == LoopMode.one) {
-          // وضع التكرار — just_audio يُعيد تلقائياً، لكن نُخبر الـ video
+        if (isRepeat.value) {
+          // تكرار الأغنية الحالية يدوياً
           videoLoopSignal.value++;
+          player.seek(Duration.zero).then((_) {
+            try { player.play(); } catch (_) {}
+          });
         }
-        // LoopMode.off: just_audio يتوقف عند آخر أغنية — لا نحتاج تدخل
+        // LoopMode.off بدون تكرار: just_audio يتوقف — سلوك طبيعي
       }
     });
 
@@ -513,7 +553,7 @@ class AudioPlayerService {
     _playingSub = player.playingStream.listen((playing) {
       if (playing) {
         _userPaused = false;
-        if (!isVisible.value && currentIndex.value >= 0) {
+        if (!isVisible.value && currentIndex.value >= 0 && !isReelsMode) {
           isVisible.value = true;
         }
       } else {
@@ -575,7 +615,7 @@ class AudioPlayerService {
         _expectedIndex = index;
         currentIndex.value = index;
         _isSettingSource = false;
-        isVisible.value = true;
+        if (!isReelsMode) isVisible.value = true;
 
         await player.seek(Duration.zero, index: index);
         try { await player.play(); } catch (_) {}
@@ -601,7 +641,7 @@ class AudioPlayerService {
         _expectedIndex = index;
         currentIndex.value = index;
         playlist.value = list;
-        isVisible.value = true;
+        if (!isReelsMode) isVisible.value = true;
 
         await player.setAudioSource(
           concat,
@@ -610,10 +650,9 @@ class AudioPlayerService {
           preload: false,
         );
 
-        // طبّق LoopMode الحالي على المصدر الجديد
-        await player.setLoopMode(
-          isRepeat.value ? LoopMode.one : LoopMode.off,
-        );
+        // دائماً LoopMode.off — التكرار يُدار يدوياً عبر processingStateStream
+        // هذا يضمن أن أزرار التالي/السابق من الإشعار تعمل دائماً
+        await player.setLoopMode(LoopMode.off);
 
         _isSettingSource = false;
         try { await player.play(); } catch (_) {}
@@ -700,22 +739,19 @@ class AudioPlayerService {
     await player.play();
   }
 
-  /// التالي — يعمل مع وضع التكرار: في LoopMode.one يتقدم للتالي فعلاً
+  /// التالي — يعمل دائماً بغض النظر عن وضع التكرار
+  /// لأننا لا نستخدم LoopMode.one — التكرار يُدار يدوياً فقط عند انتهاء الأغنية
   Future<void> playNext() async {
     _userPaused = false;
     final list = _loadedList.isEmpty ? playlist.value : _loadedList;
     final idx = currentIndex.value;
     if (idx < list.length - 1) {
-      // في وضع التكرار، نُوقف التكرار مؤقتاً للانتقال ثم نُعيده
-      final wasRepeat = isRepeat.value;
-      if (wasRepeat) await player.setLoopMode(LoopMode.off);
       await player.seek(Duration.zero, index: idx + 1);
-      if (wasRepeat) await player.setLoopMode(LoopMode.one);
       try { await player.play(); } catch (_) {}
     }
   }
 
-  /// السابق — يعمل مع وضع التكرار
+  /// السابق — يعمل دائماً بغض النظر عن وضع التكرار
   Future<void> playPrevious() async {
     _userPaused = false;
     final pos = player.position;
@@ -724,10 +760,7 @@ class AudioPlayerService {
     if (pos.inSeconds > 3) {
       await player.seek(Duration.zero);
     } else if (idx > 0) {
-      final wasRepeat = isRepeat.value;
-      if (wasRepeat) await player.setLoopMode(LoopMode.off);
       await player.seek(Duration.zero, index: idx - 1);
-      if (wasRepeat) await player.setLoopMode(LoopMode.one);
       try { await player.play(); } catch (_) {}
     } else {
       await player.seek(Duration.zero);

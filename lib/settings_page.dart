@@ -446,8 +446,7 @@ class _SettingsPageState extends State<SettingsPage> {
           activeColor: AppColors.primary,
           onChanged: (v) {
             setState(() => _reelsMode = v);
-            _savePref('reelsMode', v);
-            ReelsModeNotifier.instance.value = v;
+            ReelsModeNotifier.instance.set(v);
           },
         ),
       ),
@@ -638,18 +637,5 @@ class _SettingsPageState extends State<SettingsPage> {
                   isDark ? AppColors.darkTextSec : AppColors.textSecondary)),
       onTap: onTap,
     );
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  REELS MODE NOTIFIER — مشاركة حالة وضع الريلز
-// ═══════════════════════════════════════════════════════════════
-class ReelsModeNotifier extends ValueNotifier<bool> {
-  ReelsModeNotifier._() : super(false);
-  static final ReelsModeNotifier instance = ReelsModeNotifier._();
-
-  Future<void> load() async {
-    final prefs = await SharedPreferences.getInstance();
-    value = prefs.getBool('reelsMode') ?? false;
   }
 }

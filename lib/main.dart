@@ -542,29 +542,58 @@ class AudioPlayerService {
       }
     });
 
-    // ── انتهاء الأغنية — نُدير التكرار يدوياً ──
-    // السبب: نستخدم LoopMode.off دائماً حتى تعمل أزرار التالي/السابق من الإشعار
-    // عند انتهاء الأغنية: إذا كان التكرار مفعّلاً → أعِد الأغنية الحالية
-    //                     إذا لم يكن → just_audio يتوقف تلقائياً (سلوك طبيعي)
+    // ── انتهاء الأغنية — نُدير التكرار يدوياً (طريقتان مزدوجتان للضمان الكامل) ──
+    // الطريقة ١: processingStateStream.completed
+    // الطريقة ٢: positionStream fallback (تعمل حتى لو لم يُطلق completed)
+    bool _repeatInProgress = false; // منع التكرار المزدوج
+
+    void _doRepeat() {
+      if (_repeatInProgress) return;
+      if (!isRepeat.value) return;
+      _repeatInProgress = true;
+      _userPaused = false;
+      _isSettingSource = true;
+      player.seek(Duration.zero).then((_) {
+        videoLoopSignal.value++;
+        _isSettingSource = false;
+        _repeatInProgress = false;
+        try { player.play(); } catch (_) {}
+      }).catchError((_) {
+        _isSettingSource = false;
+        _repeatInProgress = false;
+      });
+    }
+
     _processSub = player.processingStateStream.distinct().listen((state) {
       if (state == ProcessingState.completed) {
         if (isRepeat.value) {
-          // تكرار الأغنية الحالية يدوياً
-          // نعيد _userPaused=false لأن هذا الإيقاف ليس من المستخدم بل نهاية طبيعية
-          _userPaused = false;
-          _isSettingSource = true; // نمنع playingStream من تعيين _userPaused=true
-          player.seek(Duration.zero).then((_) {
-            // نُرسل إشارة الفيديو بعد اكتمال الـ seek حتى يتزامن VideoPlayerController
-            videoLoopSignal.value++;
-            _isSettingSource = false;
-            try { player.play(); } catch (_) {}
-          }).catchError((_) {
-            _isSettingSource = false;
-          });
+          _doRepeat();
         }
         // LoopMode.off بدون تكرار: just_audio يتوقف — سلوك طبيعي
+      } else {
+        // إعادة تعيين العلامة عند أي حالة غير completed
+        _repeatInProgress = false;
       }
     });
+
+    // ── Fallback: مراقبة Position مقارنةً بـ Duration ──
+    // يُغطي حالات عدم إطلاق ProcessingState.completed للملفات المحلية
+    StreamSubscription? _positionRepeatSub;
+    _positionRepeatSub = player.positionStream.listen((pos) {
+      if (!isRepeat.value) return;
+      if (_repeatInProgress) return;
+      if (_isSettingSource) return;
+      final dur = player.duration;
+      if (dur == null || dur.inMilliseconds <= 0) return;
+      // إذا وصلنا لنهاية الأغنية (آخر 200ms) والمشغّل لا يعزف
+      if (!player.playing &&
+          pos.inMilliseconds >= dur.inMilliseconds - 200 &&
+          player.processingState != ProcessingState.loading &&
+          player.processingState != ProcessingState.buffering) {
+        _doRepeat();
+      }
+    });
+    // نُلغي الاشتراك عند تدمير الخدمة فقط (يبقى حياً طوال عمر التطبيق)
 
     // ── حالة التشغيل/الإيقاف ──
     _playingSub = player.playingStream.listen((playing) {
@@ -760,18 +789,22 @@ class AudioPlayerService {
   }
 
   /// التالي — يعمل دائماً بغض النظر عن وضع التكرار
-  /// لأننا لا نستخدم LoopMode.one — التكرار يُدار يدوياً فقط عند انتهاء الأغنية
+  /// الضغط على التالي دائماً يُغيّر الأغنية حتى لو كان التكرار مفعّلاً
   Future<void> playNext() async {
     _userPaused = false;
     final list = _loadedList.isEmpty ? playlist.value : _loadedList;
     final idx = currentIndex.value;
     if (idx < list.length - 1) {
+      // إعادة تعيين حالة التكرار المؤقتة لمنع تعارضها مع الـ seek القادم
+      _isSettingSource = true;
       await player.seek(Duration.zero, index: idx + 1);
+      _isSettingSource = false;
       try { await player.play(); } catch (_) {}
     }
   }
 
   /// السابق — يعمل دائماً بغض النظر عن وضع التكرار
+  /// الضغط على السابق دائماً يُغيّر الأغنية حتى لو كان التكرار مفعّلاً
   Future<void> playPrevious() async {
     _userPaused = false;
     final pos = player.position;
@@ -779,11 +812,15 @@ class AudioPlayerService {
     final idx = currentIndex.value;
     if (pos.inSeconds > 3) {
       await player.seek(Duration.zero);
+      try { await player.play(); } catch (_) {}
     } else if (idx > 0) {
+      _isSettingSource = true;
       await player.seek(Duration.zero, index: idx - 1);
+      _isSettingSource = false;
       try { await player.play(); } catch (_) {}
     } else {
       await player.seek(Duration.zero);
+      try { await player.play(); } catch (_) {}
     }
   }
 
@@ -3157,6 +3194,35 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
           if (playing) { ctrl.play(); } else { ctrl.pause(); }
         } catch (_) {}
       });
+
+      // ── مستمع مباشر على VideoPlayerController لضمان التكرار ──
+      // هذا الـ listener يُطلق التكرار عند انتهاء الفيديو بشكل مضمون
+      void _videoCompletionListener() {
+        if (_generation != gen) return;
+        if (!ctrl.value.isInitialized) return;
+        // اكتشاف نهاية الفيديو: الموقف وصل للمدة الكاملة
+        final pos = ctrl.value.position;
+        final dur = ctrl.value.duration;
+        if (dur.inMilliseconds > 0 &&
+            pos.inMilliseconds >= dur.inMilliseconds - 300 &&
+            !ctrl.value.isPlaying) {
+          if (audioService.isRepeat.value) {
+            // أرسل إشارة التكرار للـ AudioPlayerService
+            // الـ AudioService سيُعيد الـ seek ويرسل videoLoopSignal
+            if (audioService.player.processingState == ProcessingState.completed ||
+                audioService.player.processingState == ProcessingState.ready) {
+              Future.microtask(() {
+                if (_generation != gen) return;
+                audioService.player.seek(Duration.zero).then((_) {
+                  audioService.videoLoopSignal.value++;
+                  try { audioService.player.play(); } catch (_) {}
+                }).catchError((_) {});
+              });
+            }
+          }
+        }
+      }
+      ctrl.addListener(_videoCompletionListener);
 
     } catch (e) {
       try { ctrl.dispose(); } catch (_) {}

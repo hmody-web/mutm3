@@ -478,7 +478,6 @@ class AudioPlayerService {
 
   bool _userPaused = false;
   bool _isSettingSource = false;
-  DateTime? _lastCompletedAt;  
   int _expectedIndex = -1;
 
   Future<void> enableReelsMode() async {
@@ -533,53 +532,43 @@ class AudioPlayerService {
     // ── مزامنة currentIndex مع just_audio_background ──
     // يُعالج تغييرات الأغنية القادمة من الإشعار (التالي/السابق في شريط الإشعارات)
     // أما التغييرات من playNext/playPrevious فتُحدَّث currentIndex.value مباشرة قبل الـ seek
-    _indexSub = player.currentIndexStream.distinct().listen((rawIdx) {
-      if (rawIdx == null) return;
-      final list = _loadedList;
-      if (list.isEmpty || rawIdx < 0 || rawIdx >= list.length) return;
+  _indexSub = player.currentIndexStream.distinct().listen((rawIdx) {
+  if (rawIdx == null) return;
+  final list = _loadedList;
+  if (list.isEmpty || rawIdx < 0 || rawIdx >= list.length) return;
+  if (_isSettingSource) return;
 
-      // إذا كان _isSettingSource=true فهذا يعني أننا نُحمّل مصدراً جديداً — تجاهل
-      if (_isSettingSource) return;
+  if (rawIdx != currentIndex.value) {
+    final isAutoAdvance = rawIdx != _expectedIndex;
 
-      if (rawIdx != currentIndex.value) {
-        // ── منطق التكرار: هل هذا انتقال تلقائي (نهاية الأغنية) أم يدوي (next/prev)؟ ──
-        // _expectedIndex يُحدَّث من playNext/playPrevious قبل الـ seek
-        // إذا rawIdx != _expectedIndex → الانتقال تلقائي من just_audio
-final completedRecently = _lastCompletedAt != null &&
-    DateTime.now().difference(_lastCompletedAt!).inMilliseconds < 800;
-final isAutoAdvance = (rawIdx != _expectedIndex) && completedRecently;
+    if (isAutoAdvance && isRepeat.value) {
+      final repeatIdx = currentIndex.value;
+      _userPaused = false;
+      Future.microtask(() async {
+        try {
+          await player.seek(Duration.zero, index: repeatIdx);
+          videoLoopSignal.value++;
+          await player.play();
+        } catch (_) {}
+      });
+      return;
+    }
 
-if (isRepeat.value && completedRecently) {
-  // التكرار — سواء جاء من انتهاء الأغنية أو من الإشعار بعد completed
-  final repeatIdx = currentIndex.value;
-  _userPaused = false;
-  _lastCompletedAt = null;
-  Future.microtask(() async {
-    try {
-      await player.seek(Duration.zero, index: repeatIdx);
-      videoLoopSignal.value++;
-      await player.play();
-    } catch (_) {}
-  });
-  return;
-}
+    currentIndex.value = rawIdx;
+    playlist.value = list;
+    if (!isReelsMode) isVisible.value = true;
+    _expectedIndex = rawIdx;
 
-        currentIndex.value = rawIdx;
-        playlist.value = list;
-        if (!isReelsMode) isVisible.value = true;
-        _expectedIndex = rawIdx;
-
-        Future.microtask(() async {
-          try {
-            await ThumbnailManager.generateLocalThumbnail(list[rawIdx].path);
-          } catch (_) {}
-        });
-      }
+    Future.microtask(() async {
+      try {
+        await ThumbnailManager.generateLocalThumbnail(list[rawIdx].path);
+      } catch (_) {}
     });
+  }
+});
 // ── تسجيل وقت انتهاء الأغنية ──
 player.processingStateStream.listen((state) {
   if (state == ProcessingState.completed) {
-    _lastCompletedAt = DateTime.now();
   }
 });
 
@@ -587,9 +576,20 @@ player.processingStateStream.listen((state) {
     // ── انتهاء القائمة (آخر أغنية) — أعِد تشغيل الأغنية الحالية إذا كان التكرار مفعّلاً ──
     // ملاحظة: هذا يُستدعى فقط عند آخر أغنية في القائمة (LoopMode.off)
     // الانتقالات وسط القائمة يعالجها _indexSub أعلاه
+bool _repeatInProgress = false;
 _processSub = player.processingStateStream.distinct().listen((state) {
   if (state == ProcessingState.completed) {
-    _lastCompletedAt = DateTime.now(); // ← فقط سجّل الوقت
+    if (isRepeat.value && !_repeatInProgress && !_isSettingSource) {
+      _repeatInProgress = true;
+      _userPaused = false;
+      player.seek(Duration.zero).then((_) {
+        videoLoopSignal.value++;
+        _repeatInProgress = false;
+        try { player.play(); } catch (_) {}
+      }).catchError((_) { _repeatInProgress = false; });
+    }
+  } else {
+    _repeatInProgress = false;
   }
 });
 
@@ -786,34 +786,48 @@ _processSub = player.processingStateStream.distinct().listen((state) {
   }
 
   /// التالي — يعمل دائماً بغض النظر عن وضع التكرار
-  Future<void> playNext() async {
+Future<void> playNext() async {
+  if (isRepeat.value) {
+    isRepeat.value = false;
     _userPaused = false;
     final list = _loadedList.isEmpty ? playlist.value : _loadedList;
     final idx = currentIndex.value;
     if (list.isEmpty) return;
     final nextIdx = idx < list.length - 1 ? idx + 1 : idx;
-    if (nextIdx == idx && idx == list.length - 1) return; // آخر عنصر
-    // تحديث الـ index فوراً حتى يعكس الـ UI الأغنية الصحيحة
+    if (nextIdx == idx) return;
     currentIndex.value = nextIdx;
     _expectedIndex = nextIdx;
     try { await player.seek(Duration.zero, index: nextIdx); } catch (_) {}
     try { await player.play(); } catch (_) {}
+    isRepeat.value = true;
+    return;
   }
+  _userPaused = false;
+  final list = _loadedList.isEmpty ? playlist.value : _loadedList;
+  final idx = currentIndex.value;
+  if (list.isEmpty) return;
+  final nextIdx = idx < list.length - 1 ? idx + 1 : idx;
+  if (nextIdx == idx && idx == list.length - 1) return;
+  currentIndex.value = nextIdx;
+  _expectedIndex = nextIdx;
+  try { await player.seek(Duration.zero, index: nextIdx); } catch (_) {}
+  try { await player.play(); } catch (_) {}
+}
 
   /// السابق — يعمل دائماً بغض النظر عن وضع التكرار
-  Future<void> playPrevious() async {
+Future<void> playPrevious() async {
+  if (isRepeat.value) {
+    isRepeat.value = false;
     _userPaused = false;
     final pos = player.position;
     final list = _loadedList.isEmpty ? playlist.value : _loadedList;
     final idx = currentIndex.value;
     if (list.isEmpty) return;
     if (pos.inSeconds > 3) {
-      // إذا مضى أكثر من 3 ثواني: أعِد للبداية بدون تغيير الأغنية
       try { await player.seek(Duration.zero); } catch (_) {}
       try { await player.play(); } catch (_) {}
     } else if (idx > 0) {
       final prevIdx = idx - 1;
-      // تحديث الـ index فوراً
       currentIndex.value = prevIdx;
       _expectedIndex = prevIdx;
       try { await player.seek(Duration.zero, index: prevIdx); } catch (_) {}
@@ -822,7 +836,28 @@ _processSub = player.processingStateStream.distinct().listen((state) {
       try { await player.seek(Duration.zero); } catch (_) {}
       try { await player.play(); } catch (_) {}
     }
+    isRepeat.value = true;
+    return;
   }
+  _userPaused = false;
+  final pos = player.position;
+  final list = _loadedList.isEmpty ? playlist.value : _loadedList;
+  final idx = currentIndex.value;
+  if (list.isEmpty) return;
+  if (pos.inSeconds > 3) {
+    try { await player.seek(Duration.zero); } catch (_) {}
+    try { await player.play(); } catch (_) {}
+  } else if (idx > 0) {
+    final prevIdx = idx - 1;
+    currentIndex.value = prevIdx;
+    _expectedIndex = prevIdx;
+    try { await player.seek(Duration.zero, index: prevIdx); } catch (_) {}
+    try { await player.play(); } catch (_) {}
+  } else {
+    try { await player.seek(Duration.zero); } catch (_) {}
+    try { await player.play(); } catch (_) {}
+  }
+}
 
   void setVolumeBoost(double normalizedValue) {
     final v = normalizedValue.clamp(0.0, 3.0);

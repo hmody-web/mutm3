@@ -493,7 +493,7 @@ class AudioPlayerService {
 
   bool _userPaused = false;
   bool _isSettingSource = false;
-
+  bool _isUserSkipping = false;
   // ═══════════════════════════════════════════════════════════
   //  وضع الريلز
   // ═══════════════════════════════════════════════════════════
@@ -551,7 +551,7 @@ _indexSub = player.currentIndexStream.distinct().listen((rawIdx) {
 
   if (rawIdx != currentIndex.value) {
     // ★ انتقال تلقائي (نهاية الأغنية) + التكرار مفعّل → أعِد نفس الأغنية
-    if (isRepeat.value) {
+    if (isRepeat.value && rawIdx != currentIndex.value) {
       final repeatIdx = currentIndex.value;
       _userPaused = false;
       Future.microtask(() async {
@@ -740,16 +740,17 @@ _indexSub = player.currentIndexStream.distinct().listen((rawIdx) {
   //  ★ seekToNext تتجاوز LoopMode.one تلقائياً في just_audio
   //    لذلك تعمل حتى عند تفعيل التكرار
   // ═══════════════════════════════════════════════════════════
-  Future<void> playNext() async {
-    _userPaused = false;
-    final list = _loadedList.isEmpty ? playlist.value : _loadedList;
-    if (list.isEmpty) return;
-    final idx = currentIndex.value;
-    // إذا كنا في آخر أغنية: لا تفعل شيئاً
-    if (idx >= list.length - 1) return;
-    try { await player.seekToNext(); } catch (_) {}
-    try { await player.play(); } catch (_) {}
-  }
+Future<void> playNext() async {
+  _userPaused = false;
+  final list = _loadedList.isEmpty ? playlist.value : _loadedList;
+  if (list.isEmpty) return;
+  final idx = currentIndex.value;
+  if (idx >= list.length - 1) return;
+final nextIdx = currentIndex.value + 1;
+currentIndex.value = nextIdx;
+try { await player.seek(Duration.zero, index: nextIdx); } catch (_) {}
+try { await player.play(); } catch (_) {}
+}
 
   // ═══════════════════════════════════════════════════════════
   //  السابق — يستخدم seekToPrevious مباشرة
@@ -757,25 +758,25 @@ _indexSub = player.currentIndexStream.distinct().listen((rawIdx) {
   //  • إذا أقل من 3 ثواني: انتقل للأغنية السابقة
   //  ★ seekToPrevious أيضاً تتجاوز LoopMode.one
   // ═══════════════════════════════════════════════════════════
-  Future<void> playPrevious() async {
-    _userPaused = false;
-    final list = _loadedList.isEmpty ? playlist.value : _loadedList;
-    if (list.isEmpty) return;
-    final pos = player.position;
-    final idx = currentIndex.value;
-    if (pos.inSeconds > 3) {
-      // ارجع لبداية الأغنية الحالية
-      try { await player.seek(Duration.zero); } catch (_) {}
-      try { await player.play(); } catch (_) {}
-    } else if (idx > 0) {
-      try { await player.seekToPrevious(); } catch (_) {}
-      try { await player.play(); } catch (_) {}
-    } else {
-      // أول أغنية: ارجع للبداية
-      try { await player.seek(Duration.zero); } catch (_) {}
-      try { await player.play(); } catch (_) {}
-    }
+Future<void> playPrevious() async {
+  _userPaused = false;
+  final list = _loadedList.isEmpty ? playlist.value : _loadedList;
+  if (list.isEmpty) return;
+  final pos = player.position;
+  final idx = currentIndex.value;
+  if (pos.inSeconds > 3) {
+    try { await player.seek(Duration.zero); } catch (_) {}
+    try { await player.play(); } catch (_) {}
+  } else if (idx > 0) {
+final prevIdx = idx - 1;
+currentIndex.value = prevIdx;
+try { await player.seek(Duration.zero, index: prevIdx); } catch (_) {}
+try { await player.play(); } catch (_) {}
+  } else {
+    try { await player.seek(Duration.zero); } catch (_) {}
+    try { await player.play(); } catch (_) {}
   }
+}
 
   void setVolumeBoost(double normalizedValue) {
     final v = normalizedValue.clamp(0.0, 3.0);
@@ -795,7 +796,12 @@ _indexSub = player.currentIndexStream.distinct().listen((rawIdx) {
     if (idx < 0 || idx >= list.length) return null;
     return list[idx];
   }
-
+Uri? _getArtUri(LocalMediaItem item) {
+  final localThumb = ThumbnailManager.getThumbPathDirect(item.path);
+  if (localThumb != null) return Uri.file(localThumb);
+  if (item.thumbnailUrl != null) return Uri.parse(item.thumbnailUrl!);
+  return null;
+}
   void dispose() {
     _indexSub?.cancel();
     _playingSub?.cancel();
@@ -811,8 +817,22 @@ class _MustAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   _MustAudioHandler(this._svc) {
     // مزامنة حالة المشغل مع الإشعار
     _svc.player.playbackEventStream.listen(_broadcastState);
-    _svc.player.currentIndexStream.listen((_) => _broadcastState(_svc.player.playbackEvent));
+    _svc.player.currentIndexStream.listen((idx) {
+      _broadcastState(_svc.player.playbackEvent);
+  // ★ أرسل معلومات الأغنية الحالية للإشعار
+  if (idx != null) {
+    final list = _svc._loadedList;
+    if (list.isNotEmpty && idx >= 0 && idx < list.length) {
+      final item = list[idx];
+      mediaItem.add(MediaItem(
+        id: item.path,
+        title: item.title.replaceAll(RegExp(r'\.\w+$'), ''),
+        artist: 'دندن',
+        artUri: _svc._getArtUri(item),
+      ));
+    }
   }
+});  }
 
   void _broadcastState(PlaybackEvent event) {
     final playing = _svc.player.playing;

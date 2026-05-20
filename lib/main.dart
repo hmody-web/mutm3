@@ -529,9 +529,6 @@ class AudioPlayerService {
     final session = await AudioSession.instance;
     await session.configure(const AudioSessionConfiguration.music());
 
-    // ── مزامنة currentIndex مع just_audio_background ──
-    // يُعالج تغييرات الأغنية القادمة من الإشعار (التالي/السابق في شريط الإشعارات)
-    // أما التغييرات من playNext/playPrevious فتُحدَّث currentIndex.value مباشرة قبل الـ seek
 _indexSub = player.currentIndexStream.distinct().listen((rawIdx) {
   if (rawIdx == null) return;
   final list = _loadedList;
@@ -539,7 +536,22 @@ _indexSub = player.currentIndexStream.distinct().listen((rawIdx) {
   if (_isSettingSource) return;
 
   if (rawIdx != currentIndex.value) {
-    if (isRepeat.value && rawIdx == _expectedIndex + 1) return;
+    // انتقال تلقائي من just_audio (ليس من playNext/playPrevious)
+    final isAutoAdvance = rawIdx != _expectedIndex;
+
+    if (isAutoAdvance && isRepeat.value) {
+      // أعد الأغنية الحالية بدلاً من الانتقال
+      final repeatIdx = currentIndex.value;
+      _userPaused = false;
+      Future.microtask(() async {
+        try {
+          await player.seek(Duration.zero, index: repeatIdx);
+          videoLoopSignal.value++;
+          await player.play();
+        } catch (_) {}
+      });
+      return;
+    }
 
     currentIndex.value = rawIdx;
     playlist.value = list;
@@ -553,28 +565,23 @@ _indexSub = player.currentIndexStream.distinct().listen((rawIdx) {
     });
   }
 });
-// ── تسجيل وقت انتهاء الأغنية ──
-player.processingStateStream.listen((state) {
-  if (state == ProcessingState.completed) {
-  }
-});
 
-
-    // ── انتهاء القائمة (آخر أغنية) — أعِد تشغيل الأغنية الحالية إذا كان التكرار مفعّلاً ──
-    // ملاحظة: هذا يُستدعى فقط عند آخر أغنية في القائمة (LoopMode.off)
-    // الانتقالات وسط القائمة يعالجها _indexSub أعلاه
 _processSub = player.processingStateStream.distinct().listen((state) {
   if (state == ProcessingState.completed) {
+    // هذا يُستدعى فقط عند آخر أغنية في القائمة
     if (isRepeat.value && !_isSettingSource) {
       _userPaused = false;
-      player.seek(Duration.zero).then((_) {
-        videoLoopSignal.value++;
-        try { player.play(); } catch (_) {}
-      }).catchError((_) {});
+      final repeatIdx = currentIndex.value;
+      Future.microtask(() async {
+        try {
+          await player.seek(Duration.zero, index: repeatIdx);
+          videoLoopSignal.value++;
+          await player.play();
+        } catch (_) {}
+      });
     }
   }
 });
-
     // ── حالة التشغيل/الإيقاف ──
     _playingSub = player.playingStream.listen((playing) {
       if (playing) {

@@ -85,6 +85,10 @@ Future<void> main() async {
     statusBarColor: Colors.transparent,
     statusBarBrightness: Brightness.light,
   ));
+  SystemChrome.setEnabledSystemUIMode(
+  SystemUiMode.manual,
+  overlays: SystemUiOverlay.values,
+);
 await SystemChrome.setPreferredOrientations([
   DeviceOrientation.portraitUp,
 ]);
@@ -474,6 +478,7 @@ class AudioPlayerService {
 
   bool _userPaused = false;
   bool _isSettingSource = false;
+  DateTime? _lastCompletedAt;  
   int _expectedIndex = -1;
 
   Future<void> enableReelsMode() async {
@@ -540,11 +545,14 @@ class AudioPlayerService {
         // ── منطق التكرار: هل هذا انتقال تلقائي (نهاية الأغنية) أم يدوي (next/prev)؟ ──
         // _expectedIndex يُحدَّث من playNext/playPrevious قبل الـ seek
         // إذا rawIdx != _expectedIndex → الانتقال تلقائي من just_audio
-        final isAutoAdvance = rawIdx != _expectedIndex;
+        final completedRecently = _lastCompletedAt != null &&
+            DateTime.now().difference(_lastCompletedAt!).inMilliseconds < 500;
+        final isAutoAdvance = (rawIdx != _expectedIndex) && completedRecently;
         if (isAutoAdvance && isRepeat.value) {
           // التكرار مفعّل وهذا انتقال تلقائي → أعِد الأغنية السابقة (currentIndex.value)
           final repeatIdx = currentIndex.value;
           _userPaused = false;
+          _lastCompletedAt = null;
           Future.microtask(() async {
             try {
               await player.seek(Duration.zero, index: repeatIdx);
@@ -567,6 +575,13 @@ class AudioPlayerService {
         });
       }
     });
+// ── تسجيل وقت انتهاء الأغنية ──
+player.processingStateStream.listen((state) {
+  if (state == ProcessingState.completed) {
+    _lastCompletedAt = DateTime.now();
+  }
+});
+
 
     // ── انتهاء القائمة (آخر أغنية) — أعِد تشغيل الأغنية الحالية إذا كان التكرار مفعّلاً ──
     // ملاحظة: هذا يُستدعى فقط عند آخر أغنية في القائمة (LoopMode.off)

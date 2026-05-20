@@ -22,6 +22,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 import 'package:on_audio_query/on_audio_query.dart';
+import 'package:photo_manager/photo_manager.dart';
 import 'app_icon_service.dart';
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
@@ -1125,62 +1126,73 @@ class _ListenPageState extends State<ListenPage> with TickerProviderStateMixin {
   }
 
   /// حفظ الملف على iOS مع طلب صلاحية المكتبة بشكل صحيح
-  Future<void> _saveToGalleryIOS(LocalMediaItem item, File sourceFile) async {
-    // iOS: نطلب photos (قراءة + كتابة) أو photosAddOnly (كتابة فقط)
-    PermissionStatus status = await Permission.photosAddOnly.request();
+Future<void> _saveToGalleryIOS(LocalMediaItem item, File sourceFile) async {
+  // طلب الإذن مع التعامل الصحيح مع كل الحالات
+  final permissionState = await PhotoManager.requestPermissionExtend();
 
-    if (!mounted) return;
+  if (!mounted) return;
 
-    if (status.isPermanentlyDenied) {
-      await showCupertinoDialog(
-        context: context,
-        builder: (_) => CupertinoAlertDialog(
-          title: const Text('صلاحية مطلوبة'),
-          content: const Text(
-              'يحتاج التطبيق إذن "إضافة الصور" للحفظ في المكتبة. افتح الإعدادات لتفعيله.'),
-          actions: [
-            CupertinoDialogAction(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('إلغاء'),
-            ),
-            CupertinoDialogAction(
-              isDefaultAction: true,
-              onPressed: () {
-                Navigator.pop(context);
-                openAppSettings();
-              },
-              child: const Text('الإعدادات'),
-            ),
-          ],
-        ),
-      );
-      return;
-    }
-
-    if (!status.isGranted) {
-      _showSnack('لم يتم منح الإذن. حاول مجدداً.');
-      return;
-    }
-
+  // مقبول كلياً أو جزئياً — كلاهما يسمح بالإضافة
+  if (permissionState == PermissionState.authorized ||
+      permissionState == PermissionState.limited) {
     try {
-      // على iOS نحفظ في مجلد مؤقت ثم نفحص الميديا
-      final tempDir = await getTemporaryDirectory();
-      final tempPath = '${tempDir.path}/${item.title}';
-      await sourceFile.copy(tempPath);
+      AssetEntity? result;
 
-      try {
-        final OnAudioQuery audioQuery = OnAudioQuery();
-        await audioQuery.scanMedia(tempPath);
-      } catch (_) {}
+      if (item.isVideo) {
+        result = await PhotoManager.editor.saveVideo(
+          sourceFile,
+          title: item.title.replaceAll(RegExp(r'\.\w+$'), ''),
+        );
+} else {
+  // الصوت: انسخه لمجلد Documents وأبلغ المستخدم
+  final docsDir = await getApplicationDocumentsDirectory();
+  final destPath = '${docsDir.path}/${item.title}';
+  await sourceFile.copy(destPath);
+  if (!mounted) return;
+  _showSnack('✅ تم الحفظ في ملفات التطبيق');
+  return;
+}
 
       if (!mounted) return;
-      _showSnack('✅ تم الحفظ — افتح تطبيق الموسيقى لرؤيته');
+
+      if (result != null) {
+        _showSnack(item.isVideo
+            ? '✅ تم الحفظ في مكتبة الصور'
+            : '✅ تم الحفظ في الملفات');
+      } else {
+        _showSnack('فشل الحفظ، حاول مجدداً');
+      }
     } catch (e) {
       if (!mounted) return;
       _showSnack('خطأ في الحفظ: $e');
     }
+    return;
   }
 
+  // مرفوض نهائياً — اذهب للإعدادات
+  await showCupertinoDialog(
+    context: context,
+    builder: (_) => CupertinoAlertDialog(
+      title: const Text('صلاحية مطلوبة'),
+      content: const Text(
+          'يحتاج دندن إذن "مكتبة الصور" للحفظ. افتح الإعدادات وفعّل الوصول.'),
+      actions: [
+        CupertinoDialogAction(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('إلغاء'),
+        ),
+        CupertinoDialogAction(
+          isDefaultAction: true,
+          onPressed: () {
+            Navigator.pop(context);
+            PhotoManager.openSetting();
+          },
+          child: const Text('الإعدادات'),
+        ),
+      ],
+    ),
+  );
+}
   /// قراءة إصدار Android SDK
   Future<int> _getAndroidSdkVersion() async {
     try {

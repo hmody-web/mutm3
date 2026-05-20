@@ -66,5 +66,12 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+
+<key>NSPhotoLibraryAddUsageDescription</key>
+<string>يحتاج دندن إذناً لحفظ الملفات في مكتبة الصور</string>
+
+<key>NSPhotoLibraryUsageDescription</key>
+<string>يحتاج دندن إذناً للوصول إلى مكتبة الصور</string>
+
 </dict>
 </plist>

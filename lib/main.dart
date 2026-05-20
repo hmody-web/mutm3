@@ -814,22 +814,28 @@ Uri? _getArtUri(LocalMediaItem item) {
 class _MustAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   final AudioPlayerService _svc;
 
-  _MustAudioHandler(this._svc) {
+_MustAudioHandler(this._svc) {
     // مزامنة حالة المشغل مع الإشعار
     _svc.player.playbackEventStream.listen(_broadcastState);
+    // ★ تحديث duration في الإشعار عند جهوزيتها
+    _svc.player.durationStream.listen((duration) {
+      if (duration != null && mediaItem.value != null) {
+        mediaItem.add(mediaItem.value!.copyWith(duration: duration));
+      }
+    });
     _svc.player.currentIndexStream.listen((idx) {
       _broadcastState(_svc.player.playbackEvent);
-  // ★ أرسل معلومات الأغنية الحالية للإشعار
   if (idx != null) {
     final list = _svc._loadedList;
     if (list.isNotEmpty && idx >= 0 && idx < list.length) {
       final item = list[idx];
-      mediaItem.add(MediaItem(
-        id: item.path,
-        title: item.title.replaceAll(RegExp(r'\.\w+$'), ''),
-        artist: 'دندن',
-        artUri: _svc._getArtUri(item),
-      ));
+mediaItem.add(MediaItem(
+  id: item.path,
+  title: item.title.replaceAll(RegExp(r'\.\w+$'), ''),
+  artist: 'دندن',
+  artUri: _svc._getArtUri(item),
+  duration: _svc.player.duration,
+));
     }
   }
 });  }

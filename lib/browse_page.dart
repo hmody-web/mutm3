@@ -245,7 +245,334 @@ class _GlassToastState extends State<_GlassToast>
     );
   }
 }
+// ═══════════════════════════════════════════════════════════
+//  GLOBAL DOWNLOAD BAR SYSTEM — شريط تحميل عالمي سفلي
+// ═══════════════════════════════════════════════════════════
 
+class _DownloadTask {
+  final String id;
+  final String title;
+  double progress;
+  bool done;
+  bool error;
+  String? errorMsg;
+
+  _DownloadTask({
+    required this.id,
+    required this.title,
+    this.progress = 0,
+    this.done = false,
+    this.error = false,
+    this.errorMsg,
+  });
+}
+
+class _GlobalDownloadBarController {
+  static final _GlobalDownloadBarController instance = _GlobalDownloadBarController._();
+  _GlobalDownloadBarController._();
+
+  OverlayEntry? _overlayEntry;
+  final List<_DownloadTask> tasks = [];
+  int _activeIndex = 0;
+  bool _minimized = false;
+
+  void _refresh() {
+    _overlayEntry?.markNeedsBuild();
+  }
+
+  void addTask(_DownloadTask task) {
+    tasks.add(task);
+    _activeIndex = tasks.length - 1;
+    _minimized = false;
+    _refresh();
+  }
+
+  void updateProgress(String id, double progress) {
+    final t = tasks.firstWhere((t) => t.id == id, orElse: () => _DownloadTask(id: '', title: ''));
+    if (t.id.isEmpty) return;
+    t.progress = progress;
+    _refresh();
+  }
+
+  void completeTask(String id) {
+    final t = tasks.firstWhere((t) => t.id == id, orElse: () => _DownloadTask(id: '', title: ''));
+    if (t.id.isEmpty) return;
+    t.done = true;
+    t.progress = 1.0;
+    _refresh();
+    Future.delayed(const Duration(seconds: 3), () {
+      tasks.removeWhere((t) => t.id == id);
+      if (_activeIndex >= tasks.length && tasks.isNotEmpty) {
+        _activeIndex = tasks.length - 1;
+      }
+      if (tasks.isEmpty) {
+        _overlayEntry?.remove();
+        _overlayEntry = null;
+      }
+      _refresh();
+    });
+  }
+
+  void failTask(String id, String msg) {
+    final t = tasks.firstWhere((t) => t.id == id, orElse: () => _DownloadTask(id: '', title: ''));
+    if (t.id.isEmpty) return;
+    t.error = true;
+    t.errorMsg = msg;
+    _refresh();
+    Future.delayed(const Duration(seconds: 4), () {
+      tasks.removeWhere((t) => t.id == id);
+      if (_activeIndex >= tasks.length && tasks.isNotEmpty) {
+        _activeIndex = tasks.length - 1;
+      }
+      if (tasks.isEmpty) {
+        _overlayEntry?.remove();
+        _overlayEntry = null;
+      }
+      _refresh();
+    });
+  }
+
+  void show(BuildContext context) {
+    if (_overlayEntry != null) return;
+    _overlayEntry = OverlayEntry(builder: (_) => _GlobalDownloadBarWidget(controller: this));
+    Overlay.of(context).insert(_overlayEntry!);
+  }
+}
+
+class _GlobalDownloadBarWidget extends StatefulWidget {
+  final _GlobalDownloadBarController controller;
+  const _GlobalDownloadBarWidget({required this.controller});
+
+  @override
+  State<_GlobalDownloadBarWidget> createState() => _GlobalDownloadBarWidgetState();
+}
+
+class _GlobalDownloadBarWidgetState extends State<_GlobalDownloadBarWidget>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _slideCtrl;
+  late Animation<Offset> _slideAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _slideCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 380));
+    _slideAnim = Tween<Offset>(begin: const Offset(0, 1), end: Offset.zero)
+        .animate(CurvedAnimation(parent: _slideCtrl, curve: Curves.easeOutCubic));
+    _slideCtrl.forward();
+  }
+
+  @override
+  void dispose() {
+    _slideCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ctrl = widget.controller;
+    final tasks = ctrl.tasks;
+    if (tasks.isEmpty) return const SizedBox.shrink();
+
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bottomPad = MediaQuery.of(context).padding.bottom + 80;
+    final activeIdx = ctrl._activeIndex.clamp(0, tasks.length - 1);
+    final activeTask = tasks[activeIdx];
+
+    return Positioned(
+      bottom: bottomPad,
+      left: 16,
+      right: 16,
+      child: SlideTransition(
+        position: _slideAnim,
+        child: Directionality(
+          textDirection: TextDirection.rtl,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              // تبويبات الخلفية (التحميلات الأخرى)
+              for (int i = tasks.length - 1; i >= 0; i--)
+                if (i != activeIdx)
+                  Positioned(
+                    top: -(tasks.length - 1 - i) * 6.0 - 6,
+                    left: (tasks.length - 1 - i) * 3.0,
+                    right: (tasks.length - 1 - i) * 3.0,
+                    child: _buildCard(tasks[i], isDark, isBackground: true),
+                  ),
+              // البطاقة الرئيسية
+              _buildCard(activeTask, isDark, isBackground: false, onHide: () {
+                setState(() {
+                  ctrl._minimized = !ctrl._minimized;
+                });
+              }),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCard(_DownloadTask task, bool isDark, {bool isBackground = false, VoidCallback? onHide}) {
+    final bg = isDark
+        ? Colors.white.withOpacity(0.07)
+        : Colors.white.withOpacity(0.92);
+    final borderColor = task.done
+        ? const Color(0xFF30D158).withOpacity(0.55)
+        : task.error
+            ? const Color(0xFFFF3B30).withOpacity(0.55)
+            : AppColors.primary.withOpacity(0.45);
+    final glowColor = task.done
+        ? const Color(0xFF30D158)
+        : task.error
+            ? const Color(0xFFFF3B30)
+            : AppColors.primary;
+
+    final pct = (task.progress * 100).toStringAsFixed(0);
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(20),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: borderColor, width: 1.2),
+            boxShadow: [
+              BoxShadow(color: glowColor.withOpacity(0.18), blurRadius: 20, spreadRadius: 0),
+              BoxShadow(color: Colors.black.withOpacity(0.28), blurRadius: 14, offset: const Offset(0, 5)),
+            ],
+          ),
+          child: isBackground
+              ? SizedBox(height: 8, child: LinearProgressIndicator(
+                  value: task.progress,
+                  backgroundColor: Colors.transparent,
+                  valueColor: AlwaysStoppedAnimation(glowColor.withOpacity(0.4)),
+                  minHeight: 4,
+                ))
+              : Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 3,
+                          height: 36,
+                          margin: const EdgeInsets.only(left: 10),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(3),
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [glowColor, glowColor.withOpacity(0.3)],
+                            ),
+                          ),
+                        ),
+                        Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: glowColor.withOpacity(0.15),
+                          ),
+                          child: task.done
+                              ? const Icon(Icons.check_circle_rounded, color: Color(0xFF30D158), size: 20)
+                              : task.error
+                                  ? const Icon(Icons.cancel_rounded, color: Color(0xFFFF3B30), size: 20)
+                                  : SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                        value: task.progress > 0 ? task.progress : null,
+                                        strokeWidth: 2.2,
+                                        valueColor: AlwaysStoppedAnimation(glowColor),
+                                      ),
+                                    ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                task.done ? 'تم التحميل' : task.error ? 'فشل التحميل' : 'جاري التحميل...',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontFamily: 'Tajawal',
+                                  fontWeight: FontWeight.w600,
+                                  color: glowColor,
+                                  letterSpacing: 0.3,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                task.error ? (task.errorMsg ?? '') : task.title,
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  fontFamily: 'Tajawal',
+                                  fontWeight: FontWeight.w700,
+                                  color: Colors.white,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (!task.done && !task.error) ...[
+                          Text(
+                            '$pct%',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontFamily: 'Tajawal',
+                              fontWeight: FontWeight.w700,
+                              color: glowColor,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                        ],
+                        if (onHide != null && !task.done && !task.error)
+                          GestureDetector(
+                            onTap: onHide,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                              decoration: BoxDecoration(
+                                color: glowColor.withOpacity(0.12),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: glowColor.withOpacity(0.3), width: 0.8),
+                              ),
+                              child: Text(
+                                'إخفاء',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontFamily: 'Tajawal',
+                                  fontWeight: FontWeight.w600,
+                                  color: glowColor,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    if (!task.done && !task.error) ...[
+                      const SizedBox(height: 10),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(6),
+                        child: LinearProgressIndicator(
+                          value: task.progress > 0 ? task.progress : null,
+                          backgroundColor: Colors.white.withOpacity(0.1),
+                          valueColor: AlwaysStoppedAnimation(glowColor),
+                          minHeight: 5,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+        ),
+      ),
+    );
+  }
+}
 // دالة static للاستخدام من Widgets بدون _toastOverlay
 void _showGlassToastStatic(
   BuildContext context,
@@ -1418,17 +1745,32 @@ class BrowsePage extends StatelessWidget {
                     },
                     child: Container(
                       height: 45,
-                      decoration: BoxDecoration(
-                        color: const Color.fromARGB(255, 233, 18, 18),
-                        borderRadius: BorderRadius.circular(18),
-                        boxShadow: [
-                          BoxShadow(
-                            color: AppColors.primary.withValues(alpha: 0.35),
-                            blurRadius: 16,
-                            offset: const Offset(0, 6),
-                          ),
-                        ],
-                      ),
+decoration: BoxDecoration(
+  color: context.isDark
+      ? const Color.fromARGB(195, 199, 5, 5)
+      : const Color.fromARGB(255, 204, 13, 13),
+
+  borderRadius: BorderRadius.circular(18),
+
+  border: Border.all(
+    color: context.isDark
+        ? const Color.fromARGB(249, 228, 21, 21)
+        : const Color.fromARGB(255, 255, 0, 0),
+    width: 1.2,
+  ),
+
+  boxShadow: [
+    BoxShadow(
+      color: context.isDark
+          ? const Color.fromARGB(255, 109, 11, 11)
+              .withValues(alpha: 0.2)
+          : const Color.fromARGB(255, 190, 10, 10)
+              .withValues(alpha: 0.2),
+      blurRadius: 16,
+      offset: const Offset(0, 6),
+    ),
+  ],
+),
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(18),
                         child: Stack(
@@ -1478,17 +1820,32 @@ onTap: () {
 },
                     child: Container(
                       height: 45,
-                      decoration: BoxDecoration(
-                        color: const Color.fromARGB(255, 160, 105, 43),
-                        borderRadius: BorderRadius.circular(18),
-                        boxShadow: [
-                          BoxShadow(
-                            color: const Color.fromARGB(255, 160, 120, 67).withValues(alpha: 0.1),
-                            blurRadius: 16,
-                            offset: const Offset(0, 6),
-                          ),
-                        ],
-                      ),
+decoration: BoxDecoration(
+  color: context.isDark
+      ? const Color.fromARGB(123, 105, 18, 155)
+      : const Color.fromARGB(202, 68, 5, 119),
+
+  borderRadius: BorderRadius.circular(18),
+
+  border: Border.all(
+    color: context.isDark
+        ? const Color.fromARGB(251, 119, 37, 187)
+        : const Color.fromARGB(206, 216, 99, 196),
+    width: 1.2,
+  ),
+
+  boxShadow: [
+    BoxShadow(
+      color: context.isDark
+          ? const Color.fromARGB(255, 106, 11, 109)
+              .withValues(alpha: 0.2)
+          : const Color.fromARGB(255, 79, 10, 190)
+              .withValues(alpha: 0.2),
+      blurRadius: 16,
+      offset: const Offset(0, 6),
+    ),
+  ],
+),
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(18),
                         child: Stack(
@@ -1538,17 +1895,32 @@ onTap: () {
                     },
                     child: Container(
                       height: 45,
-                      decoration: BoxDecoration(
-                        color: const Color.fromARGB(255, 15, 117, 212),
-                        borderRadius: BorderRadius.circular(18),
-                        boxShadow: [
-                          BoxShadow(
-                            color: const Color(0xFF1E88E5).withValues(alpha: 0.35),
-                            blurRadius: 16,
-                            offset: const Offset(0, 6),
-                          ),
-                        ],
-                      ),
+decoration: BoxDecoration(
+  color: context.isDark
+      ? const Color.fromARGB(195, 3, 31, 187)
+      : const Color.fromARGB(212, 13, 58, 204),
+
+  borderRadius: BorderRadius.circular(18),
+
+  border: Border.all(
+    color: context.isDark
+        ? const Color.fromARGB(248, 21, 111, 228)
+        : const Color.fromARGB(255, 0, 81, 255),
+    width: 1.2,
+  ),
+
+  boxShadow: [
+    BoxShadow(
+      color: context.isDark
+          ? const Color.fromARGB(255, 11, 37, 109)
+              .withValues(alpha: 0.2)
+          : const Color.fromARGB(255, 11, 96, 255)
+              .withValues(alpha: 0.2),
+      blurRadius: 16,
+      offset: const Offset(0, 6),
+    ),
+  ],
+),
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(18),
                         child: Stack(
@@ -2500,43 +2872,80 @@ Future<void> _analyzeAndFetch() async {
             ],
 
             // زر التحميل (يظهر فقط عندما لا يكون تحميل جارٍ ولم يكتمل)
-            if (!_downloading && !_done) ...[
-              GestureDetector(
-                onTap: _startDownload,
-                child: Container(
-                  width: double.infinity,
-                  height: 52,
-                  decoration: BoxDecoration(
-                    color: AppColors.primary,
-                    borderRadius: BorderRadius.circular(14),
-                    boxShadow: [
-                      BoxShadow(
-                        color: AppColors.primary.withValues(alpha: 0.35),
-                        blurRadius: 16,
-                        offset: const Offset(0, 6),
-                      ),
-                    ],
-                  ),
-                  alignment: Alignment.center,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(CupertinoIcons.arrow_down_circle_fill, color: Colors.white, size: 22),
-                      const SizedBox(width: 10),
-                      Text(
-                        _isDirectAudio ? 'تحميل الصوت وإضافته لاستمع' : 'تحميل الفيديو وإضافته لاستمع',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                          fontFamily: 'Tajawal',
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+// زر التحميل — يظهر الزر الفعلي فقط بعد اكتمال جلب الرابط
+if (!_downloading && !_done) ...[
+  if (_downloadUrl == null)
+    // مؤشر انتظار مع نص "يرجى الانتظار" أثناء جلب معلومات الفيديو
+    Container(
+      width: double.infinity,
+      height: 52,
+      decoration: BoxDecoration(
+        color: AppColors.primary.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      alignment: Alignment.center,
+      child: const Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(
+              color: Colors.white,
+              strokeWidth: 2.5,
+            ),
+          ),
+          SizedBox(width: 12),
+          Text(
+            'يرجى الانتظار...',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+              fontFamily: 'Tajawal',
+            ),
+          ),
+        ],
+      ),
+    )
+  else
+    // زر التحميل الفعلي — يظهر فقط بعد جاهزية الرابط
+    GestureDetector(
+      onTap: _startDownload,
+      child: Container(
+        width: double.infinity,
+        height: 52,
+        decoration: BoxDecoration(
+          color: AppColors.primary,
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.primary.withValues(alpha: 0.35),
+              blurRadius: 16,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        alignment: Alignment.center,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(CupertinoIcons.arrow_down_circle_fill, color: Colors.white, size: 22),
+            const SizedBox(width: 10),
+            Text(
+              _isDirectAudio ? 'تحميل الصوت وإضافته لاستمع' : 'تحميل الفيديو وإضافته لاستمع',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                fontFamily: 'Tajawal',
               ),
-            ],
+            ),
+          ],
+        ),
+      ),
+    ),
+],
           ],
         ),
       ),
@@ -2975,8 +3384,13 @@ class SearchPage extends StatefulWidget {
 
 class _SearchPageState extends State<SearchPage> {
   final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode();
   List<Video> _results = [];
   bool _isSearching = false;
+  List<String> _suggestions = [];
+  bool _showSuggestions = false;
+  bool _loadingSuggestions = false;
+  Timer? _debounce;
 
   OverlayEntry? _toastOverlay;
 
@@ -3027,22 +3441,74 @@ class _SearchPageState extends State<SearchPage> {
   }
 
   final List<Map<String, String>> _categories = const [
-    {'label': '🎵 موسيقى', 'query': 'موسيقى عربية'},
-    {'label': '🎸 روك', 'query': 'rock music'},
-    {'label': '🎤 بوب', 'query': 'pop music 2024'},
-    {'label': '🎹 كلاسيك', 'query': 'classical music'},
-    {'label': '🎧 لوفي', 'query': 'lofi hip hop'},
-    {'label': '🕌 ديني', 'query': 'أناشيد إسلامية'},
-    {'label': '🎻 عود', 'query': 'موسيقى عود'},
-    {'label': '🥁 جاز', 'query': 'jazz music'},
-    {'label': '🌙 هادئ', 'query': 'relaxing music'},
+    {'label': 'اغاني عراقية', 'query': 'اغاني عراقية'},
+    {'label': 'اغاني عربية', 'query': 'اغاني عربية'},
+    {'label': 'اجنبي', 'query': 'اغاني اجنبية'},
+    {'label': 'شيرين', 'query': ' اغاني شيرين'},
+    {'label': 'كرة قدم', 'query': '  ملخص مباريات اليوم'},
+    {'label': ' ديني', 'query': 'القران الكريم '},
+    {'label': 'هادئ', 'query': 'موسيقى هادئة'},
+    {'label': 'كاظم الساهر', 'query': 'اغاني كاظم الساهر'},
+    {'label': 'ام كلثوم', 'query': 'اغاني ام كلثوم'},
   ];
 
-  @override
+@override
   void dispose() {
     _toastOverlay?.remove();
     _searchController.dispose();
+    _searchFocusNode.dispose();
+    _debounce?.cancel();
     super.dispose();
+  }
+
+  Future<void> _fetchSuggestions(String query) async {
+    if (query.trim().length < 2) {
+      setState(() { _suggestions = []; _showSuggestions = false; });
+      return;
+    }
+    setState(() { _loadingSuggestions = true; _showSuggestions = true; });
+    try {
+      final encoded = Uri.encodeComponent(query);
+      final url = Uri.parse(
+        'https://suggestqueries.google.com/complete/search?client=youtube&ds=yt&q=$encoded&hl=ar',
+      );
+      final response = await http.get(url).timeout(const Duration(seconds: 5));
+      if (!mounted) return;
+      if (response.statusCode == 200) {
+        final raw = response.body;
+        // الرد بصيغة JSONP: window.google.ac.h([...])
+        final match = RegExp(r'\[\[(.+)\]\]').firstMatch(raw);
+        if (match != null) {
+          final innerJson = '[${match.group(0)}]';
+          final List parsed = jsonDecode(innerJson);
+          final List inner = parsed[0];
+          final List<String> sug = inner
+              .whereType<List>()
+              .map((item) => item[0].toString())
+              .take(8)
+              .toList();
+          setState(() { _suggestions = sug; _loadingSuggestions = false; });
+          return;
+        }
+      }
+    } catch (_) {}
+    if (mounted) setState(() { _loadingSuggestions = false; });
+  }
+
+  void _onSearchChanged(String value) {
+    _debounce?.cancel();
+    if (value.trim().isEmpty) {
+      setState(() { _suggestions = []; _showSuggestions = false; _loadingSuggestions = false; });
+      return;
+    }
+    _debounce = Timer(const Duration(milliseconds: 350), () => _fetchSuggestions(value));
+  }
+
+  void _selectSuggestion(String suggestion) {
+    _searchController.text = suggestion;
+    _searchFocusNode.unfocus();
+    setState(() { _showSuggestions = false; _suggestions = []; });
+    _search(suggestion);
   }
 
   Future<void> _search(String query) async {
@@ -3132,51 +3598,111 @@ class _SearchPageState extends State<SearchPage> {
                 ],
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              child: Row(
+Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: Column(
                 children: [
-                  Expanded(
-                    child: Container(
-                      height: 46,
-                      decoration: BoxDecoration(
-                        color: surface,
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: divider, width: 0.5),
-                      ),
-                      child: TextField(
-                        controller: _searchController,
-                        textDirection: TextDirection.rtl,
-                        textInputAction: TextInputAction.search,
-                        onSubmitted: _search,
-                        style: TextStyle(color: textPrimary, fontFamily: 'Tajawal'),
-                        decoration: InputDecoration(
-                          hintText: 'ابحث عن فيديو...',
-                          hintStyle: TextStyle(
-                              color: textSecondary, fontSize: 14, fontFamily: 'Tajawal'),
-                          prefixIcon: Icon(CupertinoIcons.search,
-                              color: textSecondary, size: 18),
-                          border: InputBorder.none,
-                          contentPadding:
-                              const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 250),
+                          height: 46,
+                          decoration: BoxDecoration(
+                            color: surface,
+                            borderRadius: BorderRadius.only(
+                              topRight: const Radius.circular(14),
+                              topLeft: const Radius.circular(14),
+                              bottomRight: Radius.circular(_showSuggestions && _suggestions.isNotEmpty ? 0 : 14),
+                              bottomLeft: Radius.circular(_showSuggestions && _suggestions.isNotEmpty ? 0 : 14),
+                            ),
+                            border: Border.all(
+                              color: _showSuggestions && _suggestions.isNotEmpty
+                                  ? AppColors.primary.withOpacity(0.4)
+                                  : divider,
+                              width: _showSuggestions && _suggestions.isNotEmpty ? 1.2 : 0.5,
+                            ),
+                            boxShadow: _showSuggestions && _suggestions.isNotEmpty
+                                ? [BoxShadow(color: AppColors.primary.withOpacity(0.08), blurRadius: 12, offset: const Offset(0, 2))]
+                                : [],
+                          ),
+                          child: TextField(
+                            controller: _searchController,
+                            focusNode: _searchFocusNode,
+                            textDirection: TextDirection.rtl,
+                            textInputAction: TextInputAction.search,
+                            onChanged: _onSearchChanged,
+                            onSubmitted: (v) {
+                              setState(() { _showSuggestions = false; });
+                              _search(v);
+                            },
+                            onTap: () {
+                              if (_searchController.text.trim().length >= 2) {
+                                setState(() => _showSuggestions = _suggestions.isNotEmpty);
+                              }
+                            },
+                            style: TextStyle(color: textPrimary, fontFamily: 'Tajawal'),
+                            decoration: InputDecoration(
+                              hintText: 'ابحث عن فيديو أو موسيقى...',
+                              hintStyle: TextStyle(color: textSecondary, fontSize: 14, fontFamily: 'Tajawal'),
+                              prefixIcon: _loadingSuggestions
+                                  ? Padding(
+                                      padding: const EdgeInsets.all(13),
+                                      child: SizedBox(
+                                        width: 18, height: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          valueColor: AlwaysStoppedAnimation(AppColors.primary),
+                                        ),
+                                      ),
+                                    )
+                                  : Icon(CupertinoIcons.search, color: _showSuggestions ? AppColors.primary : textSecondary, size: 18),
+                              suffixIcon: _searchController.text.isNotEmpty
+                                  ? GestureDetector(
+                                      onTap: () {
+                                        _searchController.clear();
+                                        setState(() { _suggestions = []; _showSuggestions = false; _results = []; });
+                                      },
+                                      child: Icon(CupertinoIcons.xmark_circle_fill, color: textSecondary, size: 18),
+                                    )
+                                  : null,
+                              border: InputBorder.none,
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                            ),
+                          ),
                         ),
                       ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  GestureDetector(
-                    onTap: () => _search(_searchController.text),
-                    child: Container(
-                      height: 46,
-                      width: 46,
-                      decoration: BoxDecoration(
-                        color: AppColors.primary,
-                        borderRadius: BorderRadius.circular(14),
+                      const SizedBox(width: 10),
+                      GestureDetector(
+                        onTap: () {
+                          setState(() => _showSuggestions = false);
+                          _searchFocusNode.unfocus();
+                          _search(_searchController.text);
+                        },
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          height: 46,
+                          width: 46,
+                          decoration: BoxDecoration(
+                            color: AppColors.primary,
+                            borderRadius: BorderRadius.circular(14),
+                            boxShadow: [
+                              BoxShadow(
+                                color: AppColors.primary.withOpacity(0.35),
+                                blurRadius: 12,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                          ),
+                          child: const Icon(CupertinoIcons.search, color: Colors.white, size: 20),
+                        ),
                       ),
-                      child: const Icon(CupertinoIcons.search,
-                          color: Colors.white, size: 20),
-                    ),
+                    ],
                   ),
+                  // ── قائمة المقترحات ──
+                  if (_showSuggestions && _suggestions.isNotEmpty)
+                    _buildSuggestionsPanel(isDark, surface, textPrimary, textSecondary, divider),
+                  const SizedBox(height: 12),
                 ],
               ),
             ),
@@ -3192,6 +3718,143 @@ class _SearchPageState extends State<SearchPage> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildSuggestionsPanel(bool isDark, Color surface, Color textPrimary, Color textSecondary, Color divider) {
+    return Container(
+      decoration: BoxDecoration(
+        color: surface,
+        borderRadius: const BorderRadius.only(
+          bottomLeft: Radius.circular(14),
+          bottomRight: Radius.circular(14),
+        ),
+        border: Border(
+          left: BorderSide(color: AppColors.primary.withOpacity(0.4), width: 1.2),
+          right: BorderSide(color: AppColors.primary.withOpacity(0.4), width: 1.2),
+          bottom: BorderSide(color: AppColors.primary.withOpacity(0.4), width: 1.2),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primary.withOpacity(0.08),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+          BoxShadow(
+            color: Colors.black.withOpacity(isDark ? 0.3 : 0.06),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: const BorderRadius.only(
+          bottomLeft: Radius.circular(14),
+          bottomRight: Radius.circular(14),
+        ),
+        child: Column(
+          children: [
+            Container(height: 0.5, color: AppColors.primary.withOpacity(0.15)),
+            ...List.generate(_suggestions.length, (index) {
+              final suggestion = _suggestions[index];
+              final query = _searchController.text.trim().toLowerCase();
+              final isLast = index == _suggestions.length - 1;
+
+              return GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => _selectSuggestion(suggestion),
+                child: AnimatedContainer(
+                  duration: Duration(milliseconds: 150 + index * 30),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+                    decoration: BoxDecoration(
+                      border: isLast ? null : Border(
+                        bottom: BorderSide(color: divider.withOpacity(0.5), width: 0.4),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 30,
+                          height: 30,
+                          decoration: BoxDecoration(
+                            color: AppColors.primary.withOpacity(0.08),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Icon(CupertinoIcons.search, size: 14, color: AppColors.primary),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: _buildHighlightedText(suggestion, query, textPrimary, textSecondary),
+                        ),
+                        Icon(
+                          CupertinoIcons.arrow_up_right,
+                          size: 13,
+                          color: textSecondary.withOpacity(0.5),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHighlightedText(String suggestion, String query, Color textPrimary, Color textSecondary) {
+    if (query.isEmpty) {
+      return Text(
+        suggestion,
+        style: TextStyle(fontSize: 14, fontFamily: 'Tajawal', color: textPrimary),
+        textDirection: TextDirection.rtl,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      );
+    }
+
+    final lowerSuggestion = suggestion.toLowerCase();
+    final matchStart = lowerSuggestion.indexOf(query);
+
+    if (matchStart == -1) {
+      return Text(
+        suggestion,
+        style: TextStyle(fontSize: 14, fontFamily: 'Tajawal', color: textPrimary),
+        textDirection: TextDirection.rtl,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      );
+    }
+
+    return Text.rich(
+      TextSpan(
+        children: [
+          if (matchStart > 0)
+            TextSpan(
+              text: suggestion.substring(0, matchStart),
+              style: TextStyle(fontSize: 14, fontFamily: 'Tajawal', color: textSecondary),
+            ),
+          TextSpan(
+            text: suggestion.substring(matchStart, matchStart + query.length),
+            style: const TextStyle(
+              fontSize: 14,
+              fontFamily: 'Tajawal',
+              color: AppColors.primary,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          if (matchStart + query.length < suggestion.length)
+            TextSpan(
+              text: suggestion.substring(matchStart + query.length),
+              style: TextStyle(fontSize: 14, fontFamily: 'Tajawal', color: textPrimary, fontWeight: FontWeight.w500),
+            ),
+        ],
+      ),
+      textDirection: TextDirection.rtl,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
     );
   }
 
@@ -3300,13 +3963,22 @@ class _VideoResultCard extends StatelessWidget {
     );
   }
 
-  Future<void> _startQuickDownload(
+Future<void> _startQuickDownload(
     BuildContext context,
     String id,
     String quality,
   ) async {
+    final taskId = '${id}_${DateTime.now().millisecondsSinceEpoch}';
+    final shortTitle = video.title.length > 35
+        ? '${video.title.substring(0, 35)}...'
+        : video.title;
+    final task = _DownloadTask(id: taskId, title: shortTitle);
+    final ctrl = _GlobalDownloadBarController.instance;
+
     if (context.mounted) {
-      _showGlassToastStatic(context, 'بدء التحميل...', type: _ToastType.info, duration: const Duration(seconds: 2));
+      ctrl.show(context);
+      ctrl.addTask(task);
+      ctrl._refresh();
     }
 
     try {
@@ -3337,33 +4009,28 @@ class _VideoResultCard extends StatelessWidget {
 
       await for (final msg in receivePort) {
         if (msg is Map) {
-          if (msg.containsKey('done')) {
+          if (msg.containsKey('progress')) {
+            ctrl.updateProgress(taskId, (msg['progress'] as double).clamp(0.0, 1.0));
+          } else if (msg.containsKey('done')) {
             receivePort.close();
             final fileName = msg['done'] as String;
             final savedPath = '${musicDir.path}/$fileName';
             await ThumbnailManager.saveThumbnail(
                 savedPath, video.thumbnails.mediumResUrl);
             downloadCompleteNotifier.value = musicDir.path;
-            if (context.mounted) {
-              _showGlassToastStatic(context, 'تم التحميل: $fileName', type: _ToastType.success);
-            }
+            ctrl.completeTask(taskId);
             break;
           } else if (msg.containsKey('error')) {
             receivePort.close();
-            if (context.mounted) {
-              _showGlassToastStatic(context, 'فشل التحميل: ${msg['error']}', type: _ToastType.error);
-            }
+            ctrl.failTask(taskId, msg['error'] as String);
             break;
           }
         }
       }
     } catch (e) {
-      if (context.mounted) {
-        _showGlassToastStatic(context, 'فشل التحميل: $e', type: _ToastType.error);
-      }
+      ctrl.failTask(taskId, e.toString());
     }
   }
-
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;

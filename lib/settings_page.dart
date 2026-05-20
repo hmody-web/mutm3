@@ -96,23 +96,28 @@ class _SettingsPageState extends State<SettingsPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Center(
-                    child: Image.asset(
-                      'assets/images/jna7.png',
-                      width: MediaQuery.of(context).size.width * 4,
-                      height: 60,
-                      fit: BoxFit.contain,
-                      errorBuilder: (_, __, ___) => const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 20),
-                        child: Text(
-                          'الإعدادات',
-                          style: TextStyle(
-                            fontSize: 24,
-                            fontFamily: 'Tajawal',
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                    ),
+child: Transform.translate(
+  offset: const Offset(0, 10),
+  child: Transform.scale(
+    scale: 3.5,
+    child: Image.asset(
+      'assets/images/jna7.png',
+      height: 40,
+      fit: BoxFit.contain,
+      errorBuilder: (_, __, ___) => const Padding(
+        padding: EdgeInsets.symmetric(vertical: 20),
+        child: Text(
+          'الإعدادات',
+          style: TextStyle(
+            fontSize: 24,
+            fontFamily: 'Tajawal',
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+    ),
+  ),
+),
                   ),
                   const SizedBox(height: 2),
                 ],

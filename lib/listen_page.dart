@@ -32,6 +32,7 @@ import 'browse_page.dart';
 import 'settings_page.dart';
 import 'reels_player.dart';
 
+
 // ═══════════════════════════════════════════════════════════
 //  MODEL — مجلد موسيقى
 // ═══════════════════════════════════════════════════════════
@@ -1218,16 +1219,51 @@ Future<void> _saveToGalleryIOS(LocalMediaItem item, File sourceFile) async {
     }
   }
 
-  void _showSnack(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message,
-            style: const TextStyle(fontFamily: 'Tajawal', fontSize: 13)),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        duration: const Duration(seconds: 3),
-      ),
+  OverlayEntry? _toastOverlay;
+
+  void _showGlassToast(
+    String message, {
+    _ToastType type = _ToastType.info,
+    Duration duration = const Duration(seconds: 3),
+  }) {
+    _toastOverlay?.remove();
+    _toastOverlay = null;
+
+    final entry = OverlayEntry(
+      builder: (ctx) => _GlassToast(message: message, type: type),
     );
+    _toastOverlay = entry;
+    Overlay.of(context).insert(entry);
+
+    Future.delayed(duration, () {
+      if (_toastOverlay == entry) {
+        _toastOverlay?.remove();
+        _toastOverlay = null;
+      }
+    });
+  }
+
+  void _showSnack(String message) {
+    _ToastType type = _ToastType.info;
+    String cleaned = message
+        .replaceAll('✅', '')
+        .replaceAll('🗑️', '')
+        .replaceAll('❌', '')
+        .trim();
+
+    if (message.contains('✅') || message.contains('تم')) {
+      type = _ToastType.success;
+    } else if (message.contains('خطأ') || message.contains('فشل')) {
+      type = _ToastType.error;
+    } else if (message.contains('لم يتم') || message.contains('غير موجود')) {
+      type = _ToastType.warning;
+    } else if (message.contains('حذف') || message.contains('🗑️')) {
+      type = _ToastType.delete;
+    } else if (message.contains('نقل') || message.contains('إضافة') || message.contains('مجلد')) {
+      type = _ToastType.move;
+    }
+
+    _showGlassToast(cleaned, type: type);
   }
 
   void _playAll(int startIndex) {
@@ -2467,10 +2503,11 @@ Future<void> _saveToGalleryIOS(LocalMediaItem item, File sourceFile) async {
                   }
 
                   // المشغل الأصلي (صوت أو وضع الريلز معطّل)
-                  audioService.playList(
-                    List<LocalMediaItem>.unmodifiable(_localItems),
-                    _localItems.indexOf(item),
-                  );
+                  final playQueue = _unfolderiedItems;
+audioService.playList(
+  List<LocalMediaItem>.unmodifiable(playQueue),
+  playQueue.indexOf(item),
+);
                   Navigator.of(context).push(
                     PageRouteBuilder(
                       pageBuilder: (_, __, ___) => const FullScreenPlayer(),
@@ -2495,15 +2532,9 @@ Future<void> _saveToGalleryIOS(LocalMediaItem item, File sourceFile) async {
                     await _saveFolders();
                     setState(() {});
                     if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('تمت الإضافة إلى ${folder.name}',
-                              style: const TextStyle(fontFamily: 'Tajawal')),
-                          backgroundColor: AppColors.primary,
-                          behavior: SnackBarBehavior.floating,
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12)),
-                        ),
+                      _showGlassToast(
+                        'تمت الإضافة إلى ${folder.name}',
+                        type: _ToastType.move,
                       );
                     }
                   }
@@ -2938,16 +2969,47 @@ class _FolderDetailPageState extends State<FolderDetailPage>
     }
   }
 
-  void _showSnack(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message,
-            style: const TextStyle(fontFamily: 'Tajawal', fontSize: 13)),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        duration: const Duration(seconds: 3),
-      ),
+  OverlayEntry? _toastOverlay;
+
+  void _showGlassToast(
+    String message, {
+    _ToastType type = _ToastType.info,
+    Duration duration = const Duration(seconds: 3),
+  }) {
+    _toastOverlay?.remove();
+    _toastOverlay = null;
+    final entry = OverlayEntry(
+      builder: (ctx) => _GlassToast(message: message, type: type),
     );
+    _toastOverlay = entry;
+    Overlay.of(context).insert(entry);
+    Future.delayed(duration, () {
+      if (_toastOverlay == entry) {
+        _toastOverlay?.remove();
+        _toastOverlay = null;
+      }
+    });
+  }
+
+  void _showSnack(String message) {
+    _ToastType type = _ToastType.info;
+    String cleaned = message
+        .replaceAll('✅', '')
+        .replaceAll('🗑️', '')
+        .replaceAll('❌', '')
+        .trim();
+    if (message.contains('✅') || message.contains('تم')) {
+      type = _ToastType.success;
+    } else if (message.contains('خطأ') || message.contains('فشل')) {
+      type = _ToastType.error;
+    } else if (message.contains('لم يتم') || message.contains('غير موجود')) {
+      type = _ToastType.warning;
+    } else if (message.contains('حذف') || message.contains('🗑️')) {
+      type = _ToastType.delete;
+    } else if (message.contains('نقل') || message.contains('إضافة') || message.contains('مجلد')) {
+      type = _ToastType.move;
+    }
+    _showGlassToast(cleaned, type: type);
   }
 
   @override
@@ -5355,13 +5417,10 @@ class _ModernMusicCardState extends State<_ModernMusicCard>
 
   void _showFolderPicker() {
     if (widget.folders.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('لا توجد مجلدات. أنشئ مجلداً أولاً.',
-              style: TextStyle(fontFamily: 'Tajawal')),
-          backgroundColor: Colors.grey,
-          behavior: SnackBarBehavior.floating,
-        ),
+      _showGlassToastStatic(
+        context,
+        'لا توجد مجلدات. أنشئ مجلداً أولاً.',
+        type: _ToastType.warning,
       );
       return;
     }
@@ -6009,4 +6068,247 @@ boxShadow: context.isDark
       ),
     );
   }
+}
+// ═══════════════════════════════════════════════════════════
+//  GLASS TOAST — نظام الإشعارات الزجاجي
+// ═══════════════════════════════════════════════════════════
+
+enum _ToastType { success, error, warning, info, delete, move }
+
+void _showGlassToastStatic(
+  BuildContext context,
+  String message, {
+  _ToastType type = _ToastType.info,
+  Duration duration = const Duration(seconds: 3),
+}) {
+  OverlayEntry? entry;
+  entry = OverlayEntry(
+    builder: (ctx) => _GlassToast(message: message, type: type),
+  );
+  Overlay.of(context).insert(entry);
+  Future.delayed(duration, () => entry?.remove());
+}
+
+class _GlassToast extends StatefulWidget {
+  final String message;
+  final _ToastType type;
+
+  const _GlassToast({required this.message, required this.type});
+
+  @override
+  State<_GlassToast> createState() => _GlassToastState();
+}
+
+class _GlassToastState extends State<_GlassToast>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+  late Animation<double> _slide;
+  late Animation<double> _fade;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 480),
+    );
+    _slide = Tween<double>(begin: -1.0, end: 0.0).animate(
+      CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic),
+    );
+    _fade = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(
+          parent: _ctrl,
+          curve: const Interval(0.0, 0.5, curve: Curves.easeOut)),
+    );
+    _ctrl.forward();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  _ToastConfig get _config {
+    switch (widget.type) {
+      case _ToastType.success:
+        return _ToastConfig(
+          icon: Icons.check_circle_rounded,
+          accentColor: const Color(0xFF30D158),
+          label: 'تم بنجاح',
+        );
+      case _ToastType.error:
+        return _ToastConfig(
+          icon: Icons.cancel_rounded,
+          accentColor: const Color(0xFFFF3B30),
+          label: 'خطأ',
+        );
+      case _ToastType.warning:
+        return _ToastConfig(
+          icon: Icons.warning_rounded,
+          accentColor: const Color(0xFFFF9F0A),
+          label: 'تنبيه',
+        );
+      case _ToastType.delete:
+        return _ToastConfig(
+          icon: Icons.delete_rounded,
+          accentColor: const Color(0xFFFF3B30),
+          label: 'تم الحذف',
+        );
+      case _ToastType.move:
+        return _ToastConfig(
+          icon: Icons.folder_open_rounded,
+          accentColor: const Color(0xFF5E5CE6),
+          label: 'تم النقل',
+        );
+      case _ToastType.info:
+        return _ToastConfig(
+          icon: Icons.info_rounded,
+          accentColor: const Color(0xFF0A84FF),
+          label: 'معلومة',
+        );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cfg = _config;
+    final topPad = MediaQuery.of(context).padding.top;
+
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (ctx, _) => Positioned(
+        top: topPad + 12 + (_slide.value * 100),
+        left: 20,
+        right: 20,
+        child: Opacity(
+          opacity: _fade.value.clamp(0.0, 1.0),
+          child: Material(
+            color: Colors.transparent,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(20),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 16, vertical: 13),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.08),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: cfg.accentColor.withOpacity(0.35),
+                      width: 1.2,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: cfg.accentColor.withOpacity(0.18),
+                        blurRadius: 24,
+                        spreadRadius: 0,
+                        offset: const Offset(0, 6),
+                      ),
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.28),
+                        blurRadius: 20,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    textDirection: TextDirection.rtl,
+                    children: [
+                      // ── خط جانبي ملوّن ──
+                      Container(
+                        width: 3,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              cfg.accentColor,
+                              cfg.accentColor.withOpacity(0.3),
+                            ],
+                          ),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+
+                      // ── أيقونة النوع ──
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: cfg.accentColor.withOpacity(0.15),
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: cfg.accentColor.withOpacity(0.3),
+                            width: 1,
+                          ),
+                        ),
+                        child: Center(
+                          child: Icon(
+                            cfg.icon,
+                            color: cfg.accentColor,
+                            size: 18,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+
+                      // ── النص ──
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              cfg.label,
+                              textDirection: TextDirection.rtl,
+                              style: TextStyle(
+                                fontFamily: 'Tajawal',
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: cfg.accentColor,
+                                letterSpacing: 0.2,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              widget.message,
+                              textDirection: TextDirection.rtl,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontFamily: 'Tajawal',
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.white.withOpacity(0.92),
+                                height: 1.3,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ToastConfig {
+  final IconData icon;
+  final Color accentColor;
+  final String label;
+  const _ToastConfig({
+    required this.icon,
+    required this.accentColor,
+    required this.label,
+  });
 }

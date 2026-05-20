@@ -1483,10 +1483,10 @@ class _MiniPlayerState extends State<_MiniPlayer>
   @override
   void initState() {
     super.initState();
-    _animCtrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 350));
-    _slideAnim =
-        CurvedAnimation(parent: _animCtrl, curve: Curves.easeOutCubic);
+_animCtrl = AnimationController(
+    vsync: this, duration: const Duration(milliseconds: 420));
+_slideAnim =
+    CurvedAnimation(parent: _animCtrl, curve: Curves.easeOutQuart);
     _animCtrl.forward();
   }
 
@@ -1516,11 +1516,13 @@ class _MiniPlayerState extends State<_MiniPlayer>
   @override
   Widget build(BuildContext context) {
     final isDark = context.isDark;
-    return SlideTransition(
-      position:
-          Tween<Offset>(begin: const Offset(0, 1), end: Offset.zero)
-              .animate(_slideAnim),
-      child: Padding(
+    return FadeTransition(
+  opacity: CurvedAnimation(parent: _animCtrl, curve: Curves.easeIn),
+  child: SlideTransition(
+    position:
+        Tween<Offset>(begin: const Offset(0, 0.6), end: Offset.zero)
+            .animate(_slideAnim),
+    child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
         child: GestureDetector(
           onTap: _openFullPlayer,
@@ -1689,6 +1691,7 @@ class _MiniPlayerState extends State<_MiniPlayer>
             ),
           ),
         ),
+      ),
       ),
     );
   }

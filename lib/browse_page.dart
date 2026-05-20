@@ -31,6 +31,560 @@ import 'browse_page.dart';
 import 'settings_page.dart';
 import 'download_service.dart';
 import 'download_page.dart';
+// ═══════════════════════════════════════════════════════════
+//  GLASS TOAST NOTIFICATION SYSTEM
+// ═══════════════════════════════════════════════════════════
+
+enum _ToastType { success, error, warning, info, delete, move }
+
+class _ToastConfig {
+  final IconData icon;
+  final Color accentColor;
+  final String label;
+  const _ToastConfig({required this.icon, required this.accentColor, required this.label});
+}
+
+const _toastConfigs = {
+  _ToastType.success: _ToastConfig(
+    icon: Icons.check_circle_rounded,
+    accentColor: Color(0xFF30D158),
+    label: 'نجاح',
+  ),
+  _ToastType.error: _ToastConfig(
+    icon: Icons.cancel_rounded,
+    accentColor: Color(0xFFFF3B30),
+    label: 'خطأ',
+  ),
+  _ToastType.warning: _ToastConfig(
+    icon: Icons.warning_rounded,
+    accentColor: Color(0xFFFF9F0A),
+    label: 'تنبيه',
+  ),
+  _ToastType.info: _ToastConfig(
+    icon: Icons.info_rounded,
+    accentColor: Color(0xFF0A84FF),
+    label: 'معلومة',
+  ),
+  _ToastType.delete: _ToastConfig(
+    icon: Icons.delete_rounded,
+    accentColor: Color(0xFFFF3B30),
+    label: 'حذف',
+  ),
+  _ToastType.move: _ToastConfig(
+    icon: Icons.folder_open_rounded,
+    accentColor: Color(0xFF5E5CE6),
+    label: 'نقل',
+  ),
+};
+
+class _GlassToast extends StatefulWidget {
+  final String message;
+  final _ToastType type;
+  final VoidCallback onDismiss;
+
+  const _GlassToast({
+    required this.message,
+    required this.type,
+    required this.onDismiss,
+  });
+
+  @override
+  State<_GlassToast> createState() => _GlassToastState();
+}
+
+class _GlassToastState extends State<_GlassToast>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+  late Animation<double> _slide;
+  late Animation<double> _fade;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 420),
+    );
+    _slide = Tween<double>(begin: -1.0, end: 0.0).animate(
+      CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic),
+    );
+    _fade = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _ctrl, curve: const Interval(0.0, 0.6)),
+    );
+    _ctrl.forward();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final config = _toastConfigs[widget.type]!;
+    final topPad = MediaQuery.of(context).padding.top + 12;
+
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (context, child) {
+        return Positioned(
+          top: topPad,
+          left: 16,
+          right: 16,
+          child: FractionalTranslation(
+            translation: Offset(0, _slide.value),
+            child: Opacity(
+              opacity: _fade.value,
+              child: child,
+            ),
+          ),
+        );
+      },
+      child: Directionality(
+        textDirection: TextDirection.rtl,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: config.accentColor.withOpacity(0.45),
+                  width: 1.2,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: config.accentColor.withOpacity(0.22),
+                    blurRadius: 24,
+                    spreadRadius: 0,
+                  ),
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.35),
+                    blurRadius: 16,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+              ),
+              child: IntrinsicHeight(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    // خط جانبي ملوّن
+                    Container(
+                      width: 3,
+                      margin: const EdgeInsets.only(left: 10),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(3),
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            config.accentColor,
+                            config.accentColor.withOpacity(0.3),
+                          ],
+                        ),
+                      ),
+                    ),
+                    // أيقونة
+                    Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: config.accentColor.withOpacity(0.15),
+                      ),
+                      child: Icon(
+                        config.icon,
+                        color: config.accentColor,
+                        size: 20,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    // النصوص
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            config.label,
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontFamily: 'Tajawal',
+                              fontWeight: FontWeight.w600,
+                              color: config.accentColor,
+                              letterSpacing: 0.3,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            widget.message,
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontFamily: 'Tajawal',
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// دالة static للاستخدام من Widgets بدون _toastOverlay
+void _showGlassToastStatic(
+  BuildContext context,
+  String message, {
+  _ToastType type = _ToastType.info,
+  Duration duration = const Duration(seconds: 3),
+}) {
+  OverlayEntry? entry;
+  entry = OverlayEntry(
+    builder: (ctx) => _GlassToast(
+      message: message,
+      type: type,
+      onDismiss: () => entry?.remove(),
+    ),
+  );
+  Overlay.of(context).insert(entry);
+  Future.delayed(duration, () {
+    if (entry?.mounted == true) entry?.remove();
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+//  IMPORT PROGRESS DIALOG — نافذة تقدم الاستيراد
+// ═══════════════════════════════════════════════════════════
+class _ImportProgressDialog extends StatefulWidget {
+  final int total;
+  final Stream<_ImportEvent> events;
+
+  const _ImportProgressDialog({required this.total, required this.events});
+
+  @override
+  State<_ImportProgressDialog> createState() => _ImportProgressDialogState();
+}
+
+class _ImportEvent {
+  final int done;
+  final String currentName;
+  final bool finished;
+  const _ImportEvent({required this.done, required this.currentName, this.finished = false});
+}
+
+class _ImportProgressDialogState extends State<_ImportProgressDialog>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _pulseCtrl;
+  late Animation<double> _pulse;
+  int _done = 0;
+  String _currentName = '';
+  bool _finished = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1800),
+    )..repeat(reverse: true);
+    _pulse = Tween<double>(begin: 0.5, end: 1.0).animate(
+      CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut),
+    );
+    widget.events.listen((event) {
+      if (mounted) {
+        setState(() {
+          _done = event.done;
+          _currentName = event.currentName;
+          _finished = event.finished;
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _pulseCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bg = isDark ? const Color(0xFF1C1C1E) : Colors.white;
+    final textPrimary = isDark ? Colors.white : const Color(0xFF1C1C1E);
+    final textSecondary = isDark ? const Color(0xFF8E8E93) : const Color(0xFF6C6C70);
+    final divider = isDark ? const Color(0xFF2C2C2E) : const Color(0xFFE5E5EA);
+    const accent = AppColors.primary;
+
+    final progress = widget.total == 0 ? 0.0 : (_done / widget.total).clamp(0.0, 1.0);
+    final pct = (progress * 100).toStringAsFixed(0);
+
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 28),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(28),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
+          child: Container(
+            decoration: BoxDecoration(
+              color: isDark
+                  ? Colors.white.withOpacity(0.07)
+                  : Colors.white.withOpacity(0.92),
+              borderRadius: BorderRadius.circular(28),
+  border: Border.all(
+  color: isDark
+      ? accent.withOpacity(0.35)
+      : accent.withOpacity(0.20),
+  width: 1.2,
+),
+             boxShadow: [
+  BoxShadow(
+    color: isDark
+        ? accent.withOpacity(0.18)
+        : accent.withOpacity(0.08),
+    blurRadius: 40,
+    spreadRadius: 0,
+  ),
+  BoxShadow(
+    color: Colors.black.withOpacity(isDark ? 0.55 : 0.08),
+    blurRadius: 24,
+    offset: const Offset(0, 8),
+  ),
+],
+            ),
+            padding: const EdgeInsets.fromLTRB(28, 32, 28, 28),
+            child: Directionality(
+              textDirection: TextDirection.rtl,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // ── أيقونة متحركة ──
+                  AnimatedBuilder(
+                    animation: _pulse,
+                    builder: (_, __) {
+                      return Container(
+                        width: 72,
+                        height: 72,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          
+gradient: RadialGradient(
+  colors: [
+    _finished
+        ? const Color(0xFF30D158).withOpacity(0.18)
+        : accent.withOpacity(isDark
+            ? 0.20 * _pulse.value + 0.05
+            : 0.12 * _pulse.value + 0.03),
+    Colors.transparent,
+  ],
+),
+border: Border.all(
+  color: _finished
+      ? const Color(0xFF30D158).withOpacity(0.75)
+      : accent.withOpacity(isDark
+          ? 0.35 + 0.45 * _pulse.value
+          : 0.25 + 0.30 * _pulse.value),
+  width: 1.5,
+),
+                        ),
+                        child: Center(
+                          child: _finished
+                              ? const Icon(Icons.check_rounded, color: Color(0xFF30D158), size: 34)
+                              : Icon(
+                                  Icons.folder_open_rounded,
+                                  color: accent.withOpacity(0.6 + 0.4 * _pulse.value),
+                                  size: 34,
+                                ),
+                        ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 22),
+
+                  // ── العنوان ──
+                  Text(
+                    _finished ? 'اكتمل الاستيراد' : 'جاري الاستيراد...',
+                    style: TextStyle(
+                      fontSize: 19,
+                      fontFamily: 'Tajawal',
+                      fontWeight: FontWeight.w800,
+                      color: textPrimary,
+                      letterSpacing: -0.3,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    _finished
+                        ? 'تمت إضافة $_done من ${widget.total} فيديو'
+                        : '$_done من ${widget.total} فيديو',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontFamily: 'Tajawal',
+                      color: textSecondary,
+                    ),
+                  ),
+                  const SizedBox(height: 28),
+
+                  // ── شريط التقدم المخصص ──
+                  Stack(
+                    children: [
+                      // الخلفية
+                      Container(
+                        height: 8,
+                        decoration: BoxDecoration(
+                          color: isDark ? Colors.white.withOpacity(0.08) : divider,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      // التقدم مع أنيميشن
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 400),
+                        curve: Curves.easeOutCubic,
+                        height: 8,
+                        width: double.infinity,
+                        child: FractionallySizedBox(
+                          widthFactor: progress,
+                          alignment: Alignment.centerRight,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(8),
+gradient: LinearGradient(
+  colors: [
+    AppColors.primary,
+    isDark
+        ? AppColors.primary.withOpacity(0.65)
+        : AppColors.primaryDark,
+  ],
+  begin: Alignment.centerRight,
+  end: Alignment.centerLeft,
+),
+                              boxShadow: [
+BoxShadow(
+  color: accent.withOpacity(isDark ? 0.50 : 0.30),
+  blurRadius: isDark ? 10 : 6,
+  offset: const Offset(0, 2),
+),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+
+                  // ── النسبة المئوية واسم الملف ──
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          _currentName.isNotEmpty ? _currentName : '...',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textDirection: TextDirection.ltr,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontFamily: 'Tajawal',
+                            color: textSecondary,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      AnimatedBuilder(
+                        animation: _pulse,
+                        builder: (_, __) {
+                          return Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: accent.withOpacity(_finished ? 0.15 : 0.08 + 0.08 * _pulse.value),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              _finished ? '100%' : '$pct%',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontFamily: 'Tajawal',
+                                fontWeight: FontWeight.w700,
+                                color: accent,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+
+                  if (_finished) ...[
+                    const SizedBox(height: 24),
+                    // خط فاصل خفيف
+                    Container(height: 0.5, color: divider),
+                    const SizedBox(height: 20),
+                    // زر الإغلاق
+                    GestureDetector(
+                      onTap: () => Navigator.of(context).pop(),
+                      child: Container(
+                        width: double.infinity,
+                        height: 48,
+                        decoration: BoxDecoration(
+gradient: LinearGradient(
+  colors: [
+    AppColors.primaryDark,
+    AppColors.primary,
+  ],
+  begin: Alignment.centerRight,
+  end: Alignment.centerLeft,
+),
+                          borderRadius: BorderRadius.circular(14),
+                          boxShadow: [
+                           BoxShadow(
+  color: accent.withOpacity(isDark ? 0.45 : 0.25),
+  blurRadius: isDark ? 18 : 12,
+  offset: const Offset(0, 5),
+),
+                          ],
+                        ),
+                        alignment: Alignment.center,
+                        child: const Text(
+                          'رائع!',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontFamily: 'Tajawal',
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.3,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class ManifestCache {
   static final Map<String, StreamManifest> _cache = {};
   static final Map<String, Future<StreamManifest>> _pending = {};
@@ -2004,6 +2558,54 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
   List<PlatformFile> _pickedFiles = [];
   bool _importing = false;
 
+  OverlayEntry? _toastOverlay;
+
+  void _showGlassToast(String message,
+      {_ToastType type = _ToastType.info,
+      Duration duration = const Duration(seconds: 3)}) {
+    _toastOverlay?.remove();
+    _toastOverlay = null;
+    final entry = OverlayEntry(
+      builder: (ctx) => _GlassToast(
+        message: message,
+        type: type,
+        onDismiss: () {
+          _toastOverlay?.remove();
+          _toastOverlay = null;
+        },
+      ),
+    );
+    _toastOverlay = entry;
+    Overlay.of(context).insert(entry);
+    Future.delayed(duration, () {
+      if (_toastOverlay == entry) {
+        _toastOverlay?.remove();
+        _toastOverlay = null;
+      }
+    });
+  }
+
+  void _showSnack(String message) {
+    String clean = message
+        .replaceAll('✅', '').replaceAll('❌', '').replaceAll('⏳', '')
+        .replaceAll('🗑️', '').trim();
+    _ToastType type;
+    if (message.contains('تم') || message.contains('✅') || message.contains('تمت إضافة')) {
+      type = _ToastType.move;
+    } else if (message.contains('خطأ') || message.contains('فشل') || message.contains('❌')) {
+      type = _ToastType.error;
+    } else {
+      type = _ToastType.info;
+    }
+    _showGlassToast(clean, type: type);
+  }
+
+  @override
+  void dispose() {
+    _toastOverlay?.remove();
+    super.dispose();
+  }
+
   Future<void> _pickFiles() async {
     try {
       final result = await FilePicker.platform.pickFiles(
@@ -2016,12 +2618,7 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('خطأ في فتح الملفات: $e', textDirection: TextDirection.rtl),
-            backgroundColor: Colors.red,
-          ),
-        );
+        _showGlassToast('خطأ في فتح الملفات: $e', type: _ToastType.error);
       }
     }
   }
@@ -2029,9 +2626,26 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
   Future<void> _importSelected() async {
     if (_pickedFiles.isEmpty) return;
     setState(() => _importing = true);
+
     final dir = await getApplicationDocumentsDirectory();
     final destDir = Directory('${dir.path}/dndn');
     if (!await destDir.exists()) await destDir.create(recursive: true);
+
+    final total = _pickedFiles.length;
+    final controller = StreamController<_ImportEvent>.broadcast();
+
+    // فتح نافذة التقدم (لا ننتظر إغلاقها)
+    if (mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        barrierColor: Colors.black.withOpacity(0.55),
+        builder: (_) => _ImportProgressDialog(
+          total: total,
+          events: controller.stream,
+        ),
+      );
+    }
 
     int copied = 0;
     for (final file in _pickedFiles) {
@@ -2044,24 +2658,29 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
           await src.copy(dest.path);
         }
         copied++;
+        controller.add(_ImportEvent(done: copied, currentName: name));
         ThumbnailManager.generateLocalThumbnail(dest.path).catchError((_) {});
       } catch (_) {}
     }
+
+    // إرسال حدث الإتمام ثم الإغلاق التلقائي
+    controller.add(_ImportEvent(done: copied, currentName: '', finished: true));
+    await Future.delayed(const Duration(milliseconds: 300));
+    await controller.close();
 
     downloadCompleteNotifier.value = destDir.path;
 
     if (mounted) {
       setState(() => _importing = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('✅ تمت إضافة $copied ملف إلى قسم استمع',
-              textDirection: TextDirection.rtl),
-          backgroundColor: Colors.green.shade700,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ),
-      );
-      Navigator.pop(context);
+      // إغلاق Dialog وصفحة الاستيراد بعد لحظة
+      await Future.delayed(const Duration(milliseconds: 1800));
+      if (mounted && Navigator.of(context).canPop()) {
+        Navigator.of(context).pop(); // إغلاق الـ Dialog
+      }
+      await Future.delayed(const Duration(milliseconds: 200));
+      if (mounted && Navigator.of(context).canPop()) {
+        Navigator.of(context).pop(); // العودة للخلف
+      }
     }
   }
 
@@ -2359,6 +2978,54 @@ class _SearchPageState extends State<SearchPage> {
   List<Video> _results = [];
   bool _isSearching = false;
 
+  OverlayEntry? _toastOverlay;
+
+  void _showGlassToast(String message,
+      {_ToastType type = _ToastType.info,
+      Duration duration = const Duration(seconds: 3)}) {
+    _toastOverlay?.remove();
+    _toastOverlay = null;
+    final entry = OverlayEntry(
+      builder: (ctx) => _GlassToast(
+        message: message,
+        type: type,
+        onDismiss: () {
+          _toastOverlay?.remove();
+          _toastOverlay = null;
+        },
+      ),
+    );
+    _toastOverlay = entry;
+    Overlay.of(context).insert(entry);
+    Future.delayed(duration, () {
+      if (_toastOverlay == entry) {
+        _toastOverlay?.remove();
+        _toastOverlay = null;
+      }
+    });
+  }
+
+  void _showSnack(String message) {
+    String clean = message
+        .replaceAll('✅', '').replaceAll('❌', '').replaceAll('⏳', '')
+        .replaceAll('🗑️', '').trim();
+    _ToastType type;
+    if (message.contains('تم') || message.contains('✅')) {
+      type = _ToastType.success;
+    } else if (message.contains('خطأ') || message.contains('فشل') || message.contains('❌')) {
+      type = _ToastType.error;
+    } else if (message.contains('لم يتم') || message.contains('غير موجود')) {
+      type = _ToastType.warning;
+    } else if (message.contains('حذف') || message.contains('🗑️')) {
+      type = _ToastType.delete;
+    } else if (message.contains('نقل') || message.contains('إضافة') || message.contains('مجلد')) {
+      type = _ToastType.move;
+    } else {
+      type = _ToastType.info;
+    }
+    _showGlassToast(clean, type: type);
+  }
+
   final List<Map<String, String>> _categories = const [
     {'label': '🎵 موسيقى', 'query': 'موسيقى عربية'},
     {'label': '🎸 روك', 'query': 'rock music'},
@@ -2373,6 +3040,7 @@ class _SearchPageState extends State<SearchPage> {
 
   @override
   void dispose() {
+    _toastOverlay?.remove();
     _searchController.dispose();
     super.dispose();
   }
@@ -2394,12 +3062,7 @@ class _SearchPageState extends State<SearchPage> {
     } catch (e) {
       setState(() => _isSearching = false);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('خطأ في البحث: $e', textDirection: TextDirection.rtl),
-            backgroundColor: Colors.red,
-          ),
-        );
+        _showGlassToast('خطأ في البحث: $e', type: _ToastType.error);
       }
     }
   }
@@ -2643,15 +3306,7 @@ class _VideoResultCard extends StatelessWidget {
     String quality,
   ) async {
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content:
-              Text('⏳ بدء التحميل...', textDirection: TextDirection.rtl),
-          backgroundColor: AppColors.primary,
-          behavior: SnackBarBehavior.floating,
-          duration: Duration(seconds: 2),
-        ),
-      );
+      _showGlassToastStatic(context, 'بدء التحميل...', type: _ToastType.info, duration: const Duration(seconds: 2));
     }
 
     try {
@@ -2690,28 +3345,13 @@ class _VideoResultCard extends StatelessWidget {
                 savedPath, video.thumbnails.mediumResUrl);
             downloadCompleteNotifier.value = musicDir.path;
             if (context.mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('✅ تم التحميل: $fileName',
-                      textDirection: TextDirection.rtl),
-                  backgroundColor: Colors.green.shade700,
-                  behavior: SnackBarBehavior.floating,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
-                ),
-              );
+              _showGlassToastStatic(context, 'تم التحميل: $fileName', type: _ToastType.success);
             }
             break;
           } else if (msg.containsKey('error')) {
             receivePort.close();
             if (context.mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('❌ فشل التحميل: ${msg['error']}',
-                      textDirection: TextDirection.rtl),
-                  backgroundColor: Colors.red,
-                ),
-              );
+              _showGlassToastStatic(context, 'فشل التحميل: ${msg['error']}', type: _ToastType.error);
             }
             break;
           }
@@ -2719,13 +3359,7 @@ class _VideoResultCard extends StatelessWidget {
       }
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('❌ فشل التحميل: $e',
-                textDirection: TextDirection.rtl),
-            backgroundColor: Colors.red,
-          ),
-        );
+        _showGlassToastStatic(context, 'فشل التحميل: $e', type: _ToastType.error);
       }
     }
   }
@@ -3027,6 +3661,33 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
   String _downloadStatus = '';
   List<Video> _relatedVideos = [];
 
+  OverlayEntry? _toastOverlay;
+
+  void _showGlassToast(String message,
+      {_ToastType type = _ToastType.info,
+      Duration duration = const Duration(seconds: 3)}) {
+    _toastOverlay?.remove();
+    _toastOverlay = null;
+    final entry = OverlayEntry(
+      builder: (ctx) => _GlassToast(
+        message: message,
+        type: type,
+        onDismiss: () {
+          _toastOverlay?.remove();
+          _toastOverlay = null;
+        },
+      ),
+    );
+    _toastOverlay = entry;
+    Overlay.of(context).insert(entry);
+    Future.delayed(duration, () {
+      if (_toastOverlay == entry) {
+        _toastOverlay?.remove();
+        _toastOverlay = null;
+      }
+    });
+  }
+
   @override
   void initState() {
     super.initState();
@@ -3065,6 +3726,7 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
 
   @override
   void dispose() {
+    _toastOverlay?.remove();
     _controller.dispose();
     super.dispose();
   }
@@ -3142,16 +3804,7 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
                 _isDownloading = false;
                 _downloadStatus = '';
               });
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('✅ تم التحميل: $fileName',
-                      textDirection: TextDirection.rtl),
-                  backgroundColor: Colors.green.shade700,
-                  behavior: SnackBarBehavior.floating,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
-                ),
-              );
+              _showGlassToast('تم التحميل: $fileName', type: _ToastType.success);
               downloadCompleteNotifier.value = musicDir.path;
             }
             break;
@@ -3167,16 +3820,7 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
           _isDownloading = false;
           _downloadStatus = '';
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('❌ فشل التحميل: $e',
-                textDirection: TextDirection.rtl),
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12)),
-          ),
-        );
+        _showGlassToast('فشل التحميل: $e', type: _ToastType.error);
       }
     }
   }
@@ -3602,6 +4246,39 @@ class _MediaVideoBrowserPageState extends State<MediaVideoBrowserPage> {
   List<PlatformFile> _pickedVideos = [];
   bool _importing = false;
 
+  OverlayEntry? _toastOverlay;
+
+  void _showGlassToast(String message,
+      {_ToastType type = _ToastType.info,
+      Duration duration = const Duration(seconds: 3)}) {
+    _toastOverlay?.remove();
+    _toastOverlay = null;
+    final entry = OverlayEntry(
+      builder: (ctx) => _GlassToast(
+        message: message,
+        type: type,
+        onDismiss: () {
+          _toastOverlay?.remove();
+          _toastOverlay = null;
+        },
+      ),
+    );
+    _toastOverlay = entry;
+    Overlay.of(context).insert(entry);
+    Future.delayed(duration, () {
+      if (_toastOverlay == entry) {
+        _toastOverlay?.remove();
+        _toastOverlay = null;
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _toastOverlay?.remove();
+    super.dispose();
+  }
+
   // دالة اختيار مقاطع الفيديو فقط من وسائط الجهاز
   Future<void> _pickVideos() async {
     try {
@@ -3614,12 +4291,7 @@ class _MediaVideoBrowserPageState extends State<MediaVideoBrowserPage> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('خطأ في فتح وسائط الجهاز: $e', textDirection: TextDirection.rtl),
-            backgroundColor: Colors.red,
-          ),
-        );
+        _showGlassToast('خطأ في فتح وسائط الجهاز: $e', type: _ToastType.error);
       }
     }
   }
@@ -3628,10 +4300,26 @@ class _MediaVideoBrowserPageState extends State<MediaVideoBrowserPage> {
   Future<void> _importSelected() async {
     if (_pickedVideos.isEmpty) return;
     setState(() => _importing = true);
-    
+
     final dir = await getApplicationDocumentsDirectory();
     final destDir = Directory('${dir.path}/dndn');
     if (!await destDir.exists()) await destDir.create(recursive: true);
+
+    final total = _pickedVideos.length;
+    final controller = StreamController<_ImportEvent>.broadcast();
+
+    // فتح نافذة التقدم
+    if (mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        barrierColor: Colors.black.withOpacity(0.55),
+        builder: (_) => _ImportProgressDialog(
+          total: total,
+          events: controller.stream,
+        ),
+      );
+    }
 
     int copied = 0;
     for (final file in _pickedVideos) {
@@ -3644,26 +4332,31 @@ class _MediaVideoBrowserPageState extends State<MediaVideoBrowserPage> {
           await src.copy(dest.path);
         }
         copied++;
+        controller.add(_ImportEvent(done: copied, currentName: name));
         // توليد صورة مصغرة للفيديو المحلي
         ThumbnailManager.generateLocalThumbnail(dest.path).catchError((_) {});
       } catch (_) {}
     }
+
+    // إرسال حدث الإتمام
+    controller.add(_ImportEvent(done: copied, currentName: '', finished: true));
+    await Future.delayed(const Duration(milliseconds: 300));
+    await controller.close();
 
     // تحديث المستمع (Notifier) لتظهر الملفات فوراً في صفحة استمع
     downloadCompleteNotifier.value = destDir.path;
 
     if (mounted) {
       setState(() => _importing = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('✅ تمت إضافة $copied فيديو إلى قسم استمع',
-              textDirection: TextDirection.rtl),
-          backgroundColor: Colors.green.shade700,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ),
-      );
-      Navigator.pop(context); // العودة للخلف بعد إتمام الاستيراد
+      // إغلاق Dialog وصفحة الاستيراد بعد لحظة
+      await Future.delayed(const Duration(milliseconds: 1800));
+      if (mounted && Navigator.of(context).canPop()) {
+        Navigator.of(context).pop(); // إغلاق الـ Dialog
+      }
+      await Future.delayed(const Duration(milliseconds: 200));
+      if (mounted && Navigator.of(context).canPop()) {
+        Navigator.of(context).pop(); // العودة للخلف
+      }
     }
   }
 

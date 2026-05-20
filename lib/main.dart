@@ -532,27 +532,14 @@ class AudioPlayerService {
     // ── مزامنة currentIndex مع just_audio_background ──
     // يُعالج تغييرات الأغنية القادمة من الإشعار (التالي/السابق في شريط الإشعارات)
     // أما التغييرات من playNext/playPrevious فتُحدَّث currentIndex.value مباشرة قبل الـ seek
-  _indexSub = player.currentIndexStream.distinct().listen((rawIdx) {
+_indexSub = player.currentIndexStream.distinct().listen((rawIdx) {
   if (rawIdx == null) return;
   final list = _loadedList;
   if (list.isEmpty || rawIdx < 0 || rawIdx >= list.length) return;
   if (_isSettingSource) return;
 
   if (rawIdx != currentIndex.value) {
-    final isAutoAdvance = rawIdx != _expectedIndex;
-
-    if (isAutoAdvance && isRepeat.value) {
-      final repeatIdx = currentIndex.value;
-      _userPaused = false;
-      Future.microtask(() async {
-        try {
-          await player.seek(Duration.zero, index: repeatIdx);
-          videoLoopSignal.value++;
-          await player.play();
-        } catch (_) {}
-      });
-      return;
-    }
+    if (isRepeat.value && rawIdx == _expectedIndex + 1) return;
 
     currentIndex.value = rawIdx;
     playlist.value = list;
@@ -576,20 +563,15 @@ player.processingStateStream.listen((state) {
     // ── انتهاء القائمة (آخر أغنية) — أعِد تشغيل الأغنية الحالية إذا كان التكرار مفعّلاً ──
     // ملاحظة: هذا يُستدعى فقط عند آخر أغنية في القائمة (LoopMode.off)
     // الانتقالات وسط القائمة يعالجها _indexSub أعلاه
-bool _repeatInProgress = false;
 _processSub = player.processingStateStream.distinct().listen((state) {
   if (state == ProcessingState.completed) {
-    if (isRepeat.value && !_repeatInProgress && !_isSettingSource) {
-      _repeatInProgress = true;
+    if (isRepeat.value && !_isSettingSource) {
       _userPaused = false;
       player.seek(Duration.zero).then((_) {
         videoLoopSignal.value++;
-        _repeatInProgress = false;
         try { player.play(); } catch (_) {}
-      }).catchError((_) { _repeatInProgress = false; });
+      }).catchError((_) {});
     }
-  } else {
-    _repeatInProgress = false;
   }
 });
 
@@ -787,21 +769,6 @@ _processSub = player.processingStateStream.distinct().listen((state) {
 
   /// التالي — يعمل دائماً بغض النظر عن وضع التكرار
 Future<void> playNext() async {
-  if (isRepeat.value) {
-    isRepeat.value = false;
-    _userPaused = false;
-    final list = _loadedList.isEmpty ? playlist.value : _loadedList;
-    final idx = currentIndex.value;
-    if (list.isEmpty) return;
-    final nextIdx = idx < list.length - 1 ? idx + 1 : idx;
-    if (nextIdx == idx) return;
-    currentIndex.value = nextIdx;
-    _expectedIndex = nextIdx;
-    try { await player.seek(Duration.zero, index: nextIdx); } catch (_) {}
-    try { await player.play(); } catch (_) {}
-    isRepeat.value = true;
-    return;
-  }
   _userPaused = false;
   final list = _loadedList.isEmpty ? playlist.value : _loadedList;
   final idx = currentIndex.value;
@@ -813,32 +780,8 @@ Future<void> playNext() async {
   try { await player.seek(Duration.zero, index: nextIdx); } catch (_) {}
   try { await player.play(); } catch (_) {}
 }
-
   /// السابق — يعمل دائماً بغض النظر عن وضع التكرار
 Future<void> playPrevious() async {
-  if (isRepeat.value) {
-    isRepeat.value = false;
-    _userPaused = false;
-    final pos = player.position;
-    final list = _loadedList.isEmpty ? playlist.value : _loadedList;
-    final idx = currentIndex.value;
-    if (list.isEmpty) return;
-    if (pos.inSeconds > 3) {
-      try { await player.seek(Duration.zero); } catch (_) {}
-      try { await player.play(); } catch (_) {}
-    } else if (idx > 0) {
-      final prevIdx = idx - 1;
-      currentIndex.value = prevIdx;
-      _expectedIndex = prevIdx;
-      try { await player.seek(Duration.zero, index: prevIdx); } catch (_) {}
-      try { await player.play(); } catch (_) {}
-    } else {
-      try { await player.seek(Duration.zero); } catch (_) {}
-      try { await player.play(); } catch (_) {}
-    }
-    isRepeat.value = true;
-    return;
-  }
   _userPaused = false;
   final pos = player.position;
   final list = _loadedList.isEmpty ? playlist.value : _loadedList;

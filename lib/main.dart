@@ -545,23 +545,24 @@ class AudioPlayerService {
         // ── منطق التكرار: هل هذا انتقال تلقائي (نهاية الأغنية) أم يدوي (next/prev)؟ ──
         // _expectedIndex يُحدَّث من playNext/playPrevious قبل الـ seek
         // إذا rawIdx != _expectedIndex → الانتقال تلقائي من just_audio
-        final completedRecently = _lastCompletedAt != null &&
-            DateTime.now().difference(_lastCompletedAt!).inMilliseconds < 500;
-        final isAutoAdvance = (rawIdx != _expectedIndex) && completedRecently;
-        if (isAutoAdvance && isRepeat.value) {
-          // التكرار مفعّل وهذا انتقال تلقائي → أعِد الأغنية السابقة (currentIndex.value)
-          final repeatIdx = currentIndex.value;
-          _userPaused = false;
-          _lastCompletedAt = null;
-          Future.microtask(() async {
-            try {
-              await player.seek(Duration.zero, index: repeatIdx);
-              videoLoopSignal.value++;
-              await player.play();
-            } catch (_) {}
-          });
-          return; // لا تُحدّث currentIndex
-        }
+final completedRecently = _lastCompletedAt != null &&
+    DateTime.now().difference(_lastCompletedAt!).inMilliseconds < 800;
+final isAutoAdvance = (rawIdx != _expectedIndex) && completedRecently;
+
+if (isRepeat.value && completedRecently) {
+  // التكرار — سواء جاء من انتهاء الأغنية أو من الإشعار بعد completed
+  final repeatIdx = currentIndex.value;
+  _userPaused = false;
+  _lastCompletedAt = null;
+  Future.microtask(() async {
+    try {
+      await player.seek(Duration.zero, index: repeatIdx);
+      videoLoopSignal.value++;
+      await player.play();
+    } catch (_) {}
+  });
+  return;
+}
 
         currentIndex.value = rawIdx;
         playlist.value = list;
@@ -586,22 +587,11 @@ player.processingStateStream.listen((state) {
     // ── انتهاء القائمة (آخر أغنية) — أعِد تشغيل الأغنية الحالية إذا كان التكرار مفعّلاً ──
     // ملاحظة: هذا يُستدعى فقط عند آخر أغنية في القائمة (LoopMode.off)
     // الانتقالات وسط القائمة يعالجها _indexSub أعلاه
-    bool _repeatInProgress = false;
-    _processSub = player.processingStateStream.distinct().listen((state) {
-      if (state == ProcessingState.completed) {
-        if (isRepeat.value && !_repeatInProgress && !_isSettingSource) {
-          _repeatInProgress = true;
-          _userPaused = false;
-          player.seek(Duration.zero).then((_) {
-            videoLoopSignal.value++;
-            _repeatInProgress = false;
-            try { player.play(); } catch (_) {}
-          }).catchError((_) { _repeatInProgress = false; });
-        }
-      } else {
-        _repeatInProgress = false;
-      }
-    });
+_processSub = player.processingStateStream.distinct().listen((state) {
+  if (state == ProcessingState.completed) {
+    _lastCompletedAt = DateTime.now(); // ← فقط سجّل الوقت
+  }
+});
 
     // ── حالة التشغيل/الإيقاف ──
     _playingSub = player.playingStream.listen((playing) {

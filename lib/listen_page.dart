@@ -31,7 +31,7 @@ import 'listen_page.dart';
 import 'browse_page.dart';
 import 'settings_page.dart';
 import 'reels_player.dart';
-
+import 'dart:math' as math;
 
 // ═══════════════════════════════════════════════════════════
 //  MODEL — مجلد موسيقى
@@ -1272,23 +1272,33 @@ Future<void> _saveToGalleryIOS(LocalMediaItem item, File sourceFile) async {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: context.appBg,
-      body: Stack(
-        children: [
-          CustomScrollView(
-            slivers: [
-              _buildHeader(),
-              if (_folders.isNotEmpty) _buildFoldersSection(),
-              _buildSongsSectionHeader(),
-              _buildFileList(),
-              const SliverToBoxAdapter(child: SizedBox(height: 200)),
+    return ValueListenableBuilder<String>(
+      valueListenable: PlayerModeNotifier.instance,
+      builder: (context, playerMode, _) {
+        // ── الوضع العشوائي الكوكبي ──
+        if (playerMode == PlayerModeNotifier.galactic) {
+          return GalacticPlayerPage(items: _localItems);
+        }
+        // ── المشغل الاعتيادي أو الريلز ──
+        return Scaffold(
+          backgroundColor: context.appBg,
+          body: Stack(
+            children: [
+              CustomScrollView(
+                slivers: [
+                  _buildHeader(),
+                  if (_folders.isNotEmpty) _buildFoldersSection(),
+                  _buildSongsSectionHeader(),
+                  _buildFileList(),
+                  const SliverToBoxAdapter(child: SizedBox(height: 200)),
+                ],
+              ),
+              // ── شريط الإجراءات عند التحديد ──
+              _buildSelectionActionBar(),
             ],
           ),
-          // ── شريط الإجراءات عند التحديد ──
-          _buildSelectionActionBar(),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -6311,4 +6321,931 @@ class _ToastConfig {
     required this.accentColor,
     required this.label,
   });
+}
+// ═══════════════════════════════════════════════════════════════════════
+//  🪐  GALACTIC PLAYER PAGE — المشغل الكوني العشوائي
+// ═══════════════════════════════════════════════════════════════════════
+class GalacticPlayerPage extends StatefulWidget {
+  final List<LocalMediaItem> items;
+  const GalacticPlayerPage({super.key, required this.items});
+
+  @override
+  State<GalacticPlayerPage> createState() => _GalacticPlayerPageState();
+}
+
+class _GalacticPlayerPageState extends State<GalacticPlayerPage>
+    with TickerProviderStateMixin {
+  // ── حالة المشغل ──
+  bool _isSpinning = false;
+  bool _songSelected = false;
+  LocalMediaItem? _chosenItem;
+  String? _chosenThumb;
+
+  // ── الكواكب المعروضة ──
+  late List<_Planet> _planets;
+  final _rng = math.Random();
+
+  // ── المتحكمات ──
+  late AnimationController _orbitCtrl;      // دوران الكواكب
+  late AnimationController _pulseCtrl;      // نبض الزر المركزي
+  late AnimationController _revealCtrl;     // ظهور الأغنية المختارة
+  late AnimationController _bgCtrl;         // حركة الخلفية النجمية
+  late AnimationController _gravityCtrl;    // تأثير الجاذبية
+
+  late Animation<double> _orbitSpeed;
+  late Animation<double> _pulseAnim;
+  late Animation<double> _revealAnim;
+  late Animation<double> _gravityAnim;
+
+  // نجوم الخلفية
+  late List<_Star> _stars;
+
+  // الكوكب الذي سيُجذب نحو المركز
+  int _attractedPlanetIndex = -1;
+
+  @override
+  void initState() {
+    super.initState();
+    _initStars();
+    _initControllers();
+    _initPlanets();
+  }
+
+  void _initStars() {
+    _stars = List.generate(120, (_) => _Star(
+      x: _rng.nextDouble(),
+      y: _rng.nextDouble(),
+      size: 0.5 + _rng.nextDouble() * 2.5,
+      opacity: 0.2 + _rng.nextDouble() * 0.8,
+      twinklePhase: _rng.nextDouble() * math.pi * 2,
+    ));
+  }
+
+  void _initControllers() {
+    _orbitCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 8),
+    )..repeat();
+
+    _orbitSpeed = Tween<double>(begin: 0.12, end: 1.0).animate(
+      CurvedAnimation(parent: _orbitCtrl, curve: Curves.linear),
+    );
+
+    _pulseCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1800),
+    )..repeat(reverse: true);
+    _pulseAnim = Tween<double>(begin: 0.95, end: 1.08).animate(
+      CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut),
+    );
+
+    _revealCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    );
+    _revealAnim = CurvedAnimation(parent: _revealCtrl, curve: Curves.easeOutBack);
+
+    _bgCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 30),
+    )..repeat();
+
+    _gravityCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    );
+    _gravityAnim = CurvedAnimation(
+      parent: _gravityCtrl,
+      curve: Curves.easeInBack,
+    );
+  }
+
+  void _initPlanets() {
+    final count = widget.items.isEmpty ? 0 : math.min(widget.items.length, 8);
+    final shuffled = List<LocalMediaItem>.from(widget.items)..shuffle(_rng);
+    _planets = List.generate(count, (i) {
+      final angle = (i / count) * math.pi * 2;
+      return _Planet(
+        item: shuffled[i],
+        orbitRadius: 110.0 + (i % 3) * 38.0,
+        baseAngle: angle,
+        size: 44.0 + _rng.nextDouble() * 18,
+        color: _planetColors[i % _planetColors.length],
+        speed: 0.6 + _rng.nextDouble() * 0.8,
+        ringColor: _ringColors[i % _ringColors.length],
+      );
+    });
+    _loadPlanetThumbs();
+  }
+
+  static const List<Color> _planetColors = [
+    Color(0xFFE8272A), Color(0xFF1565C0), Color(0xFF6A1B9A),
+    Color(0xFF00838F), Color(0xFFF57F17), Color(0xFF2E7D32),
+    Color(0xFFAD1457), Color(0xFF4527A0),
+  ];
+  static const List<Color> _ringColors = [
+    Color(0xFFFF6B6B), Color(0xFF64B5F6), Color(0xFFCE93D8),
+    Color(0xFF80DEEA), Color(0xFFFFCC02), Color(0xFFA5D6A7),
+    Color(0xFFF48FB1), Color(0xFF9FA8DA),
+  ];
+
+  Future<void> _loadPlanetThumbs() async {
+    for (final p in _planets) {
+      final thumb = await ThumbnailManager.getLocalThumbnail(p.item.path)
+          .catchError((_) => null as String?);
+      if (mounted && thumb != null) {
+        setState(() => p.thumbPath = thumb);
+      }
+    }
+  }
+
+  void _onSpinPressed() async {
+    if (_isSpinning) return;
+    setState(() {
+      _isSpinning = true;
+      _songSelected = false;
+      _chosenItem = null;
+      _attractedPlanetIndex = -1;
+    });
+
+    // إعادة توزيع الكواكب
+    final shuffled = List<LocalMediaItem>.from(widget.items)..shuffle(_rng);
+    for (var i = 0; i < _planets.length; i++) {
+      _planets[i].item = shuffled[i % shuffled.length];
+      _planets[i].thumbPath = null;
+    }
+
+    // تسريع الدوران تدريجياً
+    _orbitCtrl.duration = const Duration(seconds: 8);
+    await _orbitCtrl.animateTo(1.0, duration: const Duration(milliseconds: 500));
+
+    // تشغيل بسرعة عالية
+    _orbitCtrl.duration = const Duration(seconds: 2);
+    _orbitCtrl.repeat();
+
+    // انتظر ثم اختر كوكباً
+    await Future.delayed(const Duration(seconds: 3));
+
+    if (!mounted) return;
+
+    // اختيار الكوكب الفائز
+    final winnerIdx = _rng.nextInt(_planets.length);
+    final winner = _planets[winnerIdx];
+
+    setState(() {
+      _attractedPlanetIndex = winnerIdx;
+    });
+
+    // تباطؤ تدريجي
+    _orbitCtrl.duration = const Duration(seconds: 6);
+    _orbitCtrl.repeat();
+
+    await Future.delayed(const Duration(milliseconds: 800));
+    _orbitCtrl.duration = const Duration(seconds: 12);
+    _orbitCtrl.repeat();
+
+    // تأثير الجاذبية
+    _gravityCtrl.forward(from: 0);
+
+    await Future.delayed(const Duration(milliseconds: 700));
+
+    // تحميل الثمبنيل
+    final thumbPath = await ThumbnailManager.getLocalThumbnail(winner.item.path)
+        .catchError((_) => null as String?);
+
+    if (!mounted) return;
+
+    // تشغيل الأغنية
+    audioService.playList(widget.items, widget.items.indexOf(winner.item));
+
+    setState(() {
+      _isSpinning = false;
+      _songSelected = true;
+      _chosenItem = winner.item;
+      _chosenThumb = thumbPath ?? winner.thumbPath;
+      _attractedPlanetIndex = -1;
+    });
+
+    _gravityCtrl.reset();
+    _revealCtrl.forward(from: 0);
+
+    // إعادة سرعة الدوران للطبيعي
+    _orbitCtrl.duration = const Duration(seconds: 8);
+    _orbitCtrl.repeat();
+  }
+
+  @override
+  void dispose() {
+    _orbitCtrl.dispose();
+    _pulseCtrl.dispose();
+    _revealCtrl.dispose();
+    _bgCtrl.dispose();
+    _gravityCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final size = MediaQuery.of(context).size;
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        children: [
+          // ── خلفية كونية ──
+          _buildSpaceBackground(size),
+
+          // ── محتوى المشغل ──
+          SafeArea(
+            child: Column(
+              children: [
+                // ── شريط علوي ──
+                _buildTopBar(isDark),
+
+                // ── المجموعة الشمسية ──
+                Expanded(
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      // مدارات (حلقات شفافة)
+                      ..._buildOrbitRings(),
+
+                      // الكواكب المتحركة
+                      AnimatedBuilder(
+                        animation: _orbitCtrl,
+                        builder: (_, __) {
+                          return Stack(
+                            alignment: Alignment.center,
+                            children: List.generate(_planets.length, (i) {
+                              return _buildPlanet(i, size);
+                            }),
+                          );
+                        },
+                      ),
+
+                      // الزر المركزي
+                      _buildCenterButton(isDark),
+                    ],
+                  ),
+                ),
+
+                // ── بطاقة الأغنية المختارة ──
+                AnimatedBuilder(
+                  animation: _revealAnim,
+                  builder: (_, __) {
+                    if (!_songSelected || _chosenItem == null) {
+                      return const SizedBox(height: 130);
+                    }
+                    return _buildSongRevealCard(_chosenItem!, isDark);
+                  },
+                ),
+
+                const SizedBox(height: 16),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSpaceBackground(Size size) {
+    return AnimatedBuilder(
+      animation: _bgCtrl,
+      builder: (_, __) {
+        return CustomPaint(
+          painter: _SpaceBackgroundPainter(
+            stars: _stars,
+            progress: _bgCtrl.value,
+            isSpinning: _isSpinning,
+          ),
+          size: size,
+        );
+      },
+    );
+  }
+
+  Widget _buildTopBar(bool isDark) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      child: Row(
+        children: [
+          // عنوان
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '🌌 الوضع العشوائي',
+                  style: TextStyle(
+                    fontFamily: 'Tajawal',
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                Text(
+                  _isSpinning
+                      ? 'الكواكب تدور... 🪐'
+                      : _songSelected
+                          ? 'تم اختيار أغنيتك ✨'
+                          : 'اضغط لتدور الكواكب',
+                  style: TextStyle(
+                    fontFamily: 'Tajawal',
+                    fontSize: 13,
+                    color: Colors.white.withOpacity(0.65),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // زر إعدادات
+          GestureDetector(
+            onTap: () {
+              PlayerModeNotifier.instance.set(PlayerModeNotifier.normal);
+            },
+            child: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.10),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: Colors.white.withOpacity(0.15),
+                ),
+              ),
+              child: const Icon(
+                CupertinoIcons.arrow_left_circle_fill,
+                color: Colors.white70,
+                size: 20,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _buildOrbitRings() {
+    final radii = {110.0, 148.0, 186.0};
+    return radii.map((r) {
+      return CustomPaint(
+        painter: _OrbitRingPainter(radius: r),
+      );
+    }).toList();
+  }
+
+  Widget _buildPlanet(int index, Size size) {
+    final planet = _planets[index];
+    final isAttracted = _attractedPlanetIndex == index;
+
+    final baseTime = _orbitCtrl.value * math.pi * 2 * planet.speed;
+    final angle = planet.baseAngle + baseTime;
+
+    // جاذبية: تقليص المسافة نحو المركز
+    double radius = planet.orbitRadius;
+    if (isAttracted) {
+      radius = planet.orbitRadius * (1 - _gravityAnim.value * 0.9);
+    }
+
+    final x = math.cos(angle) * radius;
+    final y = math.sin(angle) * radius * 0.4; // إهليلجي (بيضاوي)
+
+    // حجم الكوكب المجذوب يكبر
+    double planetSize = isAttracted
+        ? planet.size * (1 + _gravityAnim.value * 0.6)
+        : planet.size;
+
+    return Transform.translate(
+      offset: Offset(x, y),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        width: planetSize,
+        height: planetSize,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: RadialGradient(
+            colors: [
+              planet.color.withOpacity(0.9),
+              planet.color.withOpacity(0.5),
+              planet.color.withOpacity(0.1),
+            ],
+            stops: const [0.0, 0.6, 1.0],
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: planet.color.withOpacity(isAttracted ? 0.8 : 0.45),
+              blurRadius: isAttracted ? 24 : 12,
+              spreadRadius: isAttracted ? 4 : 0,
+            ),
+          ],
+          border: isAttracted
+              ? Border.all(color: Colors.white.withOpacity(0.8), width: 2)
+              : null,
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: planet.thumbPath != null
+            ? Image.file(
+                File(planet.thumbPath!),
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => _planetIcon(planet),
+              )
+            : _planetIcon(planet),
+      ),
+    );
+  }
+
+  Widget _planetIcon(_Planet planet) {
+    return Container(
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        gradient: RadialGradient(
+          colors: [
+            planet.color.withOpacity(0.9),
+            planet.color.withOpacity(0.4),
+          ],
+        ),
+        shape: BoxShape.circle,
+      ),
+      child: Icon(
+        planet.item.isVideo
+            ? CupertinoIcons.play_rectangle_fill
+            : CupertinoIcons.music_note,
+        color: Colors.white.withOpacity(0.85),
+        size: planet.size * 0.38,
+      ),
+    );
+  }
+
+  Widget _buildCenterButton(bool isDark) {
+    return AnimatedBuilder(
+      animation: Listenable.merge([_pulseAnim, _orbitCtrl]),
+      builder: (_, __) {
+        final pulse = _isSpinning ? _pulseAnim.value : 1.0;
+        return Transform.scale(
+          scale: pulse,
+          child: GestureDetector(
+            onTap: _onSpinPressed,
+            child: Container(
+              width: 90,
+              height: 90,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: RadialGradient(
+                  colors: _isSpinning
+                      ? [
+                          const Color(0xFFE8272A),
+                          const Color(0xFF6A1B9A),
+                          Colors.black,
+                        ]
+                      : [
+                          const Color(0xFF3A1212),
+                          const Color(0xFF1A0A2E),
+                          Colors.black,
+                        ],
+                  stops: const [0.0, 0.55, 1.0],
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: (_isSpinning
+                            ? AppColors.primary
+                            : const Color(0xFF6A1B9A))
+                        .withOpacity(0.6),
+                    blurRadius: _isSpinning ? 35 : 20,
+                    spreadRadius: _isSpinning ? 6 : 2,
+                  ),
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.5),
+                    blurRadius: 20,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+                border: Border.all(
+                  color: _isSpinning
+                      ? AppColors.primary.withOpacity(0.8)
+                      : Colors.white.withOpacity(0.2),
+                  width: 2,
+                ),
+              ),
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  // دوامة داخلية
+                  if (_isSpinning)
+                    AnimatedBuilder(
+                      animation: _orbitCtrl,
+                      builder: (_, __) => Transform.rotate(
+                        angle: _orbitCtrl.value * math.pi * 4,
+                        child: CustomPaint(
+                          painter: _VortexPainter(),
+                          size: const Size(70, 70),
+                        ),
+                      ),
+                    ),
+                  // أيقونة المركز
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        _isSpinning
+                            ? CupertinoIcons.sparkles
+                            : CupertinoIcons.shuffle,
+                        color: Colors.white,
+                        size: 26,
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _isSpinning ? '...' : 'أدِر',
+                        style: const TextStyle(
+                          fontFamily: 'Tajawal',
+                          fontSize: 11,
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildSongRevealCard(LocalMediaItem item, bool isDark) {
+    final title = item.title.replaceAll(RegExp(r'\.\w+$'), '');
+    return AnimatedBuilder(
+      animation: _revealAnim,
+      builder: (_, __) {
+        final t = _revealAnim.value;
+        return Transform.translate(
+          offset: Offset(0, 60 * (1 - t)),
+          child: Opacity(
+            opacity: t.clamp(0.0, 1.0),
+            child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 20),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Color(0xFF1A0A2E),
+                    Color(0xFF0D1A3A),
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(
+                  color: AppColors.primary.withOpacity(0.45),
+                  width: 1.5,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.primary.withOpacity(0.25),
+                    blurRadius: 30,
+                    spreadRadius: 2,
+                    offset: const Offset(0, 8),
+                  ),
+                  BoxShadow(
+                    color: const Color(0xFF6A1B9A).withOpacity(0.20),
+                    blurRadius: 20,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  // ── صورة الأغنية ──
+                  Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      // هالة توهج
+                      Container(
+                        width: 78,
+                        height: 78,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: RadialGradient(
+                            colors: [
+                              AppColors.primary.withOpacity(0.4),
+                              Colors.transparent,
+                            ],
+                          ),
+                        ),
+                      ),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: _chosenThumb != null
+                            ? Image.file(
+                                File(_chosenThumb!),
+                                width: 62,
+                                height: 62,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) =>
+                                    _defaultCardThumb(),
+                              )
+                            : (item.thumbnailUrl != null
+                                ? CachedNetworkImage(
+                                    imageUrl: item.thumbnailUrl!,
+                                    width: 62,
+                                    height: 62,
+                                    fit: BoxFit.cover,
+                                    errorWidget: (_, __, ___) =>
+                                        _defaultCardThumb(),
+                                  )
+                                : _defaultCardThumb()),
+                      ),
+                      // شارة الاختيار
+                      Positioned(
+                        bottom: 4,
+                        right: 4,
+                        child: Container(
+                          width: 20,
+                          height: 20,
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [AppColors.primary, AppColors.primaryDark],
+                            ),
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 1.5),
+                          ),
+                          child: const Icon(Icons.play_arrow_rounded,
+                              color: Colors.white, size: 12),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(width: 14),
+
+                  // ── اسم الأغنية ──
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // بادج "قيد التشغيل"
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [AppColors.primary, Color(0xFF6A1B9A)],
+                            ),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Text(
+                            '🎵 قيد التشغيل الآن',
+                            style: TextStyle(
+                              fontFamily: 'Tajawal',
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          textDirection: TextDirection.rtl,
+                          style: const TextStyle(
+                            fontFamily: 'Tajawal',
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white,
+                            height: 1.3,
+                          ),
+                        ),
+                        const SizedBox(height: 5),
+                        Row(
+                          children: [
+                            Icon(
+                              item.isVideo
+                                  ? CupertinoIcons.play_rectangle
+                                  : CupertinoIcons.music_note,
+                              size: 12,
+                              color: AppColors.primary.withOpacity(0.8),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              item.isVideo ? 'فيديو' : 'صوت',
+                              style: TextStyle(
+                                fontFamily: 'Tajawal',
+                                fontSize: 11,
+                                color: Colors.white.withOpacity(0.55),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // زر أدِر مجدداً
+                  GestureDetector(
+                    onTap: _onSpinPressed,
+                    child: Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: Colors.white.withOpacity(0.15),
+                        ),
+                      ),
+                      child: const Icon(
+                        CupertinoIcons.shuffle,
+                        color: Colors.white70,
+                        size: 18,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _defaultCardThumb() {
+    return Container(
+      width: 62,
+      height: 62,
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [AppColors.primary, Color(0xFF6A1B9A)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: const Icon(CupertinoIcons.music_note,
+          color: Colors.white, size: 26),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  MODEL — كوكب
+// ═══════════════════════════════════════════════════════════════
+class _Planet {
+  LocalMediaItem item;
+  final double orbitRadius;
+  final double baseAngle;
+  double size;
+  final Color color;
+  final double speed;
+  final Color ringColor;
+  String? thumbPath;
+
+  _Planet({
+    required this.item,
+    required this.orbitRadius,
+    required this.baseAngle,
+    required this.size,
+    required this.color,
+    required this.speed,
+    required this.ringColor,
+    this.thumbPath,
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  MODEL — نجمة
+// ═══════════════════════════════════════════════════════════════
+class _Star {
+  final double x, y, size, opacity, twinklePhase;
+  const _Star({
+    required this.x,
+    required this.y,
+    required this.size,
+    required this.opacity,
+    required this.twinklePhase,
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  PAINTERS
+// ═══════════════════════════════════════════════════════════════
+
+class _SpaceBackgroundPainter extends CustomPainter {
+  final List<_Star> stars;
+  final double progress;
+  final bool isSpinning;
+
+  const _SpaceBackgroundPainter({
+    required this.stars,
+    required this.progress,
+    required this.isSpinning,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // خلفية متدرجة عميقة
+    final bgPaint = Paint();
+    final rect = Offset.zero & size;
+    bgPaint.shader = const LinearGradient(
+      begin: Alignment.topCenter,
+      end: Alignment.bottomCenter,
+      colors: [
+        Color(0xFF000000),
+        Color(0xFF0A0015),
+        Color(0xFF050020),
+        Color(0xFF000000),
+      ],
+      stops: [0.0, 0.3, 0.7, 1.0],
+    ).createShader(rect);
+    canvas.drawRect(rect, bgPaint);
+
+    // رسم النجوم مع وميض
+    final starPaint = Paint()..style = PaintingStyle.fill;
+    for (final star in stars) {
+      final twinkle =
+          math.sin(progress * math.pi * 2 * 3 + star.twinklePhase) * 0.3;
+      final opacity = (star.opacity + twinkle).clamp(0.1, 1.0);
+      starPaint.color = Colors.white.withOpacity(opacity);
+      canvas.drawCircle(
+        Offset(star.x * size.width, star.y * size.height),
+        star.size,
+        starPaint,
+      );
+    }
+
+    // توهج مركزي عند الدوران
+    if (isSpinning) {
+      final glowPaint = Paint()
+        ..shader = RadialGradient(
+          colors: [
+            AppColors.primary.withOpacity(0.18),
+            const Color(0xFF6A1B9A).withOpacity(0.10),
+            Colors.transparent,
+          ],
+        ).createShader(
+          Rect.fromCircle(center: size.center(Offset.zero), radius: 200),
+        );
+      canvas.drawCircle(size.center(Offset.zero), 200, glowPaint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _SpaceBackgroundPainter old) =>
+      old.progress != progress || old.isSpinning != isSpinning;
+}
+
+class _OrbitRingPainter extends CustomPainter {
+  final double radius;
+  const _OrbitRingPainter({required this.radius});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = Colors.white.withOpacity(0.06)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0;
+    final center = Offset(size.width / 2, size.height / 2);
+    // إهليلجي
+    canvas.drawOval(
+      Rect.fromCenter(
+          center: center, width: radius * 2, height: radius * 0.8),
+      paint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _OrbitRingPainter old) => false;
+}
+
+class _VortexPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2
+      ..strokeCap = StrokeCap.round;
+
+    for (var i = 0; i < 4; i++) {
+      final opacity = (1.0 - i * 0.22).clamp(0.0, 1.0);
+      paint.color = AppColors.primary.withOpacity(opacity * 0.6);
+      final r = (size.width / 2) * (0.3 + i * 0.18);
+      canvas.drawArc(
+        Rect.fromCircle(center: center, radius: r),
+        i * math.pi * 0.5,
+        math.pi * 1.2,
+        false,
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _VortexPainter old) => false;
 }

@@ -24,7 +24,7 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _stopOnClose = false;
   String _downloadQuality = 'medium';
   String _downloadPath = '';
-  String _playerMode = PlayerModeNotifier.normal; // ✦ طريقة العرض
+String _playerMode = 'normal'; // ✦ طريقة العرض
 
   @override
   void initState() {
@@ -40,7 +40,7 @@ class _SettingsPageState extends State<SettingsPage> {
       _stopOnClose = prefs.getBool('stopOnClose') ?? false;
       _downloadQuality = prefs.getString('downloadQuality') ?? 'medium';
       _downloadPath = '${dir.path}/dndn';
-      _playerMode = PlayerModeNotifier.instance.value; // ✦ طريقة العرض
+      _playerMode = prefs.getString('playerMode') ?? 'normal'; // ✦ طريقة العرض
     });
   }
 
@@ -153,9 +153,9 @@ child: Transform.translate(
                   ]),
                   const SizedBox(height: 16),
 
-                  // ✦✦✦ قسم طريقة العرض ✦✦✦
-                  _settingsSection('طريقة العرض', [
-                    _displayModeTile(),
+                  // ✦✦✦ قسم مشغل الفيديو ✦✦✦
+                  _settingsSection('مشغل الفيديو', [
+                    _reelsTile(),
                   ]),
                   const SizedBox(height: 16),
 
@@ -363,149 +363,184 @@ child: Transform.translate(
     );
   }
 
-  // ✦✦✦ بطاقة طريقة العرض ✦✦✦
-  Widget _displayModeTile() {
+// ✦✦✦ بطاقة طريقة العرض ✦✦✦
+  Widget _reelsTile() {
     final isDark = context.isDark;
 
-    // خصائص كل وضع
-    final modes = [
-      _ModeOption(
-        id: PlayerModeNotifier.normal,
-        label: 'المشغل الاعتيادي',
-        icon: CupertinoIcons.play_circle_fill,
-        desc: 'تشغيل عادي مع قائمة الأغاني',
-        gradient: [const Color(0xFF1565C0), const Color(0xFF0D47A1)],
-      ),
-      _ModeOption(
-        id: PlayerModeNotifier.reels,
-        label: 'مشغل الريلز',
-        icon: CupertinoIcons.play_rectangle_fill,
-        desc: 'تجربة ريلز انستكرام وتيك توك ✦',
-        gradient: [AppColors.primary, AppColors.primaryDark],
-        isNew: false,
-      ),
-      _ModeOption(
-        id: PlayerModeNotifier.galactic,
-        label: 'الوضع العشوائي',
-        icon: CupertinoIcons.sparkles,
-        desc: 'اكتشف أغانيك كمجموعة شمسية 🪐',
-        gradient: [const Color(0xFF6A1B9A), const Color(0xFF4A148C)],
-        isNew: true,
-      ),
-    ];
+    String subtitle;
+    IconData icon;
+    switch (_playerMode) {
+      case 'reels':
+        subtitle = 'يشغّل الفيديوهات بتجربة ريلز انستكرام ✦';
+        icon = CupertinoIcons.play_rectangle_fill;
+        break;
+      case 'shuffle':
+        subtitle = 'الوضع العشوائي — تجربة موسيقية مستقبلية ✦';
+        icon = CupertinoIcons.shuffle;
+        break;
+      default:
+        subtitle = 'تشغيل الفيديو بالمشغل الاعتيادي';
+        icon = CupertinoIcons.play_circle_fill;
+    }
 
-    final current = modes.firstWhere(
-      (m) => m.id == _playerMode,
-      orElse: () => modes[0],
+    final isActive = _playerMode != 'normal';
+
+    return Container(
+      decoration: BoxDecoration(borderRadius: BorderRadius.circular(16)),
+      child: ListTile(
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        leading: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: isActive
+                  ? [AppColors.primary, AppColors.primaryDark]
+                  : [
+                      isDark ? AppColors.darkRedLight : AppColors.redLight,
+                      isDark ? AppColors.darkRedLight : AppColors.redLight,
+                    ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: isActive
+                ? [
+                    BoxShadow(
+                        color: AppColors.primary.withOpacity(0.35),
+                        blurRadius: 8,
+                        offset: const Offset(0, 3)),
+                  ]
+                : [],
+          ),
+          child: Icon(icon,
+              color: isActive ? Colors.white : AppColors.primary, size: 20),
+        ),
+        title: Row(
+          children: [
+            Text(
+              'طريقة العرض',
+              style: TextStyle(
+                fontFamily: 'Tajawal',
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: isDark ? AppColors.darkText : AppColors.textPrimary,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: AppColors.primary,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: const Text(
+                'جديد',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontFamily: 'Tajawal',
+                  fontSize: 9,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
+        subtitle: Text(
+          subtitle,
+          style: TextStyle(
+            fontFamily: 'Tajawal',
+            fontSize: 12,
+            color: isActive
+                ? AppColors.primary
+                : (isDark
+                    ? AppColors.darkTextSec
+                    : AppColors.textSecondary),
+          ),
+        ),
+        trailing: Icon(CupertinoIcons.chevron_left,
+            size: 16,
+            color: isDark ? AppColors.darkTextSec : AppColors.textSecondary),
+        onTap: () => _showPlayerModeSheet(),
+      ),
     );
+  }
 
-    return GestureDetector(
-      onTap: () => _showDisplayModeSheet(modes),
-      child: Container(
-        decoration: BoxDecoration(borderRadius: BorderRadius.circular(16)),
-        child: ListTile(
-          contentPadding:
-              const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-          leading: Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: current.gradient,
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.circular(12),
-              boxShadow: [
-                BoxShadow(
-                  color: current.gradient.first.withOpacity(0.40),
-                  blurRadius: 8,
-                  offset: const Offset(0, 3),
-                ),
-              ],
-            ),
-            child: Icon(current.icon, color: Colors.white, size: 20),
-          ),
-          title: Row(
-            children: [
-              Text(
-                'طريقة العرض',
-                style: TextStyle(
-                  fontFamily: 'Tajawal',
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: isDark ? AppColors.darkText : AppColors.textPrimary,
-                ),
-              ),
-              const SizedBox(width: 8),
-              if (current.isNew)
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF6A1B9A),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: const Text(
-                    'جديد',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontFamily: 'Tajawal',
-                      fontSize: 9,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-          subtitle: Text(
-            current.label,
-            style: TextStyle(
-              fontFamily: 'Tajawal',
-              fontSize: 12,
-              color: current.gradient.first,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                '${modes.indexOf(current) + 1}/${modes.length}',
-                style: TextStyle(
-                  fontFamily: 'Tajawal',
-                  fontSize: 11,
-                  color: isDark ? AppColors.darkTextSec : AppColors.textSecondary,
-                ),
-              ),
-              const SizedBox(width: 6),
-              Icon(
-                CupertinoIcons.chevron_right,
-                size: 14,
-                color: isDark ? AppColors.darkTextSec : AppColors.textSecondary,
-              ),
-            ],
-          ),
+  // ✦✦✦ Bottom Sheet لاختيار طريقة العرض ✦✦✦
+  void _showPlayerModeSheet() {
+    final isDark = context.isDark;
+    showCupertinoModalPopup(
+      context: context,
+      builder: (_) => CupertinoActionSheet(
+        title: const Text('طريقة العرض',
+            style: TextStyle(fontFamily: 'Tajawal', fontSize: 16)),
+        message: const Text('اختر طريقة عرض وتشغيل الأغاني',
+            style: TextStyle(fontFamily: 'Tajawal', fontSize: 13)),
+        actions: [
+          _modeAction('المشغل الاعتيادي',
+              'التشغيل الكلاسيكي المعتاد', 'normal',
+              CupertinoIcons.play_circle_fill),
+          _modeAction('مشغل الريلز',
+              'تجربة ريلز انستكرام وتيك توك', 'reels',
+              CupertinoIcons.play_rectangle_fill),
+          _modeAction('الوضع العشوائي',
+              'تجربة موسيقية مستقبلية بحلقة ثلاثية الأبعاد', 'shuffle',
+              CupertinoIcons.shuffle),
+        ],
+        cancelButton: CupertinoActionSheetAction(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('إلغاء',
+              style: TextStyle(fontFamily: 'Tajawal')),
         ),
       ),
     );
   }
 
-  void _showDisplayModeSheet(List<_ModeOption> modes) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _DisplayModeSheet(
-        modes: modes,
-        currentMode: _playerMode,
-        onSelect: (mode) {
-          setState(() => _playerMode = mode);
-          PlayerModeNotifier.instance.set(mode);
-        },
+  Widget _modeAction(
+      String title, String subtitle, String mode, IconData icon) {
+    final isSelected = _playerMode == mode;
+    return CupertinoActionSheetAction(
+      onPressed: () {
+        Navigator.pop(context);
+        setState(() => _playerMode = mode);
+        ReelsModeNotifier.instance.set(mode);
+      },
+      child: Row(
+        children: [
+          Icon(icon,
+              color: isSelected ? AppColors.primary : CupertinoColors.label,
+              size: 20),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(title,
+                    style: TextStyle(
+                        fontFamily: 'Tajawal',
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: isSelected
+                            ? AppColors.primary
+                            : CupertinoColors.label)),
+                Text(subtitle,
+                    style: const TextStyle(
+                        fontFamily: 'Tajawal',
+                        fontSize: 12,
+                        color: CupertinoColors.secondaryLabel)),
+              ],
+            ),
+          ),
+          if (isSelected)
+            const Icon(CupertinoIcons.checkmark_circle_fill,
+                color: AppColors.primary, size: 20),
+        ],
       ),
     );
   }
-
-  // ✦✦✦ بطاقة وضع الريلز القديمة — محذوفة وتم استبدالها ✦✦✦
 
   Widget _settingsSection(String title, List<Widget> children) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -690,355 +725,6 @@ child: Transform.translate(
               color:
                   isDark ? AppColors.darkTextSec : AppColors.textSecondary)),
       onTap: onTap,
-    );
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  MODEL — خيار طريقة العرض
-// ═══════════════════════════════════════════════════════════════
-class _ModeOption {
-  final String id;
-  final String label;
-  final IconData icon;
-  final String desc;
-  final List<Color> gradient;
-  final bool isNew;
-
-  const _ModeOption({
-    required this.id,
-    required this.label,
-    required this.icon,
-    required this.desc,
-    required this.gradient,
-    this.isNew = false,
-  });
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  SHEET — ورقة اختيار طريقة العرض
-// ═══════════════════════════════════════════════════════════════
-class _DisplayModeSheet extends StatefulWidget {
-  final List<_ModeOption> modes;
-  final String currentMode;
-  final ValueChanged<String> onSelect;
-
-  const _DisplayModeSheet({
-    required this.modes,
-    required this.currentMode,
-    required this.onSelect,
-  });
-
-  @override
-  State<_DisplayModeSheet> createState() => _DisplayModeSheetState();
-}
-
-class _DisplayModeSheetState extends State<_DisplayModeSheet>
-    with SingleTickerProviderStateMixin {
-  late String _selected;
-  late AnimationController _ctrl;
-  late List<Animation<double>> _anims;
-
-  @override
-  void initState() {
-    super.initState();
-    _selected = widget.currentMode;
-    _ctrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 600));
-    _anims = List.generate(
-      widget.modes.length,
-      (i) => CurvedAnimation(
-        parent: _ctrl,
-        curve: Interval(i * 0.15, 0.6 + i * 0.15, curve: Curves.easeOutBack),
-      ),
-    );
-    _ctrl.forward();
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    return Container(
-      margin: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: isDark ? AppColors.darkSurface : Colors.white,
-        borderRadius: BorderRadius.circular(28),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.25),
-            blurRadius: 40,
-            offset: const Offset(0, -8),
-          ),
-        ],
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // ── مقبض ──
-          const SizedBox(height: 12),
-          Container(
-            width: 40,
-            height: 4,
-            decoration: BoxDecoration(
-              color: isDark ? AppColors.darkDivider : AppColors.divider,
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          const SizedBox(height: 20),
-
-          // ── العنوان ──
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Row(
-              children: [
-                Container(
-                  width: 38,
-                  height: 38,
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [AppColors.primary, AppColors.primaryDark],
-                    ),
-                    borderRadius: BorderRadius.circular(11),
-                  ),
-                  child: const Icon(CupertinoIcons.tv_fill,
-                      color: Colors.white, size: 18),
-                ),
-                const SizedBox(width: 12),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'طريقة العرض',
-                      style: TextStyle(
-                        fontFamily: 'Tajawal',
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                        color: isDark
-                            ? AppColors.darkText
-                            : AppColors.textPrimary,
-                      ),
-                    ),
-                    Text(
-                      'اختر طريقة تشغيل الأغاني والمقاطع',
-                      style: TextStyle(
-                        fontFamily: 'Tajawal',
-                        fontSize: 12,
-                        color: isDark
-                            ? AppColors.darkTextSec
-                            : AppColors.textSecondary,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 20),
-          Divider(
-            height: 1,
-            color: isDark ? AppColors.darkDivider : AppColors.divider,
-            indent: 20,
-            endIndent: 20,
-          ),
-          const SizedBox(height: 16),
-
-          // ── بطاقات الأوضاع ──
-          ...List.generate(widget.modes.length, (i) {
-            final mode = widget.modes[i];
-            final isSelected = _selected == mode.id;
-
-            return AnimatedBuilder(
-              animation: _anims[i],
-              builder: (_, child) => Transform.translate(
-                offset: Offset(0, 30 * (1 - _anims[i].value)),
-                child: Opacity(opacity: _anims[i].value.clamp(0.0, 1.0), child: child),
-              ),
-              child: GestureDetector(
-                onTap: () {
-                  setState(() => _selected = mode.id);
-                  widget.onSelect(mode.id);
-                  Future.delayed(const Duration(milliseconds: 220),
-                      () => Navigator.pop(context));
-                },
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 280),
-                  curve: Curves.easeOutCubic,
-                  margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    gradient: isSelected
-                        ? LinearGradient(
-                            colors: [
-                              mode.gradient.first.withOpacity(0.15),
-                              mode.gradient.last.withOpacity(0.08),
-                            ],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          )
-                        : null,
-                    color: isSelected
-                        ? null
-                        : (isDark
-                            ? AppColors.darkSurfaceAlt
-                            : AppColors.surface),
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(
-                      color: isSelected
-                          ? mode.gradient.first.withOpacity(0.55)
-                          : (isDark
-                              ? AppColors.darkDivider
-                              : AppColors.divider),
-                      width: isSelected ? 1.5 : 0.8,
-                    ),
-                    boxShadow: isSelected
-                        ? [
-                            BoxShadow(
-                              color: mode.gradient.first.withOpacity(0.22),
-                              blurRadius: 16,
-                              offset: const Offset(0, 4),
-                            ),
-                          ]
-                        : [],
-                  ),
-                  child: Row(
-                    children: [
-                      // أيقونة
-                      AnimatedContainer(
-                        duration: const Duration(milliseconds: 280),
-                        width: 46,
-                        height: 46,
-                        decoration: BoxDecoration(
-                          gradient: isSelected
-                              ? LinearGradient(
-                                  colors: mode.gradient,
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
-                                )
-                              : null,
-                          color: isSelected ? null : (isDark ? AppColors.darkSurface : Colors.white),
-                          borderRadius: BorderRadius.circular(14),
-                          boxShadow: isSelected
-                              ? [
-                                  BoxShadow(
-                                    color: mode.gradient.first.withOpacity(0.4),
-                                    blurRadius: 10,
-                                    offset: const Offset(0, 3),
-                                  ),
-                                ]
-                              : [],
-                        ),
-                        child: Icon(
-                          mode.icon,
-                          color: isSelected
-                              ? Colors.white
-                              : mode.gradient.first,
-                          size: 22,
-                        ),
-                      ),
-                      const SizedBox(width: 14),
-
-                      // نص
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Text(
-                                  mode.label,
-                                  style: TextStyle(
-                                    fontFamily: 'Tajawal',
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w700,
-                                    color: isSelected
-                                        ? mode.gradient.first
-                                        : (isDark
-                                            ? AppColors.darkText
-                                            : AppColors.textPrimary),
-                                  ),
-                                ),
-                                if (mode.isNew) ...[
-                                  const SizedBox(width: 7),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 6, vertical: 2),
-                                    decoration: BoxDecoration(
-                                      gradient: LinearGradient(
-                                          colors: mode.gradient),
-                                      borderRadius: BorderRadius.circular(6),
-                                    ),
-                                    child: const Text(
-                                      'جديد ✨',
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontFamily: 'Tajawal',
-                                        fontSize: 9,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                            const SizedBox(height: 3),
-                            Text(
-                              mode.desc,
-                              style: TextStyle(
-                                fontFamily: 'Tajawal',
-                                fontSize: 12,
-                                color: isSelected
-                                    ? mode.gradient.first.withOpacity(0.75)
-                                    : (isDark
-                                        ? AppColors.darkTextSec
-                                        : AppColors.textSecondary),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-
-                      // علامة تحديد
-                      AnimatedContainer(
-                        duration: const Duration(milliseconds: 280),
-                        width: 24,
-                        height: 24,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          gradient: isSelected
-                              ? LinearGradient(colors: mode.gradient)
-                              : null,
-                          border: Border.all(
-                            color: isSelected
-                                ? Colors.transparent
-                                : (isDark
-                                    ? AppColors.darkDivider
-                                    : AppColors.divider),
-                            width: 1.5,
-                          ),
-                        ),
-                        child: isSelected
-                            ? const Icon(Icons.check,
-                                color: Colors.white, size: 14)
-                            : null,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          }),
-
-          const SizedBox(height: 28),
-        ],
-      ),
     );
   }
 }

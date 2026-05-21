@@ -32,60 +32,38 @@ import 'settings_page.dart';
 import 'package:flutter_dynamic_icon/flutter_dynamic_icon.dart';
 import 'package:audio_service/audio_service.dart';
 // ═══════════════════════════════════════════════════════════════
-//  PLAYER MODE NOTIFIER — طريقة العرض: normal | reels | galactic
+//  PLAYER MODE NOTIFIER — طريقة العرض (normal / reels / shuffle)
 // ═══════════════════════════════════════════════════════════════
-class PlayerModeNotifier extends ValueNotifier<String> {
-  PlayerModeNotifier._() : super('normal');
-  static final PlayerModeNotifier instance = PlayerModeNotifier._();
+class ReelsModeNotifier extends ValueNotifier<String> {
+  ReelsModeNotifier._() : super('normal');
+  static final ReelsModeNotifier instance = ReelsModeNotifier._();
 
-  static const String normal   = 'normal';
-  static const String reels    = 'reels';
-  static const String galactic = 'galactic';
+  // للتوافق مع الكود القديم — true إذا كان وضع الريلز
+  bool get isReels => value == 'reels';
+  bool get isShuffle => value == 'shuffle';
 
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
-    final saved = prefs.getString('playerMode') ?? normal;
-    value = saved;
-    await _syncAudioService(saved);
+    // نحاول قراءة القيمة الجديدة أولاً
+    final saved = prefs.getString('playerMode');
+    if (saved != null) {
+      value = saved;
+    } else {
+      // هجرة من القديم: إذا كان reelsMode = true نحوّله
+      final oldReels = prefs.getBool('reelsMode') ?? false;
+      value = oldReels ? 'reels' : 'normal';
+    }
   }
 
-  Future<void> set(String mode) async {
-    value = mode;
+  Future<void> set(String v) async {
+    value = v;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('playerMode', mode);
-    await _syncAudioService(mode);
-  }
-
-  Future<void> _syncAudioService(String mode) async {
-    if (mode == reels) {
+    await prefs.setString('playerMode', v);
+    if (v == 'reels') {
       await audioService.enableReelsMode();
     } else {
       await audioService.disableReelsMode();
     }
-  }
-
-  // للتوافق مع الكود القديم الذي يتحقق من reelsMode
-  bool get isReels    => value == reels;
-  bool get isGalactic => value == galactic;
-  bool get isNormal   => value == normal;
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  REELS MODE NOTIFIER — wrapper للتوافق مع الكود القديم
-// ═══════════════════════════════════════════════════════════════
-class ReelsModeNotifier extends ValueNotifier<bool> {
-  ReelsModeNotifier._() : super(false);
-  static final ReelsModeNotifier instance = ReelsModeNotifier._();
-
-  Future<void> load() async {
-    value = PlayerModeNotifier.instance.isReels;
-  }
-
-  Future<void> set(bool v) async {
-    await PlayerModeNotifier.instance.set(
-      v ? PlayerModeNotifier.reels : PlayerModeNotifier.normal,
-    );
-    value = v;
   }
 }
 
@@ -109,9 +87,11 @@ await AudioService.init(
   // تحميل الثيم المحفوظ أولاً
   await ThemeNotifier.instance.load();
 
-  // تحميل طريقة العرض المحفوظة وتطبيقها على audioService
-  await PlayerModeNotifier.instance.load();
+  // تحميل وضع الريلز المحفوظ وتطبيقه على audioService
   await ReelsModeNotifier.instance.load();
+  if (ReelsModeNotifier.instance.isReels) {
+    await audioService.enableReelsMode();
+  }
 
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,

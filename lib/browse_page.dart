@@ -335,7 +335,7 @@ class _GlobalDownloadBarController {
   void show(BuildContext context) {
     if (_overlayEntry != null) return;
     _overlayEntry = OverlayEntry(builder: (_) => _GlobalDownloadBarWidget(controller: this));
-    Overlay.of(context).insert(_overlayEntry!);
+    Overlay.of(context, rootOverlay: true).insert(_overlayEntry!);
   }
 }
 
@@ -4627,13 +4627,19 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
     );
   }
 
-  Future<void> _download(String videoId, String quality) async {
+Future<void> _download(String videoId, String quality) async {
     if (_isDownloading) return;
-    setState(() {
-      _isDownloading = true;
-      _downloadProgress = 0;
-      _downloadStatus = 'بدء التحميل...';
-    });
+    setState(() => _isDownloading = true);
+
+    final taskId = '${videoId}_${DateTime.now().millisecondsSinceEpoch}';
+    final shortTitle = widget.video.title.length > 35
+        ? '${widget.video.title.substring(0, 35)}...'
+        : widget.video.title;
+    final task = _DownloadTask(id: taskId, title: shortTitle);
+    final ctrl = _GlobalDownloadBarController.instance;
+
+    ctrl.show(context);
+    ctrl.addTask(task);
 
     try {
       final dir = await getApplicationDocumentsDirectory();
@@ -4662,50 +4668,46 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
         ),
       ));
 
-      if (mounted) setState(() => _downloadStatus = 'جاري التحميل...');
-
       await for (final msg in receivePort) {
         if (msg is Map) {
           if (msg.containsKey('progress')) {
             final p = (msg['progress'] as double).clamp(0.0, 1.0);
-            if (mounted) {
-              setState(() {
-                _downloadProgress = p;
-                _downloadStatus =
-                    'جاري التحميل... ${(p * 100).toStringAsFixed(0)}%';
-              });
-            }
+            ctrl.updateProgress(taskId, p);
+            if (mounted) setState(() => _downloadProgress = p);
           } else if (msg.containsKey('done')) {
             receivePort.close();
             final fileName = msg['done'] as String;
             final savedPath = '${musicDir.path}/$fileName';
             await ThumbnailManager.saveThumbnail(
                 savedPath, widget.video.thumbnails.mediumResUrl);
-            if (mounted) {
-              setState(() {
-                _isDownloading = false;
-                _downloadStatus = '';
-              });
-              _showGlassToast('تم التحميل: $fileName', type: _ToastType.success);
-              downloadCompleteNotifier.value = musicDir.path;
-            }
+            downloadCompleteNotifier.value = musicDir.path;
+            ctrl.completeTask(taskId);
+            if (mounted) setState(() {
+              _isDownloading = false;
+              _downloadProgress = 0;
+            });
             break;
           } else if (msg.containsKey('error')) {
             receivePort.close();
-            throw Exception(msg['error']);
+            ctrl.failTask(taskId, msg['error'] as String);
+            if (mounted) setState(() {
+              _isDownloading = false;
+              _downloadProgress = 0;
+            });
+            break;
           }
         }
       }
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isDownloading = false;
-          _downloadStatus = '';
-        });
-        _showGlassToast('فشل التحميل: $e', type: _ToastType.error);
-      }
+      ctrl.failTask(taskId, e.toString());
+      if (mounted) setState(() {
+        _isDownloading = false;
+        _downloadProgress = 0;
+      });
     }
   }
+
+   
 
   @override
   Widget build(BuildContext context) {
@@ -4802,38 +4804,8 @@ class _YouTubePlayerPageState extends State<YouTubePlayerPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               player,
-              if (_isDownloading)
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 16, vertical: 8),
-                  color: isDark ? AppColors.darkRedLight : AppColors.redLight,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        _downloadStatus,
-                        style: const TextStyle(
-                            fontSize: 12,
-                            color: AppColors.primary,
-                            fontWeight: FontWeight.w500,
-                            fontFamily: 'Tajawal'),
-                      ),
-                      const SizedBox(height: 4),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(4),
-                        child: LinearProgressIndicator(
-                          value: _downloadProgress > 0
-                              ? _downloadProgress
-                              : null,
-                          backgroundColor: isDark ? Colors.white.withValues(alpha: 0.10) : Colors.white,
-                          valueColor: const AlwaysStoppedAnimation(
-                              AppColors.primary),
-                          minHeight: 4,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+
+
               Expanded(
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.all(16),

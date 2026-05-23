@@ -2107,9 +2107,9 @@ audioService.playList(unfoldered, startIndex.clamp(0, unfoldered.length - 1));
 
   Widget _buildFolderCard(MusicFolder folder) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final count = folder.songPaths
-        .where((p) => _localItems.any((i) => i.path == p))
-        .length;
+final count = folder.songPaths
+    .where((p) => _localItems.any((i) => i.path.split('/').last == p))
+    .length;
 
     return GestureDetector(
       onTap: () => _openFolder(folder),
@@ -2602,8 +2602,8 @@ if (!_selectionMode) ...[
                 onTap: () {
                   // ✦ وضع الريلز — يفتح مشغل الريلز للفيديوهات فقط
                   if (ReelsModeNotifier.instance.value && item.isVideo) {
-                    final videoItems =
-                        _localItems.where((e) => e.isVideo).toList();
+final videoItems =
+    _unfolderiedItems.where((e) => e.isVideo).toList();
                     final videoIndex = videoItems.indexOf(item);
                     Navigator.of(context).push(
                       PageRouteBuilder(
@@ -5725,10 +5725,11 @@ class _ModernMusicCardState extends State<_ModernMusicCard>
         final angle = _flipAnim.value * 3.14159;
         final isFront = angle < 1.5708; // π/2
 
-        return GestureDetector(
-          onLongPress: _toggleFlip,
-          onTap: isFront ? widget.onTap : null,
-          child: Transform(
+return GestureDetector(
+  onLongPress: _toggleFlip,
+  onTap: isFront ? widget.onTap : null,
+  behavior: HitTestBehavior.opaque,
+  child: Transform(
             alignment: Alignment.center,
             transform: Matrix4.identity()
               ..setEntry(3, 2, 0.001)

@@ -31,7 +31,6 @@ import 'browse_page.dart';
 import 'settings_page.dart';
 import 'package:flutter_dynamic_icon/flutter_dynamic_icon.dart';
 import 'package:audio_service/audio_service.dart';
-import 'audio_effects_page.dart';
 // ═══════════════════════════════════════════════════════════════
 //  REELS MODE NOTIFIER — مشاركة حالة وضع الريلز (محفوظ ومزامَن)
 // ═══════════════════════════════════════════════════════════════
@@ -1049,7 +1048,8 @@ class Mustami3App extends StatelessWidget {
 
 // Global nav index notifier
 final ValueNotifier<int> _navIndexNotifier = ValueNotifier(0);
-
+// Scroll-to-top callback — يُنفَّذ عند الضغط على تبويب استمع وهو محدد مسبقاً
+VoidCallback? listenScrollToTopCallback;
 // ─────────────────────────────────────────────
 //  MAIN SHELL — Bottom Nav + Mini Player
 // ─────────────────────────────────────────────
@@ -1247,6 +1247,9 @@ class _GlassNavBarState extends State<_GlassNavBar>
     _stopScaling();
     if (_navIndexNotifier.value != _pendingNavIndex) {
       _navIndexNotifier.value = _pendingNavIndex;
+    } else if (_pendingNavIndex == 0) {
+      // المستخدم ضغط على "استمع" وهو بالفعل فيه → ارجع للأعلى
+      listenScrollToTopCallback?.call();
     }
   }
 
@@ -3355,7 +3358,6 @@ WidgetsBinding.instance.addPostFrameCallback((_) {
                   Icon(CupertinoIcons.speedometer,
                       color: isDark ? Colors.white70 : Colors.black54, size: 18),
                   const SizedBox(width: 8),
-                  
                   Text('سرعة التشغيل',
                       style: TextStyle(
                         color: isDark ? Colors.white70 : Colors.black54,
@@ -3550,28 +3552,6 @@ WidgetsBinding.instance.addPostFrameCallback((_) {
                         },
                       ),
                       const SizedBox(width: 8),
-                      // زر المؤثرات الصوتية
-GestureDetector(
-  onTap: () => showModalBottomSheet(
-    context: context,
-    isScrollControlled: true,
-    backgroundColor: Colors.transparent,
-    builder: (_) => const AudioEffectsPage(),
-  ),
-  child: Container(
-    padding: const EdgeInsets.all(9),
-    decoration: BoxDecoration(
-      color: controlBg,
-      borderRadius: BorderRadius.circular(12),
-      border: Border.all(
-        color: isDark ? Colors.white.withOpacity(0.10) : Colors.black.withOpacity(0.08),
-        width: 0.5,
-      ),
-    ),
-    child: Icon(Icons.graphic_eq_rounded, color: textColor, size: 20),
-  ),
-),
-const SizedBox(width: 8),
                       // زر الإعدادات
                       GestureDetector(
                         onTap: () => _showSettingsSheet(context),

@@ -120,6 +120,8 @@ List<LocalMediaItem> get _unfolderiedItems {
       .toList();
 }
 
+  final ScrollController _scrollController = ScrollController();
+
   @override
   void initState() {
     super.initState();
@@ -131,6 +133,16 @@ List<LocalMediaItem> get _unfolderiedItems {
     _loadFiles();
     _loadFolders();
     downloadCompleteNotifier.addListener(_onDownloadComplete);
+    // ربط callback الصعود للأعلى
+    listenScrollToTopCallback = () {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          0,
+          duration: const Duration(milliseconds: 400),
+          curve: Curves.easeOutCubic,
+        );
+      }
+    };
   }
 
   void _onDownloadComplete() {
@@ -146,6 +158,8 @@ List<LocalMediaItem> get _unfolderiedItems {
     _searchCtrl.dispose();
     _searchFocus.dispose();
     _selectionBarCtrl.dispose();
+    _scrollController.dispose();
+    listenScrollToTopCallback = null;
     super.dispose();
   }
 
@@ -1319,6 +1333,7 @@ audioService.playList(unfoldered, startIndex.clamp(0, unfoldered.length - 1));
       body: Stack(
         children: [
           CustomScrollView(
+  controller: _scrollController,
             slivers: [
               _buildHeader(),
               if (_folders.isNotEmpty) _buildFoldersSection(),
@@ -2524,8 +2539,13 @@ if (!_selectionMode) ...[
     }
 
     // ── إظهار الأغاني غير المنقولة لأي مجلد فقط ──
-    final allFoldered = _folders.expand((f) => f.songPaths).toSet();
-    final unfoldered = _filteredItems.where((i) => !allFoldered.contains(i.path)).toList();
+    final allFoldered = _folders
+        .expand((f) => f.songPaths)
+        .map((p) => p.split('/').last)
+        .toSet();
+    final unfoldered = _filteredItems
+        .where((i) => !allFoldered.contains(i.path.split('/').last))
+        .toList();
     final displayed = unfoldered;
 
     if (displayed.isEmpty) {

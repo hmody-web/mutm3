@@ -2233,7 +2233,7 @@ audioService.playList(unfoldered, startIndex.clamp(0, unfoldered.length - 1));
 
   void _openFolder(MusicFolder folder) {
     final items = _localItems
-        .where((i) => folder.songPaths.contains(i.path))
+        .where((i) => folder.songPaths.contains(i.path.split('/').last)) // ✅
         .toList();
     Navigator.push(
       context,
@@ -2657,8 +2657,9 @@ audioService.playList(
                 onDelete: () => _deleteItem(item),
                 onSave: () => _saveToGallery(item),
                 onMove: (folder) async {
-                  if (!folder.songPaths.contains(item.path)) {
-                    folder.songPaths.add(item.path);
+  final fileName = item.path.split('/').last;
+  if (!folder.songPaths.contains(fileName)) {
+    folder.songPaths.add(fileName);
                     await _saveFolders();
                     setState(() {});
                     if (mounted) {
@@ -2999,7 +3000,7 @@ void initState() {
       try {
         await File(path).delete();
         ThumbnailManager.clearCache(path);
-        widget.folder.songPaths.remove(path);
+        widget.folder.songPaths.remove(path.split('/').last); // ✅
       } catch (_) {}
     }
     setState(() {
@@ -3033,7 +3034,7 @@ Future<void> _saveViewMode(bool value) async {
 
   void _removeFromFolder(LocalMediaItem item) {
     setState(() {
-      widget.folder.songPaths.remove(item.path);
+      widget.folder.songPaths.remove(item.path.split('/').last); // ✅
       _items = _items.where((i) => i.path != item.path).toList();
     });
     widget.onUpdate();
@@ -3063,7 +3064,7 @@ Future<void> _saveViewMode(bool value) async {
     try {
       await File(item.path).delete();
       ThumbnailManager.clearCache(item.path);
-      widget.folder.songPaths.remove(item.path);
+      widget.folder.songPaths.remove(item.path.split('/').last); // ✅
       setState(() {
         _items = _items.where((i) => i.path != item.path).toList();
       });

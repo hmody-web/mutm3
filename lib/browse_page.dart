@@ -355,8 +355,9 @@ class _GlobalDownloadBarWidgetState extends State<_GlobalDownloadBarWidget>
   @override
   void initState() {
     super.initState();
-    _slideCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 380));
-    _slideAnim = Tween<Offset>(begin: const Offset(0, 1), end: Offset.zero)
+    _slideCtrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 380));
+    _slideAnim = Tween<Offset>(begin: const Offset(0, 1.5), end: Offset.zero)
         .animate(CurvedAnimation(parent: _slideCtrl, curve: Curves.easeOutCubic));
     _slideCtrl.forward();
   }
@@ -374,12 +375,31 @@ class _GlobalDownloadBarWidgetState extends State<_GlobalDownloadBarWidget>
     if (tasks.isEmpty) return const SizedBox.shrink();
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bottomPad = MediaQuery.of(context).padding.bottom + 80;
+    final bottomPad = MediaQuery.of(context).padding.bottom + 12;
     final activeIdx = ctrl._activeIndex.clamp(0, tasks.length - 1);
     final activeTask = tasks[activeIdx];
+    final bgCount = tasks.length - 1; // عدد التحميلات الخلفية
+
+    if (ctrl._minimized) {
+      // ── الزر المصغر ──
+      return Positioned(
+        bottom: bottomPad + 70,
+        right: 16,
+        child: SlideTransition(
+          position: _slideAnim,
+          child: Directionality(
+            textDirection: TextDirection.rtl,
+            child: GestureDetector(
+              onTap: () => setState(() => ctrl._minimized = false),
+              child: _buildMiniBubble(activeTask, isDark, tasks.length),
+            ),
+          ),
+        ),
+      );
+    }
 
     return Positioned(
-      bottom: bottomPad,
+      bottom: bottomPad + 70,
       left: 16,
       right: 16,
       child: SlideTransition(
@@ -389,20 +409,21 @@ class _GlobalDownloadBarWidgetState extends State<_GlobalDownloadBarWidget>
           child: Stack(
             clipBehavior: Clip.none,
             children: [
-              // تبويبات الخلفية (التحميلات الأخرى)
-              for (int i = tasks.length - 1; i >= 0; i--)
-                if (i != activeIdx)
-                  Positioned(
-                    top: -(tasks.length - 1 - i) * 6.0 - 6,
-                    left: (tasks.length - 1 - i) * 3.0,
-                    right: (tasks.length - 1 - i) * 3.0,
-                    child: _buildCard(tasks[i], isDark, isBackground: true),
+              // ── تبويبات الخلفية ──
+              for (int i = 0; i < bgCount; i++)
+                Positioned(
+                  top: -(bgCount - i) * 7.0,
+                  left: (bgCount - i) * 4.0,
+                  right: (bgCount - i) * 4.0,
+                  child: _buildTabCard(
+                    tasks[(activeIdx + i + 1) % tasks.length],
+                    isDark,
+                    depth: bgCount - i,
                   ),
-              // البطاقة الرئيسية
-              _buildCard(activeTask, isDark, isBackground: false, onHide: () {
-                setState(() {
-                  ctrl._minimized = !ctrl._minimized;
-                });
+                ),
+              // ── البطاقة الرئيسية ──
+              _buildMainCard(activeTask, isDark, onHide: () {
+                setState(() => ctrl._minimized = true);
               }),
             ],
           ),
@@ -411,21 +432,154 @@ class _GlobalDownloadBarWidgetState extends State<_GlobalDownloadBarWidget>
     );
   }
 
-  Widget _buildCard(_DownloadTask task, bool isDark, {bool isBackground = false, VoidCallback? onHide}) {
-    final bg = isDark
-        ? Colors.white.withOpacity(0.07)
-        : Colors.white.withOpacity(0.92);
-    final borderColor = task.done
-        ? const Color(0xFF30D158).withOpacity(0.55)
-        : task.error
-            ? const Color(0xFFFF3B30).withOpacity(0.55)
-            : AppColors.primary.withOpacity(0.45);
+  // ── فقاعة مصغرة عند الإخفاء ──
+  Widget _buildMiniBubble(_DownloadTask task, bool isDark, int total) {
     final glowColor = task.done
         ? const Color(0xFF30D158)
         : task.error
             ? const Color(0xFFFF3B30)
             : AppColors.primary;
 
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(30),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: isDark
+                ? Colors.white.withOpacity(0.08)
+                : Colors.white.withOpacity(0.92),
+            borderRadius: BorderRadius.circular(30),
+            border: Border.all(color: glowColor.withOpacity(0.5), width: 1.2),
+            boxShadow: [
+              BoxShadow(
+                  color: glowColor.withOpacity(0.25),
+                  blurRadius: 16,
+                  spreadRadius: 0),
+              BoxShadow(
+                  color: Colors.black.withOpacity(0.3),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4)),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                  value: task.progress > 0 ? task.progress : null,
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation(glowColor),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '${(task.progress * 100).toStringAsFixed(0)}%',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontFamily: 'Tajawal',
+                  fontWeight: FontWeight.w700,
+                  color: glowColor,
+                ),
+              ),
+              if (total > 1) ...[
+                const SizedBox(width: 6),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: glowColor.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '$total',
+                    style: TextStyle(
+                        fontSize: 11,
+                        fontFamily: 'Tajawal',
+                        fontWeight: FontWeight.w700,
+                        color: glowColor),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── بطاقة التبويب الخلفية ──
+  Widget _buildTabCard(_DownloadTask task, bool isDark, {required int depth}) {
+    final glowColor = task.done
+        ? const Color(0xFF30D158)
+        : task.error
+            ? const Color(0xFFFF3B30)
+            : AppColors.primary;
+    final opacity = (1.0 - depth * 0.15).clamp(0.3, 0.7);
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(18),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+        child: Container(
+          height: 36,
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          decoration: BoxDecoration(
+            color: isDark
+                ? Colors.white.withOpacity(0.04 * opacity)
+                : Colors.white.withOpacity(0.75 * opacity),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+                color: glowColor.withOpacity(0.3 * opacity), width: 1.0),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 3,
+                height: 16,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(3),
+                  color: glowColor.withOpacity(opacity),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: LinearProgressIndicator(
+                  value: task.progress > 0 ? task.progress : null,
+                  backgroundColor: Colors.transparent,
+                  valueColor:
+                      AlwaysStoppedAnimation(glowColor.withOpacity(opacity)),
+                  minHeight: 3,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '${(task.progress * 100).toStringAsFixed(0)}%',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontFamily: 'Tajawal',
+                  fontWeight: FontWeight.w600,
+                  color: glowColor.withOpacity(opacity),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── البطاقة الرئيسية ──
+  Widget _buildMainCard(_DownloadTask task, bool isDark,
+      {required VoidCallback onHide}) {
+    final glowColor = task.done
+        ? const Color(0xFF30D158)
+        : task.error
+            ? const Color(0xFFFF3B30)
+            : AppColors.primary;
     final pct = (task.progress * 100).toStringAsFixed(0);
 
     return ClipRRect(
@@ -435,144 +589,159 @@ class _GlobalDownloadBarWidgetState extends State<_GlobalDownloadBarWidget>
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           decoration: BoxDecoration(
-            color: bg,
+            color: isDark
+                ? Colors.white.withOpacity(0.08)
+                : Colors.white.withOpacity(0.92),
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: borderColor, width: 1.2),
+            border: Border.all(color: glowColor.withOpacity(0.5), width: 1.2),
             boxShadow: [
-              BoxShadow(color: glowColor.withOpacity(0.18), blurRadius: 20, spreadRadius: 0),
-              BoxShadow(color: Colors.black.withOpacity(0.28), blurRadius: 14, offset: const Offset(0, 5)),
+              BoxShadow(
+                  color: glowColor.withOpacity(0.2),
+                  blurRadius: 24,
+                  spreadRadius: 0),
+              BoxShadow(
+                  color: Colors.black.withOpacity(0.3),
+                  blurRadius: 16,
+                  offset: const Offset(0, 6)),
             ],
           ),
-          child: isBackground
-              ? SizedBox(height: 8, child: LinearProgressIndicator(
-                  value: task.progress,
-                  backgroundColor: Colors.transparent,
-                  valueColor: AlwaysStoppedAnimation(glowColor.withOpacity(0.4)),
-                  minHeight: 4,
-                ))
-              : Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  // ── الخط الجانبي ──
+                  Container(
+                    width: 3,
+                    height: 38,
+                    margin: const EdgeInsets.only(left: 10),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(3),
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [glowColor, glowColor.withOpacity(0.3)],
+                      ),
+                    ),
+                  ),
+                  // ── الأيقونة / دائرة التحميل ──
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: glowColor.withOpacity(0.15),
+                    ),
+                    child: task.done
+                        ? const Icon(Icons.check_circle_rounded,
+                            color: Color(0xFF30D158), size: 22)
+                        : task.error
+                            ? const Icon(Icons.cancel_rounded,
+                                color: Color(0xFFFF3B30), size: 22)
+                            : Padding(
+                                padding: const EdgeInsets.all(8),
+                                child: CircularProgressIndicator(
+                                  value: task.progress > 0 ? task.progress : null,
+                                  strokeWidth: 2.2,
+                                  valueColor: AlwaysStoppedAnimation(glowColor),
+                                ),
+                              ),
+                  ),
+                  const SizedBox(width: 10),
+                  // ── النصوص ──
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Container(
-                          width: 3,
-                          height: 36,
-                          margin: const EdgeInsets.only(left: 10),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(3),
-                            gradient: LinearGradient(
-                              begin: Alignment.topCenter,
-                              end: Alignment.bottomCenter,
-                              colors: [glowColor, glowColor.withOpacity(0.3)],
-                            ),
-                          ),
-                        ),
-                        Container(
-                          width: 36,
-                          height: 36,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: glowColor.withOpacity(0.15),
-                          ),
-                          child: task.done
-                              ? const Icon(Icons.check_circle_rounded, color: Color(0xFF30D158), size: 20)
+                        Text(
+                          task.done
+                              ? 'تم التحميل'
                               : task.error
-                                  ? const Icon(Icons.cancel_rounded, color: Color(0xFFFF3B30), size: 20)
-                                  : SizedBox(
-                                      width: 20,
-                                      height: 20,
-                                      child: CircularProgressIndicator(
-                                        value: task.progress > 0 ? task.progress : null,
-                                        strokeWidth: 2.2,
-                                        valueColor: AlwaysStoppedAnimation(glowColor),
-                                      ),
-                                    ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                task.done ? 'تم التحميل' : task.error ? 'فشل التحميل' : 'جاري التحميل...',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontFamily: 'Tajawal',
-                                  fontWeight: FontWeight.w600,
-                                  color: glowColor,
-                                  letterSpacing: 0.3,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                task.error ? (task.errorMsg ?? '') : task.title,
-                                style: const TextStyle(
-                                  fontSize: 13,
-                                  fontFamily: 'Tajawal',
-                                  fontWeight: FontWeight.w700,
-                                  color: Colors.white,
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ],
+                                  ? 'فشل التحميل'
+                                  : 'جاري التحميل...',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontFamily: 'Tajawal',
+                            fontWeight: FontWeight.w600,
+                            color: glowColor,
+                            letterSpacing: 0.3,
                           ),
                         ),
-                        if (!task.done && !task.error) ...[
-                          Text(
-                            '$pct%',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontFamily: 'Tajawal',
-                              fontWeight: FontWeight.w700,
-                              color: glowColor,
-                            ),
+                        const SizedBox(height: 2),
+                        Text(
+                          task.error ? (task.errorMsg ?? '') : task.title,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontFamily: 'Tajawal',
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white,
                           ),
-                          const SizedBox(width: 8),
-                        ],
-                        if (onHide != null && !task.done && !task.error)
-                          GestureDetector(
-                            onTap: onHide,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                              decoration: BoxDecoration(
-                                color: glowColor.withOpacity(0.12),
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(color: glowColor.withOpacity(0.3), width: 0.8),
-                              ),
-                              child: Text(
-                                'إخفاء',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontFamily: 'Tajawal',
-                                  fontWeight: FontWeight.w600,
-                                  color: glowColor,
-                                ),
-                              ),
-                            ),
-                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ],
                     ),
-                    if (!task.done && !task.error) ...[
-                      const SizedBox(height: 10),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(6),
-                        child: LinearProgressIndicator(
-                          value: task.progress > 0 ? task.progress : null,
-                          backgroundColor: Colors.white.withOpacity(0.1),
-                          valueColor: AlwaysStoppedAnimation(glowColor),
-                          minHeight: 5,
+                  ),
+                  // ── النسبة ──
+                  if (!task.done && !task.error) ...[
+                    Text(
+                      '$pct%',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontFamily: 'Tajawal',
+                        fontWeight: FontWeight.w700,
+                        color: glowColor,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  // ── زر الإخفاء ──
+                  if (!task.done && !task.error)
+                    GestureDetector(
+                      onTap: onHide,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: glowColor.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                              color: glowColor.withOpacity(0.35), width: 0.8),
+                        ),
+                        child: Text(
+                          'إخفاء',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontFamily: 'Tajawal',
+                            fontWeight: FontWeight.w600,
+                            color: glowColor,
+                          ),
                         ),
                       ),
-                    ],
-                  ],
+                    ),
+                ],
+              ),
+              // ── شريط التقدم ──
+              if (!task.done && !task.error) ...[
+                const SizedBox(height: 10),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: LinearProgressIndicator(
+                    value: task.progress > 0 ? task.progress : null,
+                    backgroundColor: Colors.white.withOpacity(0.1),
+                    valueColor: AlwaysStoppedAnimation(glowColor),
+                    minHeight: 5,
+                  ),
                 ),
+              ],
+            ],
+          ),
         ),
       ),
     );
   }
 }
+
 // دالة static للاستخدام من Widgets بدون _toastOverlay
 void _showGlassToastStatic(
   BuildContext context,
@@ -3956,37 +4125,47 @@ Padding(
 // ─────────────────────────────────────────────
 //  VIDEO RESULT CARD
 // ─────────────────────────────────────────────
-class _VideoResultCard extends StatelessWidget {
+class _VideoResultCard extends StatefulWidget {
   final Video video;
   final VoidCallback onTap;
 
   const _VideoResultCard({required this.video, required this.onTap});
 
+  @override
+  State<_VideoResultCard> createState() => _VideoResultCardState();
+}
+
+class _VideoResultCardState extends State<_VideoResultCard> {
+  bool _isDownloading = false;
+
   void _quickDownload(BuildContext context) {
-    final videoId = video.id.value;
+    final videoId = widget.video.id.value;
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (_) => _DownloadSheet(
         videoId: videoId,
-        videoTitle: video.title,
-        thumbnailUrl: video.thumbnails.mediumResUrl,
+        videoTitle: widget.video.title,
+        thumbnailUrl: widget.video.thumbnails.mediumResUrl,
         onDownload: (id, quality) =>
             _startQuickDownload(context, id, quality),
       ),
     );
   }
 
-Future<void> _startQuickDownload(
+  Future<void> _startQuickDownload(
     BuildContext context,
     String id,
     String quality,
   ) async {
+    if (_isDownloading) return;
+    if (mounted) setState(() => _isDownloading = true);
+
     final taskId = '${id}_${DateTime.now().millisecondsSinceEpoch}';
-    final shortTitle = video.title.length > 35
-        ? '${video.title.substring(0, 35)}...'
-        : video.title;
+    final shortTitle = widget.video.title.length > 35
+        ? '${widget.video.title.substring(0, 35)}...'
+        : widget.video.title;
     final task = _DownloadTask(id: taskId, title: shortTitle);
     final ctrl = _GlobalDownloadBarController.instance;
 
@@ -4001,8 +4180,9 @@ Future<void> _startQuickDownload(
       final musicDir = Directory('${dir.path}/dndn');
       if (!await musicDir.exists()) await musicDir.create(recursive: true);
 
-      final safeTitle =
-          video.title.replaceAll(RegExp(r'[^\w\s\u0600-\u06FF\-]'), '').trim();
+      final safeTitle = widget.video.title
+          .replaceAll(RegExp(r'[^\w\s\u0600-\u06FF\-]'), '')
+          .trim();
       final receivePort = ReceivePort();
 
       String? directUrl;
@@ -4031,21 +4211,25 @@ Future<void> _startQuickDownload(
             final fileName = msg['done'] as String;
             final savedPath = '${musicDir.path}/$fileName';
             await ThumbnailManager.saveThumbnail(
-                savedPath, video.thumbnails.mediumResUrl);
+                savedPath, widget.video.thumbnails.mediumResUrl);
             downloadCompleteNotifier.value = musicDir.path;
             ctrl.completeTask(taskId);
+            if (mounted) setState(() => _isDownloading = false);
             break;
           } else if (msg.containsKey('error')) {
             receivePort.close();
             ctrl.failTask(taskId, msg['error'] as String);
+            if (mounted) setState(() => _isDownloading = false);
             break;
           }
         }
       }
     } catch (e) {
       ctrl.failTask(taskId, e.toString());
+      if (mounted) setState(() => _isDownloading = false);
     }
   }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -4056,14 +4240,14 @@ Future<void> _startQuickDownload(
     final divider = isDark ? AppColors.darkDivider : AppColors.divider;
     final redLight = isDark ? AppColors.darkRedLight : AppColors.redLight;
 
-    final thumb = video.thumbnails.mediumResUrl;
-    final duration = video.duration;
+    final thumb = widget.video.thumbnails.mediumResUrl;
+    final duration = widget.video.duration;
     final durationStr = duration != null
         ? '${duration.inMinutes}:${(duration.inSeconds % 60).toString().padLeft(2, '0')}'
         : '';
 
     return GestureDetector(
-      onTap: onTap,
+      onTap: widget.onTap,
       child: Container(
         decoration: BoxDecoration(
           color: surface,
@@ -4091,8 +4275,7 @@ Future<void> _startQuickDownload(
                           width: 120,
                           height: 80,
                           color: surfaceAlt,
-                          child: Icon(CupertinoIcons.photo,
-                              color: textSecondary),
+                          child: Icon(CupertinoIcons.photo, color: textSecondary),
                         ),
                         errorWidget: (_, __, ___) => Container(
                           width: 120,
@@ -4128,7 +4311,7 @@ Future<void> _startQuickDownload(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          video.title,
+                          widget.video.title,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           textDirection: TextDirection.rtl,
@@ -4141,13 +4324,14 @@ Future<void> _startQuickDownload(
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          video.author,
+                          widget.video.author,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           textDirection: TextDirection.rtl,
                           style: TextStyle(
                               fontFamily: 'Tajawal',
-                              fontSize: 11, color: textSecondary),
+                              fontSize: 11,
+                              color: textSecondary),
                         ),
                         const SizedBox(height: 6),
                         Container(
@@ -4178,8 +4362,9 @@ Future<void> _startQuickDownload(
                 ),
               ],
             ),
+            // ── زر التحميل السفلي ──
             GestureDetector(
-              onTap: () => _quickDownload(context),
+              onTap: _isDownloading ? null : () => _quickDownload(context),
               child: Container(
                 width: double.infinity,
                 padding:
@@ -4191,18 +4376,33 @@ Future<void> _startQuickDownload(
                     bottomRight: Radius.circular(16),
                   ),
                 ),
-                child: const Row(
+                child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(CupertinoIcons.cloud_download_fill,
-                        size: 14, color: AppColors.primary),
-                    SizedBox(width: 6),
-                    Text('تحميل فيديو',
-                        style: TextStyle(
-                            fontSize: 12,
-                            fontFamily: 'Tajawal',
-                            color: AppColors.primary,
-                            fontWeight: FontWeight.w600)),
+                    if (_isDownloading)
+                      const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor:
+                              AlwaysStoppedAnimation(AppColors.primary),
+                        ),
+                      )
+                    else
+                      const Icon(CupertinoIcons.cloud_download_fill,
+                          size: 14, color: AppColors.primary),
+                    const SizedBox(width: 6),
+                    Text(
+                      _isDownloading ? 'جاري التحميل...' : 'تحميل فيديو',
+                      style: TextStyle(
+                          fontSize: 12,
+                          fontFamily: 'Tajawal',
+                          color: _isDownloading
+                              ? AppColors.primary.withValues(alpha: 0.5)
+                              : AppColors.primary,
+                          fontWeight: FontWeight.w600),
+                    ),
                   ],
                 ),
               ),

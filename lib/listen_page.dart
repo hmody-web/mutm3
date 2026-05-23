@@ -2278,7 +2278,7 @@ if (!_selectionMode) ...[
                   decoration: BoxDecoration(
                     gradient: _reelsMode
                         ? const LinearGradient(
-                            colors: [Color(0xFFE040FB), Color(0xFFFF4081)],
+                            colors: [Color.fromARGB(255, 224, 19, 19), Color.fromARGB(255, 206, 37, 37)],
                             begin: Alignment.topLeft,
                             end: Alignment.bottomRight,
                           )
@@ -2296,7 +2296,7 @@ if (!_selectionMode) ...[
                     boxShadow: _reelsMode
                         ? [
                             BoxShadow(
-                              color: const Color(0xFFE040FB).withValues(alpha: 0.40),
+                              color: const Color.fromARGB(255, 251, 64, 64).withValues(alpha: 0.40),
                               blurRadius: 10,
                               offset: const Offset(0, 3),
                             ),
@@ -5715,18 +5715,18 @@ class _ModernMusicCardState extends State<_ModernMusicCard>
                   Colors.white.withOpacity(0.03),
                 ],
               )
-            : LinearGradient(
+: const LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
                 colors: [
-                  Color.fromARGB(255, 236, 236, 236).withOpacity(0.7),
-                  Color.fromARGB(255, 236, 236, 236).withOpacity(0.7),
+                  Color(0xFFFFF5F5),
+                  Color(0xFFFFF5F5),
                 ],
               ),
         border: Border.all(
           color: context.isDark
               ? Colors.white.withOpacity(0.06)
-              : Color(0xFF69383D).withOpacity(0.1),
+              : const Color(0xFFE8272A).withOpacity(0.15),
           width: 1,
         ),
 boxShadow: context.isDark
@@ -5745,15 +5745,15 @@ boxShadow: context.isDark
       ]
     : [
         // الوضع الفاتح
-        BoxShadow(
-          color: Colors.black.withValues(alpha: 0.08),
-          blurRadius: 18,
-          offset: const Offset(0, 8),
+BoxShadow(
+          color: const Color(0xFFE8272A).withValues(alpha: 0.10),
+          blurRadius: 20,
+          offset: const Offset(0, 6),
         ),
         BoxShadow(
-          color: Colors.white.withValues(alpha: 0.50),
+          color: Colors.black.withValues(alpha: 0.05),
           blurRadius: 12,
-          offset: const Offset(0, -2),
+          offset: const Offset(0, 4),
         ),
       ],
       ),

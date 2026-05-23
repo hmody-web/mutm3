@@ -1502,20 +1502,19 @@ _slideAnim =
   }
 
   void _openFullPlayer() {
-    Navigator.of(context).push(
-      PageRouteBuilder(
-        pageBuilder: (_, __, ___) => const FullScreenPlayer(),
-        transitionsBuilder: (_, animation, __, child) {
-          return SlideTransition(
-            position: Tween<Offset>(
-                    begin: const Offset(0, 1), end: Offset.zero)
-                .animate(CurvedAnimation(
-                    parent: animation, curve: Curves.easeOutCubic)),
-            child: child,
-          );
-        },
-      ),
-    );
+Navigator.of(context).push(
+  PageRouteBuilder(
+    pageBuilder: (_, __, ___) => const FullScreenPlayer(),
+    transitionDuration: const Duration(milliseconds: 280),
+    reverseTransitionDuration: const Duration(milliseconds: 220),
+    transitionsBuilder: (_, animation, __, child) {
+      return FadeTransition(
+        opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
+        child: child,
+      );
+    },
+  ),
+);
   }
 
   @override
@@ -3160,13 +3159,13 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
     if (!mounted) return;
 
     // تأجيل setState إلى ما بعد الـ frame الحالي لتجنب إعادة البناء أثناء callback
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      setState(() {
-        _isSwitching = true;
-        _thumbPath = null;
-        _videoInitialized = false;
-      });
+WidgetsBinding.instance.addPostFrameCallback((_) {
+  if (!mounted) return;
+  // تحديث بدون rebuild فوري لتجنب التقطع
+  _isSwitching = true;
+  _thumbPath = null;
+  _videoInitialized = false;
+  if (mounted) setState(() {});
 
       final item = audioService.currentItem;
       if (item == null) {
@@ -3797,7 +3796,7 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
             const SizedBox(height: 10),
 
             // ── أزرار التشغيل (للصوت فقط — الفيديو له تحكم داخلي) ──
-            if (!_isSwitching && !(_videoInitialized && _videoCtrl != null)) ...[
+            if (!_isSwitching && audioService.currentItem?.isVideo != true) ...[
               // شريط تقدم الصوت
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 24),

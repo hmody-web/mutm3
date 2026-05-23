@@ -3461,6 +3461,22 @@ class _SearchPageState extends State<SearchPage> {
     super.dispose();
   }
 
+/// يكتشف لغة النص تلقائياً ويُرجع كود اللغة المناسب
+  String _detectLanguage(String text) {
+    // عربي
+    if (RegExp(r'[\u0600-\u06FF]').hasMatch(text)) return 'ar';
+    // صيني
+    if (RegExp(r'[\u4E00-\u9FFF]').hasMatch(text)) return 'zh-CN';
+    // ياباني
+    if (RegExp(r'[\u3040-\u30FF]').hasMatch(text)) return 'ja';
+    // كوري
+    if (RegExp(r'[\uAC00-\uD7AF]').hasMatch(text)) return 'ko';
+    // روسي / سيريلي
+    if (RegExp(r'[\u0400-\u04FF]').hasMatch(text)) return 'ru';
+    // افتراضي إنجليزي
+    return 'en';
+  }
+
   Future<void> _fetchSuggestions(String query) async {
     if (query.trim().length < 2) {
       setState(() { _suggestions = []; _showSuggestions = false; });
@@ -3469,14 +3485,15 @@ class _SearchPageState extends State<SearchPage> {
     setState(() { _loadingSuggestions = true; _showSuggestions = true; });
     try {
       final encoded = Uri.encodeComponent(query);
+      final lang = _detectLanguage(query); // اكتشاف اللغة تلقائياً
       final url = Uri.parse(
-        'https://suggestqueries.google.com/complete/search?client=youtube&ds=yt&q=$encoded&hl=ar',
+        'https://suggestqueries.google.com/complete/search?client=youtube&ds=yt&q=$encoded&hl=$lang',
       );
       final response = await http.get(url).timeout(const Duration(seconds: 5));
       if (!mounted) return;
       if (response.statusCode == 200) {
-        final raw = response.body;
-        // الرد بصيغة JSONP: window.google.ac.h([...])
+        // فك ترميز UTF-8 بشكل صريح لدعم العربية وجميع اللغات
+        final raw = utf8.decode(response.bodyBytes);
         final match = RegExp(r'\[\[(.+)\]\]').firstMatch(raw);
         if (match != null) {
           final innerJson = '[${match.group(0)}]';
@@ -3494,15 +3511,13 @@ class _SearchPageState extends State<SearchPage> {
     } catch (_) {}
     if (mounted) setState(() { _loadingSuggestions = false; });
   }
-
   void _onSearchChanged(String value) {
     _debounce?.cancel();
     if (value.trim().isEmpty) {
       setState(() { _suggestions = []; _showSuggestions = false; _loadingSuggestions = false; });
       return;
     }
-    _debounce = Timer(const Duration(milliseconds: 350), () => _fetchSuggestions(value));
-  }
+_debounce = Timer(const Duration(milliseconds: 100), () => _fetchSuggestions(value));  }
 
   void _selectSuggestion(String suggestion) {
     _searchController.text = suggestion;

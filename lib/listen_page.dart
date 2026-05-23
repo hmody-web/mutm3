@@ -31,7 +31,7 @@ import 'listen_page.dart';
 import 'browse_page.dart';
 import 'settings_page.dart';
 import 'reels_player.dart';
-import 'shuffle_player.dart';
+
 
 // ═══════════════════════════════════════════════════════════
 //  MODEL — مجلد موسيقى
@@ -88,7 +88,7 @@ class _ListenPageState extends State<ListenPage> with TickerProviderStateMixin {
   bool _selectionMode = false;
 
   // ── نوع العرض ──
-  bool _gridView = false;
+  bool _gridView = false; // سيُحمَّل من SharedPreferences
   final Set<String> _selectedPaths = {};
 
   // ── أنيميشن وضع التحديد ──
@@ -116,6 +116,7 @@ class _ListenPageState extends State<ListenPage> with TickerProviderStateMixin {
         vsync: this, duration: const Duration(milliseconds: 320));
     _selectionBarAnim = CurvedAnimation(
         parent: _selectionBarCtrl, curve: Curves.easeOutBack);
+    _loadViewMode();
     _loadFiles();
     _loadFolders();
     downloadCompleteNotifier.addListener(_onDownloadComplete);
@@ -153,6 +154,17 @@ class _ListenPageState extends State<ListenPage> with TickerProviderStateMixin {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(
         'music_folders', jsonEncode(_folders.map((f) => f.toJson()).toList()));
+  }
+
+  Future<void> _loadViewMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getBool('listen_grid_view') ?? false;
+    if (mounted) setState(() => _gridView = saved);
+  }
+
+  Future<void> _saveViewMode(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('listen_grid_view', value);
   }
 
   Future<void> _loadFiles() async {
@@ -1267,7 +1279,8 @@ Future<void> _saveToGalleryIOS(LocalMediaItem item, File sourceFile) async {
   }
 
   void _playAll(int startIndex) {
-    audioService.playList(_localItems, startIndex);
+    final unfoldered = _unfolderiedItems;
+audioService.playList(unfoldered, startIndex.clamp(0, unfoldered.length - 1));
   }
 
   @override
@@ -2247,7 +2260,11 @@ Future<void> _saveToGalleryIOS(LocalMediaItem item, File sourceFile) async {
 
             if (!_selectionMode)
               GestureDetector(
-                onTap: () => setState(() => _gridView = !_gridView),
+                onTap: () {
+  final newVal = !_gridView;
+  setState(() => _gridView = newVal);
+  _saveViewMode(newVal);
+},
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 280),
                   curve: Curves.easeOutCubic,
@@ -2471,17 +2488,7 @@ Future<void> _saveToGalleryIOS(LocalMediaItem item, File sourceFile) async {
                 folders: _folders,
                 onTap: () {
                   // ✦ وضع الريلز — يفتح مشغل الريلز للفيديوهات فقط
-                  if (ReelsModeNotifier.instance.isReels && item.isVideo) {
-                    } else if (ReelsModeNotifier.instance.isShuffle) {
-                    Navigator.of(context).push(
-                      PageRouteBuilder(
-                        pageBuilder: (_, __, ___) => ShufflePlayerPage(
-                          items: _localItems,
-                        ),
-                        transitionsBuilder: (_, anim, __, child) =>
-                            FadeTransition(opacity: anim, child: child),
-                      ),
-                    );
+                  if (ReelsModeNotifier.instance.value && item.isVideo) {
                     final videoItems =
                         _localItems.where((e) => e.isVideo).toList();
                     final videoIndex = videoItems.indexOf(item);
@@ -2823,7 +2830,7 @@ class _FolderDetailPageState extends State<FolderDetailPage>
   late Animation<double> _selectionBarAnim;
 
   @override
-  void initState() {
+void initState() {
     super.initState();
     _items = List.from(widget.items);
     audioService.currentIndex.addListener(_onIndexChange);
@@ -2831,6 +2838,7 @@ class _FolderDetailPageState extends State<FolderDetailPage>
         vsync: this, duration: const Duration(milliseconds: 320));
     _selectionBarAnim = CurvedAnimation(
         parent: _selectionBarCtrl, curve: Curves.easeOutBack);
+    _loadViewMode();
   }
 
   void _onIndexChange() {
@@ -2850,6 +2858,7 @@ class _FolderDetailPageState extends State<FolderDetailPage>
   }
 
   Future<void> _deleteSelected() async {
+    
     if (_selectedPaths.isEmpty) return;
     final count = _selectedPaths.length;
     final confirm = await showCupertinoDialog<bool>(
@@ -2886,7 +2895,16 @@ class _FolderDetailPageState extends State<FolderDetailPage>
     _selectionBarCtrl.reverse();
     widget.onUpdate();
   }
+Future<void> _loadViewMode() async {
+  final prefs = await SharedPreferences.getInstance();
+  final saved = prefs.getBool('listen_grid_view') ?? false;
+  if (mounted) setState(() => _gridView = saved);
+}
 
+Future<void> _saveViewMode(bool value) async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setBool('listen_grid_view', value);
+}
   @override
   void dispose() {
     audioService.currentIndex.removeListener(_onIndexChange);
@@ -3071,7 +3089,11 @@ class _FolderDetailPageState extends State<FolderDetailPage>
                             const Spacer(),
                             // ── زر تبديل العرض ──
                             GestureDetector(
-                              onTap: () => setState(() => _gridView = !_gridView),
+                              onTap: () {
+  final newVal = !_gridView;
+  setState(() => _gridView = newVal);
+  _saveViewMode(newVal);
+},
                               child: AnimatedContainer(
                                 duration: const Duration(milliseconds: 280),
                                 curve: Curves.easeOutCubic,
@@ -3850,7 +3872,7 @@ class _FolderItemTileState extends State<_FolderItemTile>
                   }
 
                   // ✦ وضع الريلز — يفتح مشغل الريلز للفيديوهات فقط
-                  if (ReelsModeNotifier.instance.isReels && widget.item.isVideo) {
+                  if (ReelsModeNotifier.instance.value && widget.item.isVideo) {
                     final videoItems = widget.allItems.where((e) => e.isVideo).toList();
                     final videoIndex = videoItems.indexOf(widget.item);
                     Navigator.of(context).push(
@@ -4933,7 +4955,7 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
                   }
 
                   // ✦ وضع الريلز — يفتح مشغل الريلز للفيديوهات فقط
-                  if (ReelsModeNotifier.instance.isReels && widget.item.isVideo) {
+                  if (ReelsModeNotifier.instance.value && widget.item.isVideo) {
                     final videoItems = widget.allItems.where((e) => e.isVideo).toList();
                     final videoIndex = videoItems.indexOf(widget.item);
                     Navigator.of(context).push(

@@ -32,34 +32,24 @@ import 'settings_page.dart';
 import 'package:flutter_dynamic_icon/flutter_dynamic_icon.dart';
 import 'package:audio_service/audio_service.dart';
 // ═══════════════════════════════════════════════════════════════
-//  PLAYER MODE NOTIFIER — طريقة العرض (normal / reels / shuffle)
+//  REELS MODE NOTIFIER — مشاركة حالة وضع الريلز (محفوظ ومزامَن)
 // ═══════════════════════════════════════════════════════════════
-class ReelsModeNotifier extends ValueNotifier<String> {
-  ReelsModeNotifier._() : super('normal');
+class ReelsModeNotifier extends ValueNotifier<bool> {
+  ReelsModeNotifier._() : super(false);
   static final ReelsModeNotifier instance = ReelsModeNotifier._();
-
-  // للتوافق مع الكود القديم — true إذا كان وضع الريلز
-  bool get isReels => value == 'reels';
-  bool get isShuffle => value == 'shuffle';
 
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
-    // نحاول قراءة القيمة الجديدة أولاً
-    final saved = prefs.getString('playerMode');
-    if (saved != null) {
-      value = saved;
-    } else {
-      // هجرة من القديم: إذا كان reelsMode = true نحوّله
-      final oldReels = prefs.getBool('reelsMode') ?? false;
-      value = oldReels ? 'reels' : 'normal';
-    }
+    // الافتراضي false — وضع الريلز مطفي عند أول تشغيل
+    value = prefs.getBool('reelsMode') ?? false;
   }
 
-  Future<void> set(String v) async {
+  Future<void> set(bool v) async {
     value = v;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('playerMode', v);
-    if (v == 'reels') {
+    await prefs.setBool('reelsMode', v);
+    // مزامنة مباشرة مع audioService
+    if (v) {
       await audioService.enableReelsMode();
     } else {
       await audioService.disableReelsMode();
@@ -89,7 +79,7 @@ await AudioService.init(
 
   // تحميل وضع الريلز المحفوظ وتطبيقه على audioService
   await ReelsModeNotifier.instance.load();
-  if (ReelsModeNotifier.instance.isReels) {
+  if (ReelsModeNotifier.instance.value) {
     await audioService.enableReelsMode();
   }
 
@@ -827,6 +817,11 @@ class _MustAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
 _MustAudioHandler(this._svc) {
     // مزامنة حالة المشغل مع الإشعار
     _svc.player.playbackEventStream.listen(_broadcastState);
+    _svc.player.positionStream.listen((pos) {
+      if (pos == Duration.zero && _svc.player.playing) {
+        _broadcastState(_svc.player.playbackEvent);
+      }
+    });
     // ★ تحديث duration في الإشعار عند جهوزيتها
     _svc.player.durationStream.listen((duration) {
       if (duration != null && mediaItem.value != null) {

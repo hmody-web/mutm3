@@ -24,7 +24,7 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _stopOnClose = false;
   String _downloadQuality = 'medium';
   String _downloadPath = '';
-String _playerMode = 'normal'; // ✦ طريقة العرض
+  bool _reelsMode = false; // ✦ وضع الريلز
 
   @override
   void initState() {
@@ -40,7 +40,7 @@ String _playerMode = 'normal'; // ✦ طريقة العرض
       _stopOnClose = prefs.getBool('stopOnClose') ?? false;
       _downloadQuality = prefs.getString('downloadQuality') ?? 'medium';
       _downloadPath = '${dir.path}/dndn';
-      _playerMode = prefs.getString('playerMode') ?? 'normal'; // ✦ طريقة العرض
+      _reelsMode = prefs.getBool('reelsMode') ?? false; // ✦ وضع الريلز
     });
   }
 
@@ -363,39 +363,21 @@ child: Transform.translate(
     );
   }
 
-// ✦✦✦ بطاقة طريقة العرض ✦✦✦
+  // ✦✦✦ بطاقة وضع الريلز الخاصة ✦✦✦
   Widget _reelsTile() {
     final isDark = context.isDark;
-
-    String subtitle;
-    IconData icon;
-    switch (_playerMode) {
-      case 'reels':
-        subtitle = 'يشغّل الفيديوهات بتجربة ريلز انستكرام ✦';
-        icon = CupertinoIcons.play_rectangle_fill;
-        break;
-      case 'shuffle':
-        subtitle = 'الوضع العشوائي — تجربة موسيقية مستقبلية ✦';
-        icon = CupertinoIcons.shuffle;
-        break;
-      default:
-        subtitle = 'تشغيل الفيديو بالمشغل الاعتيادي';
-        icon = CupertinoIcons.play_circle_fill;
-    }
-
-    final isActive = _playerMode != 'normal';
-
     return Container(
-      decoration: BoxDecoration(borderRadius: BorderRadius.circular(16)),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+      ),
       child: ListTile(
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
         leading: Container(
           width: 40,
           height: 40,
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              colors: isActive
+              colors: _reelsMode
                   ? [AppColors.primary, AppColors.primaryDark]
                   : [
                       isDark ? AppColors.darkRedLight : AppColors.redLight,
@@ -405,7 +387,7 @@ child: Transform.translate(
               end: Alignment.bottomRight,
             ),
             borderRadius: BorderRadius.circular(12),
-            boxShadow: isActive
+            boxShadow: _reelsMode
                 ? [
                     BoxShadow(
                         color: AppColors.primary.withOpacity(0.35),
@@ -414,13 +396,16 @@ child: Transform.translate(
                   ]
                 : [],
           ),
-          child: Icon(icon,
-              color: isActive ? Colors.white : AppColors.primary, size: 20),
+          child: Icon(
+            CupertinoIcons.play_rectangle_fill,
+            color: _reelsMode ? Colors.white : AppColors.primary,
+            size: 20,
+          ),
         ),
         title: Row(
           children: [
             Text(
-              'طريقة العرض',
+              'وضع الريلز',
               style: TextStyle(
                 fontFamily: 'Tajawal',
                 fontSize: 14,
@@ -429,6 +414,7 @@ child: Transform.translate(
               ),
             ),
             const SizedBox(width: 8),
+            // بادج "جديد"
             Container(
               padding:
                   const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -449,95 +435,25 @@ child: Transform.translate(
           ],
         ),
         subtitle: Text(
-          subtitle,
+          _reelsMode
+              ? 'يشغّل الفيديوهات بتجربة ريلز انستكرام ✦'
+              : 'تشغيل الفيديو بأسلوب ريلز انستكرام وتيك توك',
           style: TextStyle(
             fontFamily: 'Tajawal',
             fontSize: 12,
-            color: isActive
+            color: _reelsMode
                 ? AppColors.primary
-                : (isDark
-                    ? AppColors.darkTextSec
-                    : AppColors.textSecondary),
+                : (isDark ? AppColors.darkTextSec : AppColors.textSecondary),
           ),
         ),
-        trailing: Icon(CupertinoIcons.chevron_left,
-            size: 16,
-            color: isDark ? AppColors.darkTextSec : AppColors.textSecondary),
-        onTap: () => _showPlayerModeSheet(),
-      ),
-    );
-  }
-
-  // ✦✦✦ Bottom Sheet لاختيار طريقة العرض ✦✦✦
-  void _showPlayerModeSheet() {
-    final isDark = context.isDark;
-    showCupertinoModalPopup(
-      context: context,
-      builder: (_) => CupertinoActionSheet(
-        title: const Text('طريقة العرض',
-            style: TextStyle(fontFamily: 'Tajawal', fontSize: 16)),
-        message: const Text('اختر طريقة عرض وتشغيل الأغاني',
-            style: TextStyle(fontFamily: 'Tajawal', fontSize: 13)),
-        actions: [
-          _modeAction('المشغل الاعتيادي',
-              'التشغيل الكلاسيكي المعتاد', 'normal',
-              CupertinoIcons.play_circle_fill),
-          _modeAction('مشغل الريلز',
-              'تجربة ريلز انستكرام وتيك توك', 'reels',
-              CupertinoIcons.play_rectangle_fill),
-          _modeAction('الوضع العشوائي',
-              'تجربة موسيقية مستقبلية بحلقة ثلاثية الأبعاد', 'shuffle',
-              CupertinoIcons.shuffle),
-        ],
-        cancelButton: CupertinoActionSheetAction(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('إلغاء',
-              style: TextStyle(fontFamily: 'Tajawal')),
+        trailing: CupertinoSwitch(
+          value: _reelsMode,
+          activeColor: AppColors.primary,
+          onChanged: (v) {
+            setState(() => _reelsMode = v);
+            ReelsModeNotifier.instance.set(v);
+          },
         ),
-      ),
-    );
-  }
-
-  Widget _modeAction(
-      String title, String subtitle, String mode, IconData icon) {
-    final isSelected = _playerMode == mode;
-    return CupertinoActionSheetAction(
-      onPressed: () {
-        Navigator.pop(context);
-        setState(() => _playerMode = mode);
-        ReelsModeNotifier.instance.set(mode);
-      },
-      child: Row(
-        children: [
-          Icon(icon,
-              color: isSelected ? AppColors.primary : CupertinoColors.label,
-              size: 20),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(title,
-                    style: TextStyle(
-                        fontFamily: 'Tajawal',
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        color: isSelected
-                            ? AppColors.primary
-                            : CupertinoColors.label)),
-                Text(subtitle,
-                    style: const TextStyle(
-                        fontFamily: 'Tajawal',
-                        fontSize: 12,
-                        color: CupertinoColors.secondaryLabel)),
-              ],
-            ),
-          ),
-          if (isSelected)
-            const Icon(CupertinoIcons.checkmark_circle_fill,
-                color: AppColors.primary, size: 20),
-        ],
       ),
     );
   }

@@ -1501,21 +1501,26 @@ _slideAnim =
     super.dispose();
   }
 
-  void _openFullPlayer() {
-Navigator.of(context).push(
-  PageRouteBuilder(
-    pageBuilder: (_, __, ___) => const FullScreenPlayer(),
-    transitionDuration: const Duration(milliseconds: 280),
-    reverseTransitionDuration: const Duration(milliseconds: 220),
-    transitionsBuilder: (_, animation, __, child) {
-      return FadeTransition(
-        opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
-        child: child,
-      );
-    },
-  ),
-);
-  }
+void _openFullPlayer() {
+  Navigator.of(context).push(
+    PageRouteBuilder(
+      opaque: true,
+      pageBuilder: (_, __, ___) => const FullScreenPlayer(),
+      transitionDuration: const Duration(milliseconds: 320),
+      reverseTransitionDuration: const Duration(milliseconds: 260),
+      transitionsBuilder: (_, animation, __, child) {
+        final slide = Tween<Offset>(
+          begin: const Offset(0, 1),
+          end: Offset.zero,
+        ).animate(CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOutCubic,
+        ));
+        return SlideTransition(position: slide, child: child);
+      },
+    ),
+  );
+}
 
   @override
   Widget build(BuildContext context) {
@@ -3092,15 +3097,19 @@ class _FullScreenPlayerState extends State<FullScreenPlayer> {
   StreamSubscription? _positionSub;
   StreamSubscription? _playingSub;
 
-  @override
-  void initState() {
-    super.initState();
+@override
+void initState() {
+  super.initState();
+  audioService.currentIndex.addListener(_onTrackChange);
+  audioService.videoLoopSignal.addListener(_onVideoLoop);
+  // تأجيل التحميل الثقيل لما بعد أول frame — يضمن ظهور الشاشة فوراً
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    if (!mounted) return;
     final item = audioService.currentItem;
     if (item != null && !item.isVideo) _loadThumb();
     _initVideoIfNeeded();
-    audioService.currentIndex.addListener(_onTrackChange);
-    audioService.videoLoopSignal.addListener(_onVideoLoop);
-  }
+  });
+}
 
   @override
   void dispose() {

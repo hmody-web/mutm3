@@ -40,7 +40,7 @@ class MusicFolder {
   final String id;
   String name;
   Color color;
-  List<String> songPaths; // مسارات الأغاني داخل المجلد
+  List<String> songPaths; // يخزّن اسم الملف فقط (مثال: song.mp3)
 
   MusicFolder({
     required this.id,
@@ -62,6 +62,11 @@ class MusicFolder {
         color: Color(json['color']),
         songPaths: List<String>.from(json['songPaths'] ?? []),
       );
+
+  // تحويل اسم الملف إلى مسار كامل
+  static String toFileName(String pathOrName) {
+    return pathOrName.split('/').last;
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -105,10 +110,15 @@ class _ListenPageState extends State<ListenPage> with TickerProviderStateMixin {
   }
 
   // الأغاني غير المصنّفة في أي مجلد
-  List<LocalMediaItem> get _unfolderiedItems {
-    final allFoldered = _folders.expand((f) => f.songPaths).toSet();
-    return _localItems.where((i) => !allFoldered.contains(i.path)).toList();
-  }
+List<LocalMediaItem> get _unfolderiedItems {
+  final allFoldered = _folders
+      .expand((f) => f.songPaths)
+      .map((p) => p.split('/').last)
+      .toSet();
+  return _localItems
+      .where((i) => !allFoldered.contains(i.path.split('/').last))
+      .toList();
+}
 
   @override
   void initState() {
@@ -140,16 +150,32 @@ class _ListenPageState extends State<ListenPage> with TickerProviderStateMixin {
   }
 
   // ─── تحميل/حفظ المجلدات ───
-  Future<void> _loadFolders() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('music_folders');
-    if (raw != null) {
-      final List<dynamic> list = jsonDecode(raw);
-      setState(() {
-        _folders = list.map((e) => MusicFolder.fromJson(e)).toList();
-      });
+Future<void> _loadFolders() async {
+  final prefs = await SharedPreferences.getInstance();
+  final raw = prefs.getString('music_folders');
+  if (raw != null) {
+    final List<dynamic> list = jsonDecode(raw);
+    final folders = list.map((e) => MusicFolder.fromJson(e)).toList();
+
+    // ── Migration: تحويل المسارات القديمة إلى أسماء ملفات ──
+    bool needsSave = false;
+    for (final folder in folders) {
+      final migrated = folder.songPaths
+          .map((p) => p.split('/').last)
+          .toSet()
+          .toList();
+      if (migrated.join() != folder.songPaths.join()) {
+        folder.songPaths
+          ..clear()
+          ..addAll(migrated);
+        needsSave = true;
+      }
     }
+
+    setState(() => _folders = folders);
+    if (needsSave) await _saveFolders();
   }
+}
 
   Future<void> _saveFolders() async {
     final prefs = await SharedPreferences.getInstance();
@@ -936,30 +962,27 @@ Future<void> _loadViewMode() async {
       ),
     );
 
-    if (chosen != null) {
-      // ── نقل حقيقي: إزالة من جميع المجلدات الأخرى أولاً ──
-      for (final path in _selectedPaths) {
-        // إزالة من أي مجلد آخر قد يحتوي عليها
-        for (final folder in _folders) {
-          if (folder.id != chosen.id) {
-            folder.songPaths.remove(path);
-          }
-        }
-        // إضافة للمجلد المختار إن لم تكن موجودة
-        if (!chosen.songPaths.contains(path)) {
-          chosen.songPaths.add(path);
-        }
+if (chosen != null) {
+  for (final path in _selectedPaths) {
+    final fileName = path.split('/').last; // ← اسم الملف فقط
+    for (final folder in _folders) {
+      if (folder.id != chosen.id) {
+        folder.songPaths.remove(fileName);
       }
-      setState(() {
-        _selectedPaths.clear();
-        _selectionMode = false;
-      });
-      _selectionBarCtrl.reverse();
-      await _saveFolders();
-      // تحديث قائمة الملفات لإخفاء المنقولة من قسم "جميع الأغاني"
-      setState(() {});
-      _showSnack('✅ تم نقل العناصر إلى "${chosen.name}"');
     }
+    if (!chosen.songPaths.contains(fileName)) {
+      chosen.songPaths.add(fileName);
+    }
+  }
+  setState(() {
+    _selectedPaths.clear();
+    _selectionMode = false;
+  });
+  _selectionBarCtrl.reverse();
+  await _saveFolders();
+  setState(() {});
+  _showSnack('✅ تم نقل العناصر إلى "${chosen.name}"');
+}
   }
 
   // ─── حذف المحدد ───
@@ -985,16 +1008,16 @@ Future<void> _loadViewMode() async {
       ),
     );
     if (confirm != true) return;
-    for (final path in _selectedPaths) {
-      try {
-        await File(path).delete();
-        ThumbnailManager.clearCache(path);
-        // إزالته من جميع المجلدات
-        for (final folder in _folders) {
-          folder.songPaths.remove(path);
-        }
-      } catch (_) {}
+for (final path in _selectedPaths) {
+  try {
+    await File(path).delete();
+    ThumbnailManager.clearCache(path);
+    final fileName = path.split('/').last; // ← اسم الملف فقط
+    for (final folder in _folders) {
+      folder.songPaths.remove(fileName);
     }
+  } catch (_) {}
+}
     await _saveFolders();
     setState(() {
       _selectedPaths.clear();
@@ -1039,11 +1062,12 @@ Future<void> _loadViewMode() async {
     );
     if (confirm != true) return;
     try {
-      await File(item.path).delete();
-      ThumbnailManager.clearCache(item.path);
-      for (final folder in _folders) {
-        folder.songPaths.remove(item.path);
-      }
+await File(item.path).delete();
+ThumbnailManager.clearCache(item.path);
+final fileName = item.path.split('/').last; // ← اسم الملف فقط
+for (final folder in _folders) {
+  folder.songPaths.remove(fileName);
+}
       await _saveFolders();
       // ── إزالة فورية من القائمة بدون إعادة تحميل ──
       if (mounted) {
@@ -2385,7 +2409,7 @@ if (!_selectionMode) ...[
                       key: ValueKey(_gridView),
                       size: 17,
                       color: _gridView
-    ? (isDark ? Colors.white : const Color(0xFF83494F))
+    ? (isDark ? Colors.white : const Color.fromARGB(255, 255, 255, 255))
     : context.appTextSec,
                     ),
                   ),
@@ -5862,18 +5886,20 @@ BoxShadow(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                      height: 1.45,
-                      fontWeight: FontWeight.w700,
-                      fontFamily: 'Tajawal',
-                    ),
-                  ),
+Text(
+  title,
+  maxLines: 2,
+  overflow: TextOverflow.ellipsis,
+  style: TextStyle(
+    color: Theme.of(context).brightness == Brightness.dark
+        ? Colors.white
+        : const Color(0xFF2D2D2D),
+    fontSize: 14,
+    height: 1.45,
+    fontWeight: FontWeight.w700,
+    fontFamily: 'Tajawal',
+  ),
+),
 
                   const SizedBox(height: 10),
 

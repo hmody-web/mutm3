@@ -4891,7 +4891,7 @@ Future<void> _download(String videoId, String quality) async {
 // ─────────────────────────────────────────────
 //  ★ Download Bottom Sheet — Video Only
 // ─────────────────────────────────────────────
-class _DownloadSheet extends StatelessWidget {
+class _DownloadSheet extends StatefulWidget {
   final String videoId;
   final String videoTitle;
   final String thumbnailUrl;
@@ -4905,6 +4905,42 @@ class _DownloadSheet extends StatelessWidget {
   });
 
   @override
+  State<_DownloadSheet> createState() => _DownloadSheetState();
+}
+
+class _DownloadSheetState extends State<_DownloadSheet> {
+  bool _isVideoCached = false;
+  bool _isCached = false;
+  Timer? _pollTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkCache();
+    // يفحص الكاش كل ثانية تلقائياً
+    _pollTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) _checkCache();
+    });
+  }
+
+  void _checkCache() {
+    final videoCached = ManifestCache.isVideoCached(widget.videoId);
+    final cached = ManifestCache.isCached(widget.videoId);
+    if (videoCached != _isVideoCached || cached != _isCached) {
+      setState(() {
+        _isVideoCached = videoCached;
+        _isCached = cached;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final bg = isDark ? AppColors.darkSurface : AppColors.background;
@@ -4913,8 +4949,8 @@ class _DownloadSheet extends StatelessWidget {
     final divider = isDark ? AppColors.darkDivider : AppColors.divider;
     final redLight = isDark ? AppColors.darkRedLight : AppColors.redLight;
 
-    final isCached = ManifestCache.isCached(videoId);
-    final isVideoCached = ManifestCache.isVideoCached(videoId);
+    final isCached = _isCached;
+    final isVideoCached = _isVideoCached;
 
     return Container(
       padding: EdgeInsets.only(
@@ -4942,7 +4978,7 @@ class _DownloadSheet extends StatelessWidget {
           ClipRRect(
             borderRadius: BorderRadius.circular(12),
             child: CachedNetworkImage(
-              imageUrl: thumbnailUrl,
+              imageUrl: widget.thumbnailUrl,
               width: 120,
               height: 80,
               fit: BoxFit.cover,
@@ -4966,7 +5002,7 @@ class _DownloadSheet extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            videoTitle,
+            widget.videoTitle,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
@@ -5004,14 +5040,15 @@ class _DownloadSheet extends StatelessWidget {
             context: context,
             icon: '📹',
             label: 'فيديو جودة عالية',
-            subtitle: 'أعلى جودة متاحة',
+            subtitle: isVideoCached ? 'جاهز للتحميل الفوري ⚡' : 'جاري التحضير...',
             isDark: isDark,
             textPrimary: textPrimary,
             textSecondary: textSecondary,
             divider: divider,
+            enabled: isVideoCached,
             onTap: () {
               Navigator.pop(context);
-              onDownload(videoId, 'high');
+              widget.onDownload(widget.videoId, 'high');
             },
           ),
           const SizedBox(height: 10),
@@ -5019,14 +5056,15 @@ class _DownloadSheet extends StatelessWidget {
             context: context,
             icon: '📱',
             label: 'فيديو 360p',
-            subtitle: 'جودة متوسطة - حجم أصغر',
+            subtitle: isCached ? 'جاهز للتحميل ⚡' : 'جاري التحضير...',
             isDark: isDark,
             textPrimary: textPrimary,
             textSecondary: textSecondary,
             divider: divider,
+            enabled: isCached,
             onTap: () {
               Navigator.pop(context);
-              onDownload(videoId, 'medium');
+              widget.onDownload(widget.videoId, 'medium');
             },
           ),
         ],
@@ -5044,21 +5082,29 @@ class _DownloadSheet extends StatelessWidget {
     required Color textPrimary,
     required Color textSecondary,
     required Color divider,
+    bool enabled = true,
   }) {
     final surface = isDark ? AppColors.darkSurfaceAlt : AppColors.surface;
     return GestureDetector(
-      onTap: onTap,
-      child: Container(
+      onTap: enabled ? onTap : null,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 300),
         width: double.infinity,
         padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
         decoration: BoxDecoration(
-          color: surface,
+          color: enabled ? surface : surface.withValues(alpha: 0.4),
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: divider, width: 0.5),
+          border: Border.all(
+            color: enabled ? divider : divider.withValues(alpha: 0.3),
+            width: 0.5,
+          ),
         ),
         child: Row(
           children: [
-            Text(icon, style: const TextStyle(fontSize: 22)),
+            Text(icon,
+                style: TextStyle(
+                    fontSize: 22,
+                    color: enabled ? null : Colors.grey.withValues(alpha: 0.4))),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -5069,16 +5115,47 @@ class _DownloadSheet extends StatelessWidget {
                           fontFamily: 'Tajawal',
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
-                          color: textPrimary)),
-                  Text(subtitle,
-                      style: TextStyle(
-                          fontFamily: 'Tajawal',
-                          fontSize: 11, color: textSecondary)),
+                          color: enabled
+                              ? textPrimary
+                              : textPrimary.withValues(alpha: 0.35))),
+                  Row(
+                    children: [
+                      if (!enabled) ...[
+                        SizedBox(
+                          width: 10,
+                          height: 10,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 1.5,
+                            valueColor: AlwaysStoppedAnimation(
+                                textSecondary.withValues(alpha: 0.5)),
+                          ),
+                        ),
+                        const SizedBox(width: 5),
+                      ],
+                      Text(subtitle,
+                          style: TextStyle(
+                              fontFamily: 'Tajawal',
+                              fontSize: 11,
+                              color: enabled
+                                  ? textSecondary
+                                  : textSecondary.withValues(alpha: 0.5))),
+                    ],
+                  ),
                 ],
               ),
             ),
-            Icon(CupertinoIcons.chevron_left,
-                size: 14, color: textSecondary),
+            enabled
+                ? Icon(CupertinoIcons.chevron_left,
+                    size: 14, color: textSecondary)
+                : SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 1.5,
+                      valueColor: AlwaysStoppedAnimation(
+                          textSecondary.withValues(alpha: 0.4)),
+                    ),
+                  ),
           ],
         ),
       ),

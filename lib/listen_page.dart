@@ -89,6 +89,7 @@ class _ListenPageState extends State<ListenPage> with TickerProviderStateMixin {
 
   // ── نوع العرض ──
   bool _gridView = false; // سيُحمَّل من SharedPreferences
+  bool _reelsMode = false; // وضع الريلز
   final Set<String> _selectedPaths = {};
 
   // ── أنيميشن وضع التحديد ──
@@ -156,10 +157,14 @@ class _ListenPageState extends State<ListenPage> with TickerProviderStateMixin {
         'music_folders', jsonEncode(_folders.map((f) => f.toJson()).toList()));
   }
 
-  Future<void> _loadViewMode() async {
+Future<void> _loadViewMode() async {
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getBool('listen_grid_view') ?? false;
-    if (mounted) setState(() => _gridView = saved);
+    final reels = prefs.getBool('reelsMode') ?? false;
+    if (mounted) setState(() {
+      _gridView = saved;
+      _reelsMode = reels;
+    });
   }
 
   Future<void> _saveViewMode(bool value) async {
@@ -2258,7 +2263,70 @@ audioService.playList(unfoldered, startIndex.clamp(0, unfoldered.length - 1));
             ),
             const Spacer(),
 
-            if (!_selectionMode)
+if (!_selectionMode) ...[
+              // ── زر الريلز ──
+              GestureDetector(
+                onTap: () {
+                  final newVal = !_reelsMode;
+                  setState(() => _reelsMode = newVal);
+                  ReelsModeNotifier.instance.set(newVal);
+                },
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 280),
+                  curve: Curves.easeOutCubic,
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+                  decoration: BoxDecoration(
+                    gradient: _reelsMode
+                        ? const LinearGradient(
+                            colors: [Color(0xFFE040FB), Color(0xFFFF4081)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          )
+                        : null,
+                    color: _reelsMode
+                        ? null
+                        : (isDark ? AppColors.darkSurface : AppColors.surface),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: _reelsMode
+                          ? Colors.transparent
+                          : (isDark ? AppColors.darkDivider : AppColors.divider),
+                      width: 0.8,
+                    ),
+                    boxShadow: _reelsMode
+                        ? [
+                            BoxShadow(
+                              color: const Color(0xFFE040FB).withValues(alpha: 0.40),
+                              blurRadius: 10,
+                              offset: const Offset(0, 3),
+                            ),
+                          ]
+                        : null,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        CupertinoIcons.play_rectangle_fill,
+                        size: 14,
+                        color: _reelsMode ? Colors.white : context.appTextSec,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        'ريلز',
+                        style: TextStyle(
+                          fontFamily: 'Tajawal',
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: _reelsMode ? Colors.white : context.appTextSec,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              // ── زر طريقة العرض ──
               GestureDetector(
                 onTap: () {
   final newVal = !_gridView;
@@ -2323,6 +2391,7 @@ audioService.playList(unfoldered, startIndex.clamp(0, unfoldered.length - 1));
                   ),
                 ),
               ),
+            ], // نهاية !_selectionMode
             if (_selectionMode) ...[
               const Spacer(),
               GestureDetector(
@@ -2595,11 +2664,12 @@ audioService.playList(
               );
             }
 
+final unfoldered = _unfolderiedItems;
             return _SwipeableMediaTile(
               key: ValueKey(item.path),
               item: item,
-              index: _localItems.indexOf(item),
-              allItems: _localItems,
+              index: unfoldered.indexOf(item),
+              allItems: unfoldered,
               onDelete: () => _deleteItem(item),
               onSave: () => _saveToGallery(item),
             );
@@ -2821,7 +2891,8 @@ class _FolderDetailPageState extends State<FolderDetailPage>
   late List<LocalMediaItem> _items;
 
   // ── وضع العرض (قائمة / مكتبي) ──
-  bool _gridView = false;
+bool _gridView = false;
+  bool _reelsMode = false; // وضع الريلز
 
   // ── وضع التحديد ──
   bool _selectionMode = false;
@@ -2898,7 +2969,11 @@ void initState() {
 Future<void> _loadViewMode() async {
   final prefs = await SharedPreferences.getInstance();
   final saved = prefs.getBool('listen_grid_view') ?? false;
-  if (mounted) setState(() => _gridView = saved);
+  final reels = prefs.getBool('reelsMode') ?? false;
+  if (mounted) setState(() {
+    _gridView = saved;
+    _reelsMode = reels;
+  });
 }
 
 Future<void> _saveViewMode(bool value) async {
@@ -3087,6 +3162,61 @@ Future<void> _saveViewMode(bool value) async {
                               ),
                             ),
                             const Spacer(),
+// ── زر الريلز ──
+                            GestureDetector(
+                              onTap: () {
+                                final newVal = !_reelsMode;
+                                setState(() => _reelsMode = newVal);
+                                ReelsModeNotifier.instance.set(newVal);
+                              },
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 280),
+                                curve: Curves.easeOutCubic,
+                                width: 36,
+                                height: 36,
+                                decoration: BoxDecoration(
+                                  gradient: _reelsMode
+                                      ? const LinearGradient(
+                                          colors: [Color(0xFFE040FB), Color(0xFFFF4081)],
+                                          begin: Alignment.topLeft,
+                                          end: Alignment.bottomRight,
+                                        )
+                                      : null,
+                                  color: _reelsMode
+                                      ? null
+                                      : Colors.white.withOpacity(0.15),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: _reelsMode
+                                        ? Colors.transparent
+                                        : Colors.white.withOpacity(0.25),
+                                    width: 1,
+                                  ),
+                                  boxShadow: _reelsMode
+                                      ? [
+                                          BoxShadow(
+                                            color: const Color(0xFFE040FB)
+                                                .withValues(alpha: 0.45),
+                                            blurRadius: 10,
+                                            offset: const Offset(0, 3),
+                                          )
+                                        ]
+                                      : null,
+                                ),
+                                child: AnimatedSwitcher(
+                                  duration: const Duration(milliseconds: 220),
+                                  transitionBuilder: (child, anim) =>
+                                      ScaleTransition(scale: anim, child: child),
+                                  child: Icon(
+                                    CupertinoIcons.play_rectangle_fill,
+                                    key: ValueKey(_reelsMode),
+                                    color: Colors.white,
+                                    size: 16,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
                             // ── زر تبديل العرض ──
                             GestureDetector(
                               onTap: () {

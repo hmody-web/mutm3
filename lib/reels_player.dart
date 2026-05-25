@@ -332,7 +332,7 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
       // إظهار الـ overlay مؤقتاً عند النقر
       _showControls = true;
     });
-    _scheduleControlsHide();
+    
   }
 
   void _toggleControls() {
@@ -1084,7 +1084,7 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
               //  بطاقة العنوان + الصورة المصغرة + موجات صوتية (يمين)
               // ══════════════════════════════════════════
               Align(
-                alignment: Alignment.centerRight,
+                alignment: Alignment.centerLeft,
                 child: _buildInfoCard(item: item, title: title, isPlaying: isPlaying),
               ),
               const SizedBox(height: 12),
@@ -1284,8 +1284,8 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
         child: Container(
-          width: 220,
-          padding: const EdgeInsets.all(10),
+          width: 170,
+          padding: const EdgeInsets.all(7),
           decoration: BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topLeft,
@@ -1320,8 +1320,8 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
             children: [
               // صورة مصغرة مع تأثير
               Container(
-                width: 46,
-                height: 46,
+                width: 34,
+              height: 34,
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(11),
                   border: Border.all(
@@ -1349,7 +1349,7 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
                           child: const Icon(
                             CupertinoIcons.music_note,
                             color: Colors.white,
-                            size: 22,
+                            size: 16,
                           ),
                         ),
                 ),
@@ -1368,7 +1368,7 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
                       style: const TextStyle(
                         color: Colors.white,
                         fontFamily: 'Tajawal',
-                        fontSize: 12,
+                        fontSize: 10,
                         fontWeight: FontWeight.w700,
                         letterSpacing: 0.1,
                         shadows: [

@@ -45,6 +45,9 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
   bool _autoScroll = false;
   bool _showControls = true;
   bool _isTitleExpanded = false;
+  bool _fillScreen = false;          // وضع ملء الشاشة الكامل
+  bool _isTransitioning = false;     // هل نحن في مرحلة انتقال؟
+  double _swipeProgress = 0.0;      // تقدم السحب (0.0 - 1.0) للريل التالي
 
   Timer? _autoScrollTimer;
   Timer? _controlsTimer;
@@ -118,7 +121,7 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
     ]).animate(_heartAnimCtrl);
 
     _pageTransitionCtrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 220));
+        vsync: this, duration: const Duration(milliseconds: 380));
 
     // أنيميشن زر الإعجاب
     _likeAnimCtrl = AnimationController(
@@ -317,6 +320,21 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
     });
   }
 
+  void _onSingleTap() {
+    final ctrl = _controllers[_currentIndex];
+    if (ctrl == null) return;
+    setState(() {
+      if (ctrl.value.isPlaying) {
+        ctrl.pause();
+      } else {
+        ctrl.play();
+      }
+      // إظهار الـ overlay مؤقتاً عند النقر
+      _showControls = true;
+    });
+    _scheduleControlsHide();
+  }
+
   void _toggleControls() {
     // النقر على الشاشة يُظهر العناصر فقط (الإخفاء عبر زر العين)
     if (!_showControls) {
@@ -497,6 +515,7 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
       builder: (_) => _OptionsSheet(
         isLooping: _isLooping,
         autoScroll: _autoScroll,
+        showControls: _showControls,
         folders: widget.folders,
         currentItem: widget.items[_currentIndex],
         onLoopChanged: (v) {
@@ -522,6 +541,11 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
               _detachAutoScrollListener();
             }
           });
+        },
+        onToggleControls: () {
+          Navigator.pop(context);
+          setState(() => _showControls = !_showControls);
+          _controlsTimer?.cancel();
         },
         onAddToFolder: _addToFolder,
       ),
@@ -559,14 +583,17 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
         onVerticalDragStart: (details) {
           _dragOffset = 0.0;
           _isDraggingPage = true;
+          _swipeProgress = 0.0;
         },
         onVerticalDragUpdate: (details) {
           if (!_isDraggingPage) return;
           setState(() {
             _dragOffset += details.delta.dy;
+            // حساب تقدم السحب (0.0 = لم يتحرك، 1.0 = ريل جديد كامل)
+            _swipeProgress = (_dragOffset.abs() / MediaQuery.of(context).size.height).clamp(0.0, 1.0);
           });
           // تحريك الـ PageView يدوياً بناءً على الإزاحة
-          final currentPagePixels = _currentIndex * size.height;
+          final currentPagePixels = _currentIndex * MediaQuery.of(context).size.height;
           double effectiveOffset = _dragOffset;
           final isAtFirst = _currentIndex == 0 && _dragOffset > 0;
           final isAtLast = _currentIndex == widget.items.length - 1 && _dragOffset < 0;
@@ -574,31 +601,34 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
             effectiveOffset = _dragOffset * 0.25; // مقاومة 75%
           }
           final newOffset = currentPagePixels - effectiveOffset;
-          _pageController.jumpTo(newOffset.clamp(0.0, (widget.items.length - 1) * size.height));
+          _pageController.jumpTo(newOffset.clamp(0.0, (widget.items.length - 1) * MediaQuery.of(context).size.height));
         },
         onVerticalDragEnd: (details) {
           if (!_isDraggingPage) return;
           _isDraggingPage = false;
 
           final velocity = details.primaryVelocity ?? 0;
-          final threshold = size.height * 0.22;
+          final screenH = MediaQuery.of(context).size.height;
+          // الانتقال يحدث فقط عندما يصل المستخدم إلى الريل الثاني أو عند رفع الإصبع مع سرعة كافية
+          final threshold = screenH * 0.45; // 45% من الشاشة = وصل للريل الثاني
 
           int targetPage = _currentIndex;
 
-          if (_dragOffset < -threshold || velocity < -700) {
+          if (_dragOffset < -threshold || velocity < -900) {
             if (_currentIndex < widget.items.length - 1) {
               targetPage = _currentIndex + 1;
             }
-          } else if (_dragOffset > threshold || velocity > 700) {
+          } else if (_dragOffset > threshold || velocity > 900) {
             if (_currentIndex > 0) {
               targetPage = _currentIndex - 1;
             }
           }
 
           _dragOffset = 0.0;
+          _swipeProgress = 0.0;
           _pageController.animateToPage(
             targetPage,
-            duration: const Duration(milliseconds: 320),
+            duration: const Duration(milliseconds: 380),
             curve: Curves.easeOutCubic,
           );
         },
@@ -606,14 +636,15 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
           if (!_isDraggingPage) return;
           _isDraggingPage = false;
           _dragOffset = 0.0;
+          _swipeProgress = 0.0;
           _pageController.animateToPage(
             _currentIndex,
-            duration: const Duration(milliseconds: 320),
+            duration: const Duration(milliseconds: 380),
             curve: Curves.easeOutCubic,
           );
         },
         // ── النقر والدبل تاب ──
-        onTap: _toggleControls,
+        onTap: _onSingleTap,
         onDoubleTap: _onDoubleTap,
         child: _buildMainContent(size),
       ),
@@ -733,6 +764,9 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
       isPortrait = false;
     }
 
+    // في وضع ملء الشاشة: دائماً نملأ الشاشة كاملاً
+    final shouldFill = _fillScreen || isPortrait;
+
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -782,12 +816,11 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
           Container(color: Colors.black),
 
         // ══════════════════════════════════════════════
-        //  الفيديو الرئيسي — يملأ الشاشة للفيديوهات العمودية
+        //  الفيديو الرئيسي
         // ══════════════════════════════════════════════
         if (ctrl != null && isInit)
-          isPortrait
+          shouldFill
               ? Positioned.fill(
-                  // للفيديوهات العمودية: نملأ العرض كاملاً ونسمح بالقص العمودي
                   child: FittedBox(
                     fit: BoxFit.cover,
                     child: SizedBox(
@@ -913,7 +946,7 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
               ),
               const SizedBox(height: 12),
 
-              // ── المزيد ──
+              // ── المزيد (يحتوي الإخفاء) ──
               _buildSideButton(
                 child: const Icon(CupertinoIcons.ellipsis,
                     color: Colors.white, size: 19),
@@ -922,23 +955,18 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
               ),
               const SizedBox(height: 12),
 
-              // ── زر إخفاء / إظهار العناصر ──
+              // ── زر ملء الشاشة ──
               _buildSideButton(
                 child: Icon(
-                  _showControls
-                      ? CupertinoIcons.eye_slash_fill
-                      : CupertinoIcons.eye_fill,
-                  color: _showControls
-                      ? Colors.white.withOpacity(0.8)
-                      : AppColors.primary,
-                  size: 19,
+                  _fillScreen
+                      ? CupertinoIcons.arrow_down_right_arrow_up_left
+                      : CupertinoIcons.arrow_up_left_arrow_down_right,
+                  color: _fillScreen ? AppColors.primary : Colors.white,
+                  size: 18,
                 ),
-                label: _showControls ? 'إخفاء' : 'إظهار',
-                onTap: () {
-                  setState(() => _showControls = !_showControls);
-                  _controlsTimer?.cancel();
-                },
-                isActive: !_showControls,
+                label: _fillScreen ? 'ممتلئ' : 'امتلاء',
+                onTap: () => setState(() => _fillScreen = !_fillScreen),
+                isActive: _fillScreen,
               ),
             ],
           ),
@@ -1022,6 +1050,7 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
             progress: progress,
             botPad: botPad,
             size: size,
+            isPlaying: isPlaying,
           ),
         ),
       ],
@@ -1039,92 +1068,28 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
     required double progress,
     required double botPad,
     required Size size,
+    required bool isPlaying,
   }) {
     return ClipRect(
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 0, sigmaY: 0),
         child: Container(
-          padding: EdgeInsets.fromLTRB(18, 0, 18, botPad + 16),
+          padding: EdgeInsets.fromLTRB(18, 0, 18, 0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              // ── العنوان مع أيقونة ──
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  // أيقونة التشغيل
-                  Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [
-                          AppColors.primary,
-                          AppColors.primary.withOpacity(0.7),
-                        ],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                      borderRadius: BorderRadius.circular(9),
-                      boxShadow: [
-                        BoxShadow(
-                          color: AppColors.primary.withOpacity(0.4),
-                          blurRadius: 8,
-                          spreadRadius: 0,
-                        ),
-                      ],
-                    ),
-                    child: const Icon(CupertinoIcons.play_rectangle_fill,
-                        color: Colors.white, size: 12),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: GestureDetector(
-                      onTap: () => setState(
-                          () => _isTitleExpanded = !_isTitleExpanded),
-                      child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 280),
-                        child: Text(
-                          _isTitleExpanded ? title : shortTitle,
-                          key: ValueKey(_isTitleExpanded),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontFamily: 'Tajawal',
-                            fontSize: 14,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 0.2,
-                            shadows: [
-                              Shadow(
-                                  color: Colors.black87,
-                                  offset: Offset(0, 1),
-                                  blurRadius: 6),
-                            ],
-                          ),
-                          maxLines: _isTitleExpanded ? 3 : 1,
-                          overflow: _isTitleExpanded
-                              ? TextOverflow.visible
-                              : TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ),
-                  ),
-                  if (title.length > 30) ...[
-                    const SizedBox(width: 6),
-                    AnimatedRotation(
-                      turns: _isTitleExpanded ? -0.5 : 0,
-                      duration: const Duration(milliseconds: 250),
-                      child: Icon(
-                        CupertinoIcons.chevron_down,
-                        color: Colors.white.withOpacity(0.6),
-                        size: 13,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-              const SizedBox(height: 14),
 
-              // ── شريط التمرير السلس بدون thumb ──
+              // ══════════════════════════════════════════
+              //  بطاقة العنوان + الصورة المصغرة + موجات صوتية (يمين)
+              // ══════════════════════════════════════════
+              Align(
+                alignment: Alignment.centerRight,
+                child: _buildInfoCard(item: item, title: title, isPlaying: isPlaying),
+              ),
+              const SizedBox(height: 12),
+
+              // ── أوقات التشغيل فوق الشريط ──
               LayoutBuilder(
                 builder: (ctx, constraints) {
                   final trackWidth = constraints.maxWidth;
@@ -1133,7 +1098,6 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
 
                   return Column(
                     children: [
-                      // أوقات التشغيل
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
@@ -1155,7 +1119,7 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
                           ),
                         ],
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 6),
 
                       // شريط التمرير
                       GestureDetector(
@@ -1296,9 +1260,156 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
                   );
                 },
               ),
+
+              // مسافة أسفل شريط التقدم (أسفل الشاشة)
+              SizedBox(height: botPad + 10),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════
+  //  بطاقة المعلومات: عنوان + صورة مصغرة + موجات صوتية
+  // ═══════════════════════════════════════════════════════
+  Widget _buildInfoCard({
+    required LocalMediaItem item,
+    required String title,
+    required bool isPlaying,
+  }) {
+    final shortTitle = title.length > 22 ? '${title.substring(0, 22)}...' : title;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(18),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+        child: Container(
+          width: 220,
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Colors.red.withOpacity(0.22),
+                Colors.black.withOpacity(0.55),
+                AppColors.primary.withOpacity(0.12),
+              ],
+            ),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: Colors.red.withOpacity(0.45),
+              width: 1.2,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.red.withOpacity(0.18),
+                blurRadius: 20,
+                spreadRadius: 0,
+                offset: const Offset(0, 4),
+              ),
+              BoxShadow(
+                color: Colors.black.withOpacity(0.4),
+                blurRadius: 12,
+                spreadRadius: 0,
+              ),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // صورة مصغرة مع تأثير
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(11),
+                  border: Border.all(
+                    color: Colors.red.withOpacity(0.5),
+                    width: 1.5,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.red.withOpacity(0.25),
+                      blurRadius: 10,
+                    ),
+                  ],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: Container(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                AppColors.primary.withOpacity(0.7),
+                                Colors.red.withOpacity(0.5),
+                              ],
+                            ),
+                          ),
+                          child: const Icon(
+                            CupertinoIcons.music_note,
+                            color: Colors.white,
+                            size: 22,
+                          ),
+                        ),
+                ),
+              ),
+              const SizedBox(width: 10),
+
+              // العنوان + موجات صوتية
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // العنوان
+                    Text(
+                      shortTitle,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontFamily: 'Tajawal',
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.1,
+                        shadows: [
+                          Shadow(color: Colors.black87, blurRadius: 4),
+                        ],
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 6),
+
+                    // موجات صوتية متحركة
+                    _buildSoundWaves(isPlaying: isPlaying),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // موجات صوتية متحركة
+  Widget _buildSoundWaves({required bool isPlaying}) {
+    return SizedBox(
+      height: 20,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: List.generate(9, (i) {
+          return _SoundWaveBar(
+            index: i,
+            isPlaying: isPlaying,
+            color: i % 3 == 0
+                ? Colors.red
+                : i % 3 == 1
+                    ? AppColors.primary
+                    : Colors.white.withOpacity(0.8),
+          );
+        }),
       ),
     );
   }
@@ -1404,9 +1515,9 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
                     boxShadow: isLiked
                         ? [
                             BoxShadow(
-                              color: Colors.red.withOpacity(0.4),
-                              blurRadius: 14,
-                              spreadRadius: 1,
+                              color: Colors.red.withOpacity(0.18),
+                              blurRadius: 10,
+                              spreadRadius: 0,
                             ),
                           ]
                         : [
@@ -1453,25 +1564,107 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
 }
 
 // ═══════════════════════════════════════════════════════
+//  SOUND WAVE BAR — شريط موجة صوتية متحرك
+// ═══════════════════════════════════════════════════════
+
+class _SoundWaveBar extends StatefulWidget {
+  final int index;
+  final bool isPlaying;
+  final Color color;
+
+  const _SoundWaveBar({
+    required this.index,
+    required this.isPlaying,
+    required this.color,
+  });
+
+  @override
+  State<_SoundWaveBar> createState() => _SoundWaveBarState();
+}
+
+class _SoundWaveBarState extends State<_SoundWaveBar>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+  late Animation<double> _anim;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: Duration(milliseconds: 400 + widget.index * 80),
+    );
+    _anim = Tween<double>(begin: 0.15, end: 1.0).animate(
+      CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut),
+    );
+    if (widget.isPlaying) {
+      _ctrl.repeat(reverse: true);
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _SoundWaveBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isPlaying && !_ctrl.isAnimating) {
+      _ctrl.repeat(reverse: true);
+    } else if (!widget.isPlaying && _ctrl.isAnimating) {
+      _ctrl.stop();
+    }
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _anim,
+      builder: (_, __) => Container(
+        width: 3,
+        height: 20 * _anim.value,
+        margin: const EdgeInsets.symmetric(horizontal: 1),
+        decoration: BoxDecoration(
+          color: widget.color,
+          borderRadius: BorderRadius.circular(2),
+          boxShadow: [
+            BoxShadow(
+              color: widget.color.withOpacity(0.5),
+              blurRadius: 4,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════
 //  OPTIONS SHEET — ورقة خيارات المشغل
 // ═══════════════════════════════════════════════════════
 
 class _OptionsSheet extends StatefulWidget {
   final bool isLooping;
   final bool autoScroll;
+  final bool showControls;
   final List<MusicFolder> folders;
   final LocalMediaItem currentItem;
   final Function(bool) onLoopChanged;
   final Function(bool) onAutoScrollChanged;
+  final VoidCallback onToggleControls;
   final Future<void> Function(MusicFolder) onAddToFolder;
 
   const _OptionsSheet({
     required this.isLooping,
     required this.autoScroll,
+    required this.showControls,
     required this.folders,
     required this.currentItem,
     required this.onLoopChanged,
     required this.onAutoScrollChanged,
+    required this.onToggleControls,
     required this.onAddToFolder,
   });
 
@@ -1482,12 +1675,14 @@ class _OptionsSheet extends StatefulWidget {
 class _OptionsSheetState extends State<_OptionsSheet> {
   late bool _looping;
   late bool _autoScroll;
+  late bool _showControls;
 
   @override
   void initState() {
     super.initState();
     _looping = widget.isLooping;
     _autoScroll = widget.autoScroll;
+    _showControls = widget.showControls;
   }
 
   @override
@@ -1579,6 +1774,31 @@ class _OptionsSheetState extends State<_OptionsSheet> {
                   subtitle: 'أضف هذا الفيديو لمجلد',
                   trailing: Icon(CupertinoIcons.chevron_left,
                       color: Colors.white.withOpacity(0.4), size: 16),
+                ),
+              ),
+
+              const SizedBox(height: 12),
+
+              // إخفاء / إظهار العناصر
+              GestureDetector(
+                onTap: widget.onToggleControls,
+                child: _optionRow(
+                  icon: _showControls
+                      ? CupertinoIcons.eye_slash_fill
+                      : CupertinoIcons.eye_fill,
+                  title: _showControls ? 'إخفاء العناصر' : 'إظهار العناصر',
+                  subtitle: _showControls
+                      ? 'اخفِ أزرار التحكم للمشاهدة النظيفة'
+                      : 'أظهر أزرار التحكم مرة أخرى',
+                  trailing: Icon(
+                    _showControls
+                        ? CupertinoIcons.eye_slash_fill
+                        : CupertinoIcons.eye_fill,
+                    color: _showControls
+                        ? Colors.white.withOpacity(0.4)
+                        : AppColors.primary,
+                    size: 16,
+                  ),
                 ),
               ),
 

@@ -11,6 +11,7 @@ import 'main.dart';
 import 'listen_page.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:just_audio_background/just_audio_background.dart';
+import 'package:video_thumbnail/video_thumbnail.dart';
 
 // ═══════════════════════════════════════════════════════
 //  REELS VIDEO PLAYER — مشغل ريلز دندن
@@ -92,6 +93,8 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
   bool _syncingFromNotification = false;
 
   // ── حالة الخلفية ──
+  // ── صور مصغرة للفيديوهات ──
+  final Map<int, Uint8List?> _thumbnails = {};
   bool _isInBackground = false;     // هل التطبيق في الخلفية الآن؟
   bool _wasPlayingBeforeBackground = false; // هل كان يعزف قبل الذهاب للخلفية؟
 
@@ -281,7 +284,21 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
     _progressTimer?.cancel();
     super.dispose();
   }
-
+Future<void> _loadThumbnail(int index) async {
+    if (_thumbnails.containsKey(index)) return;
+    final item = widget.items[index];
+    try {
+      final bytes = await VideoThumbnail.thumbnailData(
+        video: item.path,
+        imageFormat: ImageFormat.JPEG,
+        maxWidth: 120,
+        quality: 75,
+      );
+      if (mounted) setState(() => _thumbnails[index] = bytes);
+    } catch (_) {
+      if (mounted) setState(() => _thumbnails[index] = null);
+    }
+  }
   Future<void> _initController(int index) async {
     if (index < 0 || index >= widget.items.length) return;
     if (_controllers.containsKey(index)) return;
@@ -294,6 +311,7 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
       await ctrl.initialize();
       ctrl.setLooping(_isLooping);
       if (mounted) setState(() => _initialized[index] = true);
+      _loadThumbnail(index);
       if (index == _currentIndex) {
         ctrl.play();
         _startProgressTimer();
@@ -579,6 +597,7 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
 return Scaffold(
   backgroundColor: Colors.black,
   extendBody: true,
+  extendBodyBehindAppBar: true,
   body: GestureDetector(
         // ── اكتشاف اتجاه السحب العمودي (تصفح الريلز) ──
         onVerticalDragStart: (details) {
@@ -753,26 +772,15 @@ return Scaffold(
     );
   }
 
-  Widget _buildVideoPage(int index, Size size) {
+Widget _buildVideoPage(int index, Size size) {
     final ctrl = _controllers[index];
     final isInit = _initialized[index] ?? false;
-
-    // احسب ما إذا كان الفيديو عمودياً
-    bool isPortrait = true;
-    if (ctrl != null && isInit && ctrl.value.aspectRatio < 1.0) {
-      isPortrait = true;
-    } else if (ctrl != null && isInit && ctrl.value.aspectRatio >= 1.0) {
-      isPortrait = false;
-    }
-
-    // في وضع ملء الشاشة: دائماً نملأ الشاشة كاملاً
-    final shouldFill = _fillScreen || isPortrait;
 
     return Stack(
       fit: StackFit.expand,
       children: [
         // ══════════════════════════════════════════════
-        //  طبقة الإضاءة السينمائية — نفس الفيديو مكبّر
+        //  خلفية ضبابية سينمائية
         // ══════════════════════════════════════════════
         if (ctrl != null && isInit) ...[
           Positioned.fill(
@@ -789,7 +797,6 @@ return Scaffold(
               ),
             ),
           ),
-
           Positioned.fill(
             child: BackdropFilter(
               filter: ImageFilter.blur(sigmaX: 60, sigmaY: 60),
@@ -798,7 +805,6 @@ return Scaffold(
               ),
             ),
           ),
-
           Positioned.fill(
             child: Container(
               decoration: BoxDecoration(
@@ -817,26 +823,15 @@ return Scaffold(
           Container(color: Colors.black),
 
         // ══════════════════════════════════════════════
-        //  الفيديو الرئيسي
+        //  الفيديو الرئيسي — دائماً بأبعاده الأصلية
         // ══════════════════════════════════════════════
         if (ctrl != null && isInit)
-          shouldFill
-              ? Positioned.fill(
-                  child: FittedBox(
-                    fit: BoxFit.cover,
-                    child: SizedBox(
-                      width: ctrl.value.size.width,
-                      height: ctrl.value.size.height,
-                      child: VideoPlayer(ctrl),
-                    ),
-                  ),
-                )
-              : Center(
-                  child: AspectRatio(
-                    aspectRatio: ctrl.value.aspectRatio,
-                    child: VideoPlayer(ctrl),
-                  ),
-                )
+          Center(
+            child: AspectRatio(
+              aspectRatio: ctrl.value.aspectRatio,
+              child: VideoPlayer(ctrl),
+            ),
+          )
         else
           Center(
             child: Column(
@@ -856,7 +851,7 @@ return Scaffold(
             ),
           ),
 
-        // تدرج سفلي للـ UI — أعمق وأكثر احترافية
+        // تدرج سفلي
         Positioned(
           bottom: 0,
           left: 0,
@@ -906,7 +901,7 @@ return Scaffold(
         // ═══════════════════════════════════════
         Positioned(
           right: 14,
-          bottom: botPad + 100,
+          bottom: botPad + 110,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -1169,7 +1164,7 @@ return Scaffold(
             },
           ),
 
-          SizedBox(height: botPad + 80),
+          SizedBox(height: botPad + 95),
         ],
       ),
     );
@@ -1396,30 +1391,30 @@ Widget _buildDandanButton() {
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 56,
-            height: 56,
+            width: 48,
+            height: 48,
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: AppColors.primary,
               shape: BoxShape.circle,
               boxShadow: [
                 BoxShadow(
-                  color: Colors.white.withOpacity(0.35),
-                  blurRadius: 20,
-                  spreadRadius: 3,
+                  color: AppColors.primary.withOpacity(0.5),
+                  blurRadius: 16,
+                  spreadRadius: 2,
                 ),
               ],
             ),
             child: Center(
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(10),
                 child: Image.asset(
                   'assets/images/logo.png',
-                  width: 32, height: 32, fit: BoxFit.cover,
-                  color: AppColors.primary,
+                  width: 24, height: 24, fit: BoxFit.cover,
+                  color: Colors.white,
                   colorBlendMode: BlendMode.srcIn,
-                  errorBuilder: (_, __, ___) => Icon(
+                  errorBuilder: (_, __, ___) => const Icon(
                     CupertinoIcons.music_note_2,
-                    color: AppColors.primary, size: 26,
+                    color: Colors.white, size: 20,
                   ),
                 ),
               ),
@@ -1428,12 +1423,12 @@ Widget _buildDandanButton() {
           const SizedBox(height: 4),
           Text(
             'دندن',
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.9),
               fontFamily: 'Tajawal',
               fontSize: 9.5,
-              fontWeight: FontWeight.w700,
-              shadows: [Shadow(color: Colors.black87, blurRadius: 6)],
+              fontWeight: FontWeight.w600,
+              shadows: const [Shadow(color: Colors.black87, blurRadius: 6)],
             ),
           ),
         ],
@@ -1520,12 +1515,13 @@ Widget _buildDandanButton() {
 // ═══════════════════════════════════════════════════════
   //  شريط معلومات الأغنية السفلي — بديل NavBar
   // ═══════════════════════════════════════════════════════
-  Widget _buildSongInfoBar({
+Widget _buildSongInfoBar({
     required LocalMediaItem item,
     required bool isPlaying,
   }) {
     final title = item.title.replaceAll(RegExp(r'\.\w+$'), '');
     final botPad = MediaQuery.of(context).padding.bottom;
+    final thumbBytes = _thumbnails[_currentIndex];
 
     return ClipRect(
       child: BackdropFilter(
@@ -1551,37 +1547,56 @@ Widget _buildDandanButton() {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              // أيقونة الموسيقى
+              // ── الصورة المصغرة الحقيقية للفيديو ──
               Container(
-                width: 40,
-                height: 40,
+                width: 44,
+                height: 44,
                 decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      AppColors.primary.withOpacity(0.85),
-                      Colors.red.shade800.withOpacity(0.7),
-                    ],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
                   borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: AppColors.primary.withOpacity(0.5),
+                    width: 1.5,
+                  ),
                   boxShadow: [
                     BoxShadow(
-                      color: AppColors.primary.withOpacity(0.4),
+                      color: AppColors.primary.withOpacity(0.3),
                       blurRadius: 10,
                       spreadRadius: 0,
                     ),
                   ],
                 ),
-                child: const Icon(
-                  CupertinoIcons.music_note,
-                  color: Colors.white,
-                  size: 18,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(10.5),
+                  child: thumbBytes != null
+                      ? Image.memory(
+                          thumbBytes,
+                          fit: BoxFit.cover,
+                          width: 44,
+                          height: 44,
+                        )
+                      : Container(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                AppColors.primary.withOpacity(0.8),
+                                Colors.red.shade900.withOpacity(0.7),
+                              ],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
+                          ),
+                          child: const Center(
+                            child: CupertinoActivityIndicator(
+                              color: Colors.white,
+                              radius: 8,
+                            ),
+                          ),
+                        ),
                 ),
               ),
               const SizedBox(width: 14),
 
-              // اسم الأغنية + الوصف
+              // ── اسم الأغنية + الوصف ──
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1613,7 +1628,7 @@ Widget _buildDandanButton() {
               ),
               const SizedBox(width: 14),
 
-              // موجات صوتية متحركة
+              // ── موجات صوتية متحركة ──
               SizedBox(
                 height: 28,
                 child: Row(

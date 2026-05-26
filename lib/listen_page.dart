@@ -2613,20 +2613,33 @@ final videoItems =
                           folders: _folders,
                           onFoldersChanged: _saveFolders,
                         ),
-                        transitionsBuilder: (_, anim, __, child) {
-                          return FadeTransition(
-                            opacity: anim,
-                            child: SlideTransition(
-                              position: Tween<Offset>(
-                                begin: const Offset(0, 1),
-                                end: Offset.zero,
-                              ).animate(CurvedAnimation(
-                                  parent: anim, curve: Curves.easeOutCubic)),
-                              child: child,
-                            ),
-                          );
-                        },
-                        transitionDuration: const Duration(milliseconds: 450),
+transitionsBuilder: (_, anim, secondAnim, child) {
+  final slideIn = Tween<Offset>(
+    begin: const Offset(1.0, 0),
+    end: Offset.zero,
+  ).animate(CurvedAnimation(parent: anim, curve: Curves.easeOutCubic));
+
+  final slideOut = Tween<Offset>(
+    begin: Offset.zero,
+    end: const Offset(-0.3, 0),
+  ).animate(CurvedAnimation(parent: anim, curve: Curves.easeOutCubic));
+
+  return Stack(
+    children: [
+      SlideTransition(
+        position: slideOut,
+        child: secondAnim.status != AnimationStatus.reverse
+            ? const SizedBox.shrink()
+            : Container(color: Colors.black),
+      ),
+      SlideTransition(
+        position: slideIn,
+        child: child,
+      ),
+    ],
+  );
+},
+transitionDuration: const Duration(milliseconds: 400),
                       ),
                     );
                     return;
@@ -4058,20 +4071,33 @@ class _FolderItemTileState extends State<_FolderItemTile>
                           folders: const [],
                           onFoldersChanged: () async {},
                         ),
-                        transitionsBuilder: (_, anim, __, child) {
-                          return FadeTransition(
-                            opacity: anim,
-                            child: SlideTransition(
-                              position: Tween<Offset>(
-                                begin: const Offset(0, 1),
-                                end: Offset.zero,
-                              ).animate(CurvedAnimation(
-                                  parent: anim, curve: Curves.easeOutCubic)),
-                              child: child,
-                            ),
-                          );
-                        },
-                        transitionDuration: const Duration(milliseconds: 450),
+transitionsBuilder: (_, anim, secondAnim, child) {
+  final slideIn = Tween<Offset>(
+    begin: const Offset(1.0, 0),
+    end: Offset.zero,
+  ).animate(CurvedAnimation(parent: anim, curve: Curves.easeOutCubic));
+
+  final slideOut = Tween<Offset>(
+    begin: Offset.zero,
+    end: const Offset(-0.3, 0),
+  ).animate(CurvedAnimation(parent: anim, curve: Curves.easeOutCubic));
+
+  return Stack(
+    children: [
+      SlideTransition(
+        position: slideOut,
+        child: secondAnim.status != AnimationStatus.reverse
+            ? const SizedBox.shrink()
+            : Container(color: Colors.black),
+      ),
+      SlideTransition(
+        position: slideIn,
+        child: child,
+      ),
+    ],
+  );
+},
+transitionDuration: const Duration(milliseconds: 400),
                       ),
                     );
                     return;
@@ -5141,20 +5167,33 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
                           folders: const [],
                           onFoldersChanged: () async {},
                         ),
-                        transitionsBuilder: (_, anim, __, child) {
-                          return FadeTransition(
-                            opacity: anim,
-                            child: SlideTransition(
-                              position: Tween<Offset>(
-                                begin: const Offset(0, 1),
-                                end: Offset.zero,
-                              ).animate(CurvedAnimation(
-                                  parent: anim, curve: Curves.easeOutCubic)),
-                              child: child,
-                            ),
-                          );
-                        },
-                        transitionDuration: const Duration(milliseconds: 450),
+transitionsBuilder: (_, anim, secondAnim, child) {
+  final slideIn = Tween<Offset>(
+    begin: const Offset(1.0, 0),
+    end: Offset.zero,
+  ).animate(CurvedAnimation(parent: anim, curve: Curves.easeOutCubic));
+
+  final slideOut = Tween<Offset>(
+    begin: Offset.zero,
+    end: const Offset(-0.3, 0),
+  ).animate(CurvedAnimation(parent: anim, curve: Curves.easeOutCubic));
+
+  return Stack(
+    children: [
+      SlideTransition(
+        position: slideOut,
+        child: secondAnim.status != AnimationStatus.reverse
+            ? const SizedBox.shrink()
+            : Container(color: Colors.black),
+      ),
+      SlideTransition(
+        position: slideIn,
+        child: child,
+      ),
+    ],
+  );
+},
+transitionDuration: const Duration(milliseconds: 400),
                       ),
                     );
                     return;

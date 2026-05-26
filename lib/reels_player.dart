@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/gestures.dart';
 import 'package:video_player/video_player.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'main.dart';
@@ -76,7 +77,10 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
   bool _isSeeking = false;        // هل المستخدم يسحب الآن؟
   double _seekProgress = 0.0;    // الموضع المؤقت أثناء السحب (0.0 - 1.0)
   bool _wasPlayingBeforeSeek = false; // هل كان يعزف قبل السحب؟
-
+// ── pinch zoom ──
+bool _isPinching = false;
+double _pinchScale = 1.0;
+Offset _pinchFocalPoint = Offset.zero;
   // ── نظام الإعجاب ──
   final Map<String, bool> _likedItems = {};  // حالة الإعجاب لكل فيديو
   bool _showLikeAnimation = false;           // هل يظهر أنيميشن الإعجاب؟
@@ -632,67 +636,93 @@ return Scaffold(
   backgroundColor: Colors.black,
   extendBody: true,
   extendBodyBehindAppBar: true,
-  body: GestureDetector(
-        // ── اكتشاف اتجاه السحب العمودي (تصفح الريلز) ──
-        onVerticalDragStart: (details) {
-          _dragOffset = 0.0;
-          _isDraggingPage = true;
-          _swipeProgress = 0.0;
-        },
-onVerticalDragUpdate: (details) {
-  if (!_isDraggingPage) return;
-
-  setState(() {
-    _dragOffset += details.delta.dy;
-  });
-},
-        onVerticalDragEnd: (details) async {
-  if (!_isDraggingPage) return;
-  _isDraggingPage = false;
-
-  final velocity = details.primaryVelocity ?? 0;
-  final screenH = MediaQuery.of(context).size.height;
-  final dragAtEnd = _dragOffset;
-
-  final shouldGoNext = dragAtEnd < -(screenH * 0.5) || velocity < -900;
-  final shouldGoPrev = dragAtEnd > (screenH * 0.5) || velocity > 900;
-
-  if (shouldGoNext && _currentIndex < widget.items.length - 1) {
-    await animateDragOffset(from: dragAtEnd, to: -screenH);
-    if (!mounted) return;
-    final prevIndex = _currentIndex;
-    setState(() => _currentIndex++);
-    _controllers[prevIndex]?.pause();
-    _onPageChanged(_currentIndex);
-  } else if (shouldGoPrev && _currentIndex > 0) {
-    await animateDragOffset(from: dragAtEnd, to: screenH);
-    if (!mounted) return;
-    final prevIndex = _currentIndex;
-    setState(() => _currentIndex--);
-    _controllers[prevIndex]?.pause();
-    _onPageChanged(_currentIndex);
-  } else {
-    await animateDragOffset(from: dragAtEnd, to: 0);
-  }
-
-  if (mounted) setState(() { _dragOffset = 0; _swipeProgress = 0; });
-},
-onVerticalDragCancel: () {
-  if (!_isDraggingPage) return;
-
-  _isDraggingPage = false;
-
-  setState(() {
-    _dragOffset = 0.0;
-    _swipeProgress = 0.0;
-  });
-},
-        // ── النقر والدبل تاب ──
-        onTap: _onSingleTap,
-        onDoubleTap: _onDoubleTap,
-        child: _buildMainContent(size),
-      ),
-    );
+body: RawGestureDetector(
+  gestures: {
+    ScaleGestureRecognizer: GestureRecognizerFactoryWithHandlers<ScaleGestureRecognizer>(
+      () => ScaleGestureRecognizer(),
+      (instance) {
+        instance
+          ..onStart = (details) {
+            if (details.pointerCount == 2) {
+              _isPinching = true;
+              _pinchScale = 1.0;
+              _pinchFocalPoint = details.localFocalPoint;
+            } else {
+              _isDraggingPage = true;
+              _dragOffset = 0.0;
+              _swipeProgress = 0.0;
+            }
+          }
+          ..onUpdate = (details) {
+            if (_isPinching) {
+              setState(() {
+                _pinchScale = details.scale;
+                _pinchFocalPoint = details.localFocalPoint;
+              });
+            } else if (_isDraggingPage) {
+              setState(() => _dragOffset += details.focalPointDelta.dy);
+            }
+          }
+          ..onEnd = (details) async {
+            if (_isPinching) {
+              final wasZoomIn = _pinchScale > 1.1;
+              final wasZoomOut = _pinchScale < 0.85;
+              if (wasZoomOut) {
+                setState(() => _showControls = false);
+              }
+              // أنيميشن رجوع للحجم الطبيعي
+              final startScale = _pinchScale;
+              final startTime = DateTime.now();
+              const dur = Duration(milliseconds: 350);
+              while (true) {
+                final t = DateTime.now().difference(startTime).inMilliseconds / dur.inMilliseconds;
+                if (t >= 1 || !mounted) break;
+                final curved = Curves.easeOutCubic.transform(t);
+                setState(() => _pinchScale = startScale + (1.0 - startScale) * curved);
+                await Future.delayed(const Duration(milliseconds: 16));
+              }
+              if (mounted) setState(() { _pinchScale = 1.0; _isPinching = false; });
+            } else if (_isDraggingPage) {
+              _isDraggingPage = false;
+              final screenH = MediaQuery.of(context).size.height;
+              final dragAtEnd = _dragOffset;
+              final shouldGoNext = dragAtEnd < -(screenH * 0.5);
+              final shouldGoPrev = dragAtEnd > (screenH * 0.5);
+              if (shouldGoNext && _currentIndex < widget.items.length - 1) {
+                await animateDragOffset(from: dragAtEnd, to: -screenH);
+                if (!mounted) return;
+                final prevIndex = _currentIndex;
+                setState(() => _currentIndex++);
+                _controllers[prevIndex]?.pause();
+                _onPageChanged(_currentIndex);
+              } else if (shouldGoPrev && _currentIndex > 0) {
+                await animateDragOffset(from: dragAtEnd, to: screenH);
+                if (!mounted) return;
+                final prevIndex = _currentIndex;
+                setState(() => _currentIndex--);
+                _controllers[prevIndex]?.pause();
+                _onPageChanged(_currentIndex);
+              } else {
+                await animateDragOffset(from: dragAtEnd, to: 0);
+              }
+              if (mounted) setState(() { _dragOffset = 0; _swipeProgress = 0; });
+            }
+          };
+      },
+    ),
+    TapGestureRecognizer: GestureRecognizerFactoryWithHandlers<TapGestureRecognizer>(
+      () => TapGestureRecognizer(),
+      (instance) { instance.onTap = _onSingleTap; },
+    ),
+    DoubleTapGestureRecognizer: GestureRecognizerFactoryWithHandlers<DoubleTapGestureRecognizer>(
+      () => DoubleTapGestureRecognizer(),
+      (instance) { instance.onDoubleTap = _onDoubleTap; },
+    ),
+  },
+  behavior: HitTestBehavior.opaque,
+  child: _buildMainContent(size),
+),
+  );
   }
 
   Widget _buildMainContent(Size size) {
@@ -739,8 +769,9 @@ onHorizontalDragStart: (details) {
   },
   child: Transform.translate(
     offset: Offset(_exitDragOffset, 0),
-        child: Stack(
-          children: [
+child: Stack(
+  fit: StackFit.expand,
+  children: [
             // ── صفحات الفيديو ──
 if (_currentIndex > 0)
   Positioned.fill(
@@ -753,7 +784,13 @@ if (_currentIndex > 0)
 Positioned.fill(
   child: Transform.translate(
     offset: Offset(0, _dragOffset),
-    child: _buildVideoPage(_currentIndex, size),
+    child: Transform(
+      transform: Matrix4.identity()
+        ..translate(_pinchFocalPoint.dx, _pinchFocalPoint.dy)
+        ..scale(_pinchScale)
+        ..translate(-_pinchFocalPoint.dx, -_pinchFocalPoint.dy),
+      child: _buildVideoPage(_currentIndex, size),
+    ),
   ),
 ),
 
@@ -1230,7 +1267,7 @@ child: SizedBox(
             },
           ),
 
-          SizedBox(height: botPad + 50),
+          SizedBox(height: botPad + 48),
         ],
       ),
     );

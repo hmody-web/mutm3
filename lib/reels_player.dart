@@ -799,7 +799,7 @@ Widget _buildVideoPage(int index, Size size) {
           ),
           Positioned.fill(
             child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 25, sigmaY: 25),
+              filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
               child: Container(
                 color: Colors.black.withOpacity(0.20),
               ),
@@ -830,22 +830,23 @@ if (ctrl != null && isInit)
     builder: (context) {
       final botPad = MediaQuery.of(context).padding.bottom;
       final isPortrait = ctrl.value.aspectRatio < 1.0;
-      if (isPortrait) {
-        return Positioned(
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: botPad + 80, // استثناء البار السفلي
-          child: FittedBox(
-            fit: BoxFit.cover,
-            child: SizedBox(
-              width: ctrl.value.size.width,
-              height: ctrl.value.size.height,
-              child: VideoPlayer(ctrl),
-            ),
-          ),
-        );
-      } else {
+if (isPortrait) {
+  return Positioned(
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: botPad + 80, // استثناء البار السفلي
+    child: Center(
+      child: Transform.scale(
+        scale: 1.07,
+        child: AspectRatio(
+          aspectRatio: ctrl.value.aspectRatio,
+          child: VideoPlayer(ctrl),
+        ),
+      ),
+    ),
+  );
+} else {
         return Center(
           child: AspectRatio(
             aspectRatio: ctrl.value.aspectRatio,

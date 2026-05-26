@@ -576,9 +576,10 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
 
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: GestureDetector(
+return Scaffold(
+  backgroundColor: Colors.black,
+  extendBody: true,
+  body: GestureDetector(
         // ── اكتشاف اتجاه السحب العمودي (تصفح الريلز) ──
         onVerticalDragStart: (details) {
           _dragOffset = 0.0;
@@ -905,55 +906,17 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
         // ═══════════════════════════════════════
         Positioned(
           right: 14,
-          bottom: botPad + 120,
+          bottom: botPad + 90 + 66,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // ── لوجو التطبيق ──
-              _buildSideButton(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: Image.asset(
-                    'assets/images/logo.png',
-                    width: 22, height: 22, fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => const Icon(
-                      CupertinoIcons.music_note_2,
-                      color: Colors.white, size: 17,
-                    ),
-                  ),
-                ),
-                label: '',
-                onTap: () {},
-                showLabel: false,
-              ),
-              const SizedBox(height: 12),
+              // ── لوجو دندن الأحمر ──
+              _buildDandanButton(),
+              const SizedBox(height: 16),
 
               // ── زر الإعجاب ──
               _buildLikeButton(isLiked: _isCurrentLiked()),
-              const SizedBox(height: 12),
-
-              // ── تشغيل / إيقاف ──
-              _buildSideButton(
-                child: Icon(
-                  isPlaying ? CupertinoIcons.pause_fill : CupertinoIcons.play_fill,
-                  color: Colors.white, size: 19,
-                ),
-                label: isPlaying ? 'إيقاف' : 'تشغيل',
-                onTap: () {
-                  setState(() {});
-                  isPlaying ? ctrl?.pause() : ctrl?.play();
-                },
-              ),
-              const SizedBox(height: 12),
-
-              // ── المزيد (يحتوي الإخفاء) ──
-              _buildSideButton(
-                child: const Icon(CupertinoIcons.ellipsis,
-                    color: Colors.white, size: 19),
-                label: 'المزيد',
-                onTap: () => _showOptionsMenu(context),
-              ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 16),
 
               // ── زر ملء الشاشة ──
               _buildSideButton(
@@ -962,11 +925,29 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
                       ? CupertinoIcons.arrow_down_right_arrow_up_left
                       : CupertinoIcons.arrow_up_left_arrow_down_right,
                   color: _fillScreen ? AppColors.primary : Colors.white,
-                  size: 18,
+                  size: 20,
                 ),
-                label: _fillScreen ? 'ممتلئ' : 'امتلاء',
+                label: _fillScreen ? 'ممتلئ' : 'ملء',
                 onTap: () => setState(() => _fillScreen = !_fillScreen),
                 isActive: _fillScreen,
+              ),
+              const SizedBox(height: 16),
+
+              // ── زر المشاركة ──
+              _buildSideButton(
+                child: const Icon(CupertinoIcons.share,
+                    color: Colors.white, size: 20),
+                label: 'مشاركة',
+                onTap: () {},
+              ),
+              const SizedBox(height: 16),
+
+              // ── المزيد ──
+              _buildSideButton(
+                child: const Icon(CupertinoIcons.ellipsis,
+                    color: Colors.white, size: 20),
+                label: 'المزيد',
+                onTap: () => _showOptionsMenu(context),
               ),
             ],
           ),
@@ -1053,6 +1034,19 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
             isPlaying: isPlaying,
           ),
         ),
+
+        // ═══════════════════════════════════════
+        //  شريط التنقل السفلي فوق الريلز
+        // ═══════════════════════════════════════
+        Positioned(
+          bottom: 0,
+          left: 0,
+          right: 0,
+          child: Transform.translate(
+            offset: const Offset(0, 8),
+            child: const GlassNavBar(),
+          ),
+        ),
       ],
     );
   }
@@ -1070,202 +1064,121 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
     required Size size,
     required bool isPlaying,
   }) {
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 0, sigmaY: 0),
-        child: Container(
-          padding: EdgeInsets.fromLTRB(18, 0, 18, 0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
+    return Container(
+      padding: const EdgeInsets.fromLTRB(18, 0, 18, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // اسم الريل والوصف
+          Text(
+            title,
+            style: const TextStyle(
+              color: Colors.white,
+              fontFamily: 'Tajawal',
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+              shadows: [Shadow(color: Colors.black87, blurRadius: 6)],
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 3),
+          Text(
+            '4K • Offline Reel',
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.6),
+              fontFamily: 'Tajawal',
+              fontSize: 12,
+            ),
+          ),
+          const SizedBox(height: 12),
 
-              // ══════════════════════════════════════════
-              //  بطاقة العنوان + الصورة المصغرة + موجات صوتية (يمين)
-              // ══════════════════════════════════════════
-              Align(
-                alignment: Alignment.centerLeft,
-                child: _buildInfoCard(item: item, title: title, isPlaying: isPlaying),
-              ),
-              const SizedBox(height: 12),
+          // شريط التقدم فقط بدون مؤقتين
+          LayoutBuilder(
+            builder: (ctx, constraints) {
+              final trackWidth = constraints.maxWidth;
+              final displayProgress = _isSeeking ? _seekProgress : progress;
 
-              // ── أوقات التشغيل فوق الشريط ──
-              LayoutBuilder(
-                builder: (ctx, constraints) {
-                  final trackWidth = constraints.maxWidth;
-                  final displayProgress =
-                      _isSeeking ? _seekProgress : progress;
-
-                  return Column(
+              return GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onHorizontalDragStart: (d) {
+                  if (ctrl == null || !isInit) return;
+                  _wasPlayingBeforeSeek = ctrl.value.isPlaying;
+                  if (_wasPlayingBeforeSeek) ctrl.pause();
+                  _progressTimer?.cancel();
+                  setState(() {
+                    _isSeeking = true;
+                    _seekProgress = progress;
+                  });
+                },
+                onHorizontalDragUpdate: (d) {
+                  if (ctrl == null || !isInit || !_isSeeking) return;
+                  final delta = d.delta.dx / trackWidth;
+                  setState(() {
+                    _seekProgress = (_seekProgress + delta).clamp(0.0, 1.0);
+                  });
+                },
+                onHorizontalDragEnd: (_) async {
+                  if (ctrl == null || !isInit) return;
+                  await ctrl.seekTo(duration * _seekProgress);
+                  if (_wasPlayingBeforeSeek) ctrl.play();
+                  _startProgressTimer();
+                  setState(() => _isSeeking = false);
+                },
+                onHorizontalDragCancel: () async {
+                  if (ctrl == null || !isInit) return;
+                  if (_wasPlayingBeforeSeek) ctrl.play();
+                  _startProgressTimer();
+                  setState(() => _isSeeking = false);
+                },
+                onTapDown: (d) async {
+                  if (ctrl == null || !isInit) return;
+                  final tapFraction =
+                      (d.localPosition.dx / trackWidth).clamp(0.0, 1.0);
+                  await ctrl.seekTo(duration * tapFraction);
+                  setState(() {});
+                },
+                child: SizedBox(
+                  height: 28,
+                  child: Stack(
+                    alignment: Alignment.center,
                     children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            _formatDuration(
-                                _isSeeking ? duration * _seekProgress : position),
-                            style: TextStyle(
-                                color: Colors.white.withOpacity(0.7),
-                                fontFamily: 'Tajawal',
-                                fontSize: 11,
-                                fontWeight: FontWeight.w500),
-                          ),
-                          Text(
-                            _formatDuration(duration),
-                            style: TextStyle(
-                                color: Colors.white.withOpacity(0.5),
-                                fontFamily: 'Tajawal',
-                                fontSize: 11),
-                          ),
-                        ],
+                      Container(
+                        height: 2.5,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.25),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
                       ),
-                      const SizedBox(height: 6),
-
-                      // شريط التمرير
-                      GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-
-                        onHorizontalDragStart: (d) {
-                          if (ctrl == null || !isInit) return;
-                          _wasPlayingBeforeSeek = ctrl.value.isPlaying;
-                          if (_wasPlayingBeforeSeek) ctrl.pause();
-                          _progressTimer?.cancel();
-                          setState(() {
-                            _isSeeking = true;
-                            _seekProgress = progress;
-                          });
-                        },
-
-                        onHorizontalDragUpdate: (d) {
-                          if (ctrl == null || !isInit || !_isSeeking) return;
-                          final delta = d.delta.dx / trackWidth;
-                          setState(() {
-                            _seekProgress =
-                                (_seekProgress + delta).clamp(0.0, 1.0);
-                          });
-                        },
-
-                        onHorizontalDragEnd: (_) async {
-                          if (ctrl == null || !isInit) return;
-                          await ctrl.seekTo(duration * _seekProgress);
-                          if (_wasPlayingBeforeSeek) ctrl.play();
-                          _startProgressTimer();
-                          setState(() => _isSeeking = false);
-                        },
-
-                        onHorizontalDragCancel: () async {
-                          if (ctrl == null || !isInit) return;
-                          if (_wasPlayingBeforeSeek) ctrl.play();
-                          _startProgressTimer();
-                          setState(() => _isSeeking = false);
-                        },
-
-                        onTapDown: (d) async {
-                          if (ctrl == null || !isInit) return;
-                          final tapFraction =
-                              (d.localPosition.dx / trackWidth).clamp(0.0, 1.0);
-                          await ctrl.seekTo(duration * tapFraction);
-                          setState(() {});
-                        },
-
-                        child: SizedBox(
-                          height: 36,
-                          child: Stack(
-                            alignment: Alignment.center,
-                            children: [
-                              // مسار الخلفية
-                              AnimatedContainer(
-                                duration: const Duration(milliseconds: 150),
-                                height: _isSeeking ? 5 : 3,
-                                decoration: BoxDecoration(
-                                  color: Colors.white.withOpacity(0.2),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 150),
+                          width: (displayProgress.clamp(0.0, 1.0) * trackWidth)
+                              .clamp(0.0, trackWidth),
+                          height: 2.5,
+                          decoration: BoxDecoration(
+                            color: AppColors.primary,
+                            borderRadius: BorderRadius.circular(8),
+                            boxShadow: [
+                              BoxShadow(
+                                color: AppColors.primary.withOpacity(0.5),
+                                blurRadius: 6,
                               ),
-
-                              // شريط التقدم مع أنيميشن سلس
-                              Align(
-                                alignment: Alignment.centerLeft,
-                                child: LayoutBuilder(
-                                  builder: (_, bc) => AnimatedContainer(
-                                    duration: _isSeeking
-                                        ? Duration.zero
-                                        : const Duration(milliseconds: 150),
-                                    width: (displayProgress.clamp(0.0, 1.0) *
-                                            trackWidth)
-                                        .clamp(0.0, trackWidth),
-                                    height: _isSeeking ? 5 : 3,
-                                    decoration: BoxDecoration(
-                                      gradient: LinearGradient(
-                                        colors: [
-                                          AppColors.primary,
-                                          AppColors.primary.withOpacity(0.85),
-                                        ],
-                                      ),
-                                      borderRadius: BorderRadius.circular(8),
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: AppColors.primary.withOpacity(
-                                              _isSeeking ? 0.7 : 0.4),
-                                          blurRadius: _isSeeking ? 10 : 5,
-                                          spreadRadius: _isSeeking ? 1 : 0,
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
-
-                              // وقت السحب المؤقت يظهر فوق المسار
-                              if (_isSeeking)
-                                Positioned(
-                                  left: (displayProgress.clamp(0.0, 1.0) *
-                                          trackWidth -
-                                      22)
-                                      .clamp(0, trackWidth - 44),
-                                  bottom: 22,
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(8),
-                                    child: BackdropFilter(
-                                      filter: ImageFilter.blur(
-                                          sigmaX: 8, sigmaY: 8),
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 9, vertical: 4),
-                                        decoration: BoxDecoration(
-                                          color: AppColors.primary
-                                              .withOpacity(0.85),
-                                          borderRadius:
-                                              BorderRadius.circular(8),
-                                        ),
-                                        child: Text(
-                                          _formatDuration(
-                                              duration * displayProgress),
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 11,
-                                            fontFamily: 'Tajawal',
-                                            fontWeight: FontWeight.w700,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
                             ],
                           ),
                         ),
                       ),
                     ],
-                  );
-                },
-              ),
-
-              // مسافة أسفل شريط التقدم (أسفل الشاشة)
-              SizedBox(height: botPad + 10),
-            ],
+                  ),
+                ),
+              );
+            },
           ),
-        ),
+
+          SizedBox(height: botPad + 80),
+        ],
       ),
     );
   }
@@ -1484,7 +1397,56 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
       ),
     );
   }
-
+// زر دندن الأحمر المميز
+  Widget _buildDandanButton() {
+    return GestureDetector(
+      onTap: () {},
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: AppColors.primary,
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.primary.withOpacity(0.5),
+                  blurRadius: 16,
+                  spreadRadius: 2,
+                ),
+              ],
+            ),
+            child: Center(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: Image.asset(
+                  'assets/images/logo.png',
+                  width: 24, height: 24, fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => const Icon(
+                    CupertinoIcons.music_note_2,
+                    color: Colors.white, size: 20,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'دندن',
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.9),
+              fontFamily: 'Tajawal',
+              fontSize: 9.5,
+              fontWeight: FontWeight.w600,
+              shadows: const [Shadow(color: Colors.black87, blurRadius: 6)],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
   // زر الإعجاب المتحرك
   Widget _buildLikeButton({required bool isLiked}) {
     return GestureDetector(

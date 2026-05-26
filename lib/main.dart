@@ -1143,7 +1143,7 @@ class _BottomArea extends StatelessWidget {
           },
         ),
         // Glass Nav Bar
-        const _GlassNavBar(),
+        const GlassNavBar(),
       ],
     );
   }
@@ -1155,13 +1155,13 @@ class _BottomArea extends StatelessWidget {
 // ─────────────────────────────────────────────
 //  GLASS NAV BAR — iOS Floating Glass Style (Fluid Drag & Blend)
 // ─────────────────────────────────────────────
-class _GlassNavBar extends StatefulWidget {
-  const _GlassNavBar();
+class GlassNavBar extends StatefulWidget {
+  const GlassNavBar();
   @override
-  State<_GlassNavBar> createState() => _GlassNavBarState();
+  State<GlassNavBar> createState() => GlassNavBarState();
 }
 
-class _GlassNavBarState extends State<_GlassNavBar>
+class GlassNavBarState extends State<GlassNavBar>
     with TickerProviderStateMixin {
   late AnimationController _indicatorCtrl;
   late AnimationController _scaleCtrl;

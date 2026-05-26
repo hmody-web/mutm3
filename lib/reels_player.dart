@@ -396,8 +396,7 @@ Future<void> _loadThumbnail(int index) async {
   }
 
   void _onPageChanged(int index) {
-    final prevCtrl = _controllers[_currentIndex];
-    prevCtrl?.pause();
+    // الإيقاف صار يدوياً قبل استدعاء هذه الدالة
 
     // أزل مراقب التصفح من الريل السابق
     _detachAutoScrollListener();
@@ -661,12 +660,16 @@ onVerticalDragUpdate: (details) {
   if (shouldGoNext && _currentIndex < widget.items.length - 1) {
     await animateDragOffset(from: dragAtEnd, to: -screenH);
     if (!mounted) return;
+    final prevIndex = _currentIndex;
     setState(() => _currentIndex++);
+    _controllers[prevIndex]?.pause();
     _onPageChanged(_currentIndex);
   } else if (shouldGoPrev && _currentIndex > 0) {
     await animateDragOffset(from: dragAtEnd, to: screenH);
     if (!mounted) return;
+    final prevIndex = _currentIndex;
     setState(() => _currentIndex--);
+    _controllers[prevIndex]?.pause();
     _onPageChanged(_currentIndex);
   } else {
     await animateDragOffset(from: dragAtEnd, to: 0);
@@ -875,50 +878,46 @@ Widget _buildVideoPage(int index, Size size) {
         //  الفيديو الرئيسي — دائماً بأبعاده الأصلية
         // ══════════════════════════════════════════════
 if (ctrl != null && isInit)
-  Builder(
-    builder: (context) {
-      final botPad = MediaQuery.of(context).padding.bottom;
-      final isPortrait = ctrl.value.aspectRatio < 1.0;
+  Positioned.fill(
+    child: Builder(
+      builder: (context) {
+        final botPad = MediaQuery.of(context).padding.bottom;
+        final isPortrait = ctrl.value.aspectRatio < 1.0;
 
-      // وضع ملء الشاشة — يشتغل لأي فيديو
-      if (_fillScreen) {
-        return Positioned.fill(
-          child: FittedBox(
+        if (_fillScreen) {
+          return FittedBox(
             fit: BoxFit.cover,
             child: SizedBox(
               width: ctrl.value.size.width,
               height: ctrl.value.size.height,
               child: VideoPlayer(ctrl),
             ),
-          ),
-        );
-      }
+          );
+        }
 
-      if (isPortrait) {
-        return Positioned(
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: botPad + 80,
-          child: Center(
-            child: Transform.scale(
-              scale: 1.07,
-              child: AspectRatio(
-                aspectRatio: ctrl.value.aspectRatio,
-                child: VideoPlayer(ctrl),
+        if (isPortrait) {
+          return Padding(
+            padding: EdgeInsets.only(bottom: botPad + 80),
+            child: Center(
+              child: Transform.scale(
+                scale: 1.07,
+                child: AspectRatio(
+                  aspectRatio: ctrl.value.aspectRatio,
+                  child: VideoPlayer(ctrl),
+                ),
               ),
             ),
-          ),
-        );
-      } else {
-        return Center(
-          child: AspectRatio(
-            aspectRatio: ctrl.value.aspectRatio,
-            child: VideoPlayer(ctrl),
-          ),
-        );
-      }
-    },
+          );
+        } else {
+          return Center(
+            child: AspectRatio(
+              aspectRatio: ctrl.value.aspectRatio,
+              child: VideoPlayer(ctrl),
+            ),
+          );
+        }
+      },
+    ),
   )
         else
           Center(
@@ -1231,7 +1230,7 @@ child: SizedBox(
             },
           ),
 
-          SizedBox(height: botPad + 54),
+          SizedBox(height: botPad + 50),
         ],
       ),
     );

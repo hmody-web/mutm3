@@ -673,49 +673,35 @@ return Scaffold(
 
   Widget _buildMainContent(Size size) {
     // ── جيسجر الخروج الأفقي ──
-    return GestureDetector(
-      onHorizontalDragStart: (details) {
-        // نبدأ جيسجر الخروج فقط من حافة الشاشة (أول 30px)
-        final isFromEdge = details.localPosition.dx < 30 ||
-            details.localPosition.dx > size.width - 30;
-        if (isFromEdge) {
-          _isDraggingExit = true;
-          _exitDragOffset = 0.0;
-        }
-      },
-      onHorizontalDragUpdate: (details) {
-        if (!_isDraggingExit) return;
-        setState(() {
-          _exitDragOffset += details.delta.dx;
-        });
-      },
-      onHorizontalDragEnd: (details) {
-        if (!_isDraggingExit) return;
-        _isDraggingExit = false;
-        final velocity = details.primaryVelocity ?? 0;
-        final threshold = size.width * 0.35;
+return GestureDetector(
+  onHorizontalDragStart: (details) {
+    _isDraggingExit = true;
+    _exitDragOffset = 0.0;
+  },
+  onHorizontalDragUpdate: (details) {
+    if (!_isDraggingExit) return;
+    setState(() {
+      _exitDragOffset += details.delta.dx;
+    });
+  },
+  onHorizontalDragEnd: (details) {
+    if (!_isDraggingExit) return;
+    _isDraggingExit = false;
+    final velocity = details.primaryVelocity ?? 0;
+    final threshold = size.width * 0.3;
 
-        if (_exitDragOffset.abs() > threshold || velocity.abs() > 600) {
-          // خروج من المشغل
-          setState(() => _exitDragOffset = 0.0);
-          Navigator.pop(context);
-        } else {
-          // الرجوع لمكانه
-          setState(() => _exitDragOffset = 0.0);
-        }
-      },
-      onHorizontalDragCancel: () {
-        if (!_isDraggingExit) return;
-        _isDraggingExit = false;
-        setState(() => _exitDragOffset = 0.0);
-      },
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 80),
-        transform: Matrix4.translationValues(
-          _isDraggingExit ? _exitDragOffset * 0.4 : 0.0,
-          0,
-          0,
-        ),
+    if (_exitDragOffset.abs() > threshold || velocity.abs() > 400) {
+      Navigator.pop(context);
+    } else {
+      setState(() => _exitDragOffset = 0.0);
+    }
+  },
+  onHorizontalDragCancel: () {
+    _isDraggingExit = false;
+    setState(() => _exitDragOffset = 0.0);
+  },
+  child: Transform.translate(
+    offset: Offset(_exitDragOffset, 0),
         child: Stack(
           children: [
             // ── صفحات الفيديو ──
@@ -760,12 +746,23 @@ return Scaffold(
                 ),
               ),
 
-            // ── الـ overlay (controls) ──
-            AnimatedOpacity(
-              opacity: _showControls ? 1.0 : 0.0,
-              duration: const Duration(milliseconds: 300),
-              child: _buildOverlay(size),
-            ),
+// ── الـ overlay (controls) ──
+AnimatedOpacity(
+  opacity: _showControls ? 1.0 : 0.0,
+  duration: const Duration(milliseconds: 300),
+  child: _buildOverlay(size),
+),
+
+// ── البار السفلي — يظهر دائماً ──
+Positioned(
+  bottom: 0,
+  left: 0,
+  right: 0,
+  child: _buildSongInfoBar(
+    item: widget.items[_currentIndex],
+    isPlaying: _controllers[_currentIndex]?.value.isPlaying ?? false,
+  ),
+),
           ],
         ),
       ),
@@ -830,23 +827,38 @@ if (ctrl != null && isInit)
     builder: (context) {
       final botPad = MediaQuery.of(context).padding.bottom;
       final isPortrait = ctrl.value.aspectRatio < 1.0;
-if (isPortrait) {
-  return Positioned(
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: botPad + 80, // استثناء البار السفلي
-    child: Center(
-      child: Transform.scale(
-        scale: 1.07,
-        child: AspectRatio(
-          aspectRatio: ctrl.value.aspectRatio,
-          child: VideoPlayer(ctrl),
-        ),
-      ),
-    ),
-  );
-} else {
+
+      // وضع ملء الشاشة — يشتغل لأي فيديو
+      if (_fillScreen) {
+        return Positioned.fill(
+          child: FittedBox(
+            fit: BoxFit.cover,
+            child: SizedBox(
+              width: ctrl.value.size.width,
+              height: ctrl.value.size.height,
+              child: VideoPlayer(ctrl),
+            ),
+          ),
+        );
+      }
+
+      if (isPortrait) {
+        return Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: botPad + 80,
+          child: Center(
+            child: Transform.scale(
+              scale: 1.07,
+              child: AspectRatio(
+                aspectRatio: ctrl.value.aspectRatio,
+                child: VideoPlayer(ctrl),
+              ),
+            ),
+          ),
+        );
+      } else {
         return Center(
           child: AspectRatio(
             aspectRatio: ctrl.value.aspectRatio,
@@ -1162,7 +1174,7 @@ child: SizedBox(
             },
           ),
 
-          SizedBox(height: botPad + 95),
+          SizedBox(height: botPad + 72),
         ],
       ),
     );
@@ -1407,7 +1419,7 @@ Widget _buildDandanButton() {
                 borderRadius: BorderRadius.circular(10),
                 child: Image.asset(
                   'assets/images/logo.png',
-                  width: 24, height: 24, fit: BoxFit.cover,
+                  width: 32, height: 232, fit: BoxFit.cover,
                   color: Colors.white,
                   colorBlendMode: BlendMode.srcIn,
                   errorBuilder: (_, __, ___) => const Icon(
@@ -1484,7 +1496,7 @@ Widget _buildDandanButton() {
                             ? CupertinoIcons.heart_fill
                             : CupertinoIcons.heart,
                         color: isLiked ? Colors.red : Colors.white,
-                        size: 19,
+                        size: 25,
                       ),
                     ),
                   ),

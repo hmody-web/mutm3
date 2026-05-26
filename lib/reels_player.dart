@@ -786,8 +786,8 @@ Widget _buildVideoPage(int index, Size size) {
           Positioned.fill(
             child: ClipRect(
               child: OverflowBox(
-                maxWidth: size.width * 2.2,
-                maxHeight: size.height * 2.2,
+                maxWidth: size.width * 3.5,
+                maxHeight: size.height * 3.5,
                 child: Center(
                   child: AspectRatio(
                     aspectRatio: ctrl.value.aspectRatio,
@@ -799,9 +799,9 @@ Widget _buildVideoPage(int index, Size size) {
           ),
           Positioned.fill(
             child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 60, sigmaY: 60),
+              filter: ImageFilter.blur(sigmaX: 25, sigmaY: 25),
               child: Container(
-                color: Colors.black.withOpacity(0.42),
+                color: Colors.black.withOpacity(0.20),
               ),
             ),
           ),
@@ -825,13 +825,36 @@ Widget _buildVideoPage(int index, Size size) {
         // ══════════════════════════════════════════════
         //  الفيديو الرئيسي — دائماً بأبعاده الأصلية
         // ══════════════════════════════════════════════
-        if (ctrl != null && isInit)
-          Center(
-            child: AspectRatio(
-              aspectRatio: ctrl.value.aspectRatio,
+if (ctrl != null && isInit)
+  Builder(
+    builder: (context) {
+      final botPad = MediaQuery.of(context).padding.bottom;
+      final isPortrait = ctrl.value.aspectRatio < 1.0;
+      if (isPortrait) {
+        return Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: botPad + 80, // استثناء البار السفلي
+          child: FittedBox(
+            fit: BoxFit.cover,
+            child: SizedBox(
+              width: ctrl.value.size.width,
+              height: ctrl.value.size.height,
               child: VideoPlayer(ctrl),
             ),
-          )
+          ),
+        );
+      } else {
+        return Center(
+          child: AspectRatio(
+            aspectRatio: ctrl.value.aspectRatio,
+            child: VideoPlayer(ctrl),
+          ),
+        );
+      }
+    },
+  )
         else
           Center(
             child: Column(
@@ -1052,35 +1075,11 @@ Widget _buildVideoPage(int index, Size size) {
     required bool isPlaying,
   }) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(18, 0, 18, 0),
+  padding: EdgeInsets.zero,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          // اسم الريل والوصف
-          Text(
-            title,
-            style: const TextStyle(
-              color: Colors.white,
-              fontFamily: 'Tajawal',
-              fontSize: 15,
-              fontWeight: FontWeight.w700,
-              shadows: [Shadow(color: Colors.black87, blurRadius: 6)],
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          const SizedBox(height: 3),
-          Text(
-            '4K • Offline Reel',
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.6),
-              fontFamily: 'Tajawal',
-              fontSize: 12,
-            ),
-          ),
-          const SizedBox(height: 12),
-
           // شريط التقدم فقط بدون مؤقتين
           LayoutBuilder(
             builder: (ctx, constraints) {
@@ -1126,36 +1125,34 @@ Widget _buildVideoPage(int index, Size size) {
                   await ctrl.seekTo(duration * tapFraction);
                   setState(() {});
                 },
-                child: SizedBox(
-                  height: 28,
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      Container(
-                        height: 2.5,
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.25),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
+child: SizedBox(
+  height: 3,
+  child: Stack(
+    alignment: Alignment.center,
+    children: [
+      Container(
+        height: 3,
+        decoration: const BoxDecoration(
+          color: Color(0x40FFFFFF),
+        ),
+      ),
                       Align(
                         alignment: Alignment.centerLeft,
                         child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 150),
-                          width: (displayProgress.clamp(0.0, 1.0) * trackWidth)
-                              .clamp(0.0, trackWidth),
-                          height: 2.5,
-                          decoration: BoxDecoration(
-                            color: AppColors.primary,
-                            borderRadius: BorderRadius.circular(8),
-                            boxShadow: [
-                              BoxShadow(
-                                color: AppColors.primary.withOpacity(0.5),
-                                blurRadius: 6,
-                              ),
-                            ],
-                          ),
-                        ),
+  duration: const Duration(milliseconds: 150),
+  width: (displayProgress.clamp(0.0, 1.0) * trackWidth)
+      .clamp(0.0, trackWidth),
+  height: 3,
+  decoration: BoxDecoration(
+    color: AppColors.primary,
+    boxShadow: [
+      BoxShadow(
+        color: AppColors.primary.withOpacity(0.5),
+        blurRadius: 6,
+      ),
+    ],
+  ),
+),
                       ),
                     ],
                   ),

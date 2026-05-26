@@ -648,71 +648,32 @@ onVerticalDragUpdate: (details) {
   });
 },
         onVerticalDragEnd: (details) async {
-          if (!_isDraggingPage) return;
-          _isDraggingPage = false;
+  if (!_isDraggingPage) return;
+  _isDraggingPage = false;
 
-          final velocity = details.primaryVelocity ?? 0;
-          final screenH = MediaQuery.of(context).size.height;
-          // الانتقال يحدث فقط عندما يصل المستخدم إلى الريل الثاني أو عند رفع الإصبع مع سرعة كافية
-          final threshold = screenH * 0.45; // 45% من الشاشة = وصل للريل الثاني
+  final velocity = details.primaryVelocity ?? 0;
+  final screenH = MediaQuery.of(context).size.height;
+  final dragAtEnd = _dragOffset;
 
-          int targetPage = _currentIndex;
+  final shouldGoNext = dragAtEnd < -(screenH * 0.5) || velocity < -900;
+  final shouldGoPrev = dragAtEnd > (screenH * 0.5) || velocity > 900;
 
-          if (_dragOffset < -threshold || velocity < -900) {
-            if (_currentIndex < widget.items.length - 1) {
-              targetPage = _currentIndex + 1;
-            }
-          } else if (_dragOffset > threshold || velocity > 900) {
-            if (_currentIndex > 0) {
-              targetPage = _currentIndex - 1;
-            }
-          }
-
-          _dragOffset = 0.0;
-          _swipeProgress = 0.0;
-if (targetPage != _currentIndex) {
-  final screenHeight = MediaQuery.of(context).size.height;
-
-final shouldChangePage =
-    _dragOffset.abs() > screenHeight * 0.5;
-
-double endOffset = 0;
-
-if (shouldChangePage) {
-  endOffset =
-      _dragOffset < 0
-          ? -screenHeight
-          : screenHeight;
-}
-
-await Future.delayed(Duration.zero);
-
-if (!mounted) return;
-
-await animateDragOffset(
-  from: _dragOffset,
-  to: endOffset,
-);
-
-if (shouldChangePage) {
-  final nextPage =
-      _dragOffset < 0
-          ? _currentIndex + 1
-          : _currentIndex - 1;
-
-  if (nextPage >= 0 &&
-      nextPage < widget.items.length) {
-    _pageController.jumpToPage(nextPage);
+  if (shouldGoNext && _currentIndex < widget.items.length - 1) {
+    await animateDragOffset(from: dragAtEnd, to: -screenH);
+    if (!mounted) return;
+    setState(() => _currentIndex++);
+    _onPageChanged(_currentIndex);
+  } else if (shouldGoPrev && _currentIndex > 0) {
+    await animateDragOffset(from: dragAtEnd, to: screenH);
+    if (!mounted) return;
+    setState(() => _currentIndex--);
+    _onPageChanged(_currentIndex);
+  } else {
+    await animateDragOffset(from: dragAtEnd, to: 0);
   }
-}
 
-setState(() {
-  _dragOffset = 0;
-  _swipeProgress = 0;
-});
-}
-
-        },
+  if (mounted) setState(() { _dragOffset = 0; _swipeProgress = 0; });
+},
 onVerticalDragCancel: () {
   if (!_isDraggingPage) return;
 
@@ -778,47 +739,28 @@ onHorizontalDragStart: (details) {
         child: Stack(
           children: [
             // ── صفحات الفيديو ──
-PageView.builder(
-  controller: _pageController,
-  scrollDirection: Axis.vertical,
-  physics: const NeverScrollableScrollPhysics(),
-  onPageChanged: _onPageChanged,
-  itemCount: widget.items.length,
-  itemBuilder: (_, index) {
+if (_currentIndex > 0)
+  Positioned.fill(
+    child: Transform.translate(
+      offset: Offset(0, -size.height + _dragOffset),
+      child: _buildVideoPage(_currentIndex - 1, size),
+    ),
+  ),
 
-    double offset = 0;
-
-    // الريلز الحالي
-    if (index == _currentIndex) {
-      offset = _dragOffset;
-    }
-
-    // الريلز الجاي (السحب لفوك)
-    else if (
-      index == _currentIndex + 1 &&
-      _dragOffset < 0
-    ) {
-      offset =
-          MediaQuery.of(context).size.height +
-          _dragOffset;
-    }
-
-    // الريلز السابق (السحب لجوه)
-    else if (
-      index == _currentIndex - 1 &&
-      _dragOffset > 0
-    ) {
-      offset =
-          -MediaQuery.of(context).size.height +
-          _dragOffset;
-    }
-
-    return Transform.translate(
-      offset: Offset(0, offset),
-      child: _buildVideoPage(index, size),
-    );
-  },
+Positioned.fill(
+  child: Transform.translate(
+    offset: Offset(0, _dragOffset),
+    child: _buildVideoPage(_currentIndex, size),
+  ),
 ),
+
+if (_currentIndex < widget.items.length - 1)
+  Positioned.fill(
+    child: Transform.translate(
+      offset: Offset(0, size.height + _dragOffset),
+      child: _buildVideoPage(_currentIndex + 1, size),
+    ),
+  ),
 
             // ── طبقة القلب عند الدبل تاب ──
             if (_showHeart)
@@ -1289,7 +1231,7 @@ child: SizedBox(
             },
           ),
 
-          SizedBox(height: botPad + 62),
+          SizedBox(height: botPad + 54),
         ],
       ),
     );

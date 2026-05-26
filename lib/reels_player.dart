@@ -262,7 +262,42 @@ class _ReelsVideoPlayerState extends State<ReelsVideoPlayer>
       // تجاهل أخطاء المزامنة بصمت — الفيديو سيستأنف من آخر موضعه
     }
   }
+Future<void> animateDragOffset({
+  required double from,
+  required double to,
+}) async {
+  const duration = Duration(milliseconds: 260);
 
+  final start = DateTime.now();
+
+  while (true) {
+    final elapsed =
+        DateTime.now().difference(start);
+
+    double t =
+        elapsed.inMilliseconds /
+        duration.inMilliseconds;
+
+    if (t >= 1) break;
+
+    t = Curves.easeOutCubic.transform(t);
+
+    setState(() {
+      _dragOffset =
+          from + (to - from) * t;
+    });
+
+    await Future.delayed(
+      const Duration(milliseconds: 16),
+    );
+  }
+
+  if (!mounted) return;
+
+  setState(() {
+    _dragOffset = to;
+  });
+}
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -636,11 +671,45 @@ onVerticalDragUpdate: (details) {
           _dragOffset = 0.0;
           _swipeProgress = 0.0;
 if (targetPage != _currentIndex) {
-  await _pageController.animateToPage(
-  targetPage,
-  duration: const Duration(milliseconds: 220),
-  curve: Curves.easeOutCubic,
+  final screenHeight = MediaQuery.of(context).size.height;
+
+final shouldChangePage =
+    _dragOffset.abs() > screenHeight * 0.5;
+
+double endOffset = 0;
+
+if (shouldChangePage) {
+  endOffset =
+      _dragOffset < 0
+          ? -screenHeight
+          : screenHeight;
+}
+
+await Future.delayed(Duration.zero);
+
+if (!mounted) return;
+
+await animateDragOffset(
+  from: _dragOffset,
+  to: endOffset,
 );
+
+if (shouldChangePage) {
+  final nextPage =
+      _dragOffset < 0
+          ? _currentIndex + 1
+          : _currentIndex - 1;
+
+  if (nextPage >= 0 &&
+      nextPage < widget.items.length) {
+    _pageController.jumpToPage(nextPage);
+  }
+}
+
+setState(() {
+  _dragOffset = 0;
+  _swipeProgress = 0;
+});
 }
 
         },
@@ -1180,8 +1249,11 @@ if (ctrl != null && isInit)
                   setState(() {});
                 },
 child: SizedBox(
-  height: 3,
-  child: Stack(
+  height: 28,
+  child: Center(
+    child: SizedBox(
+      height: 3,
+      child: Stack(
     alignment: Alignment.center,
     children: [
       Container(
@@ -1210,6 +1282,8 @@ child: SizedBox(
                       ),
                     ],
                   ),
+                        ), 
+    ), 
                 ),
               );
             },

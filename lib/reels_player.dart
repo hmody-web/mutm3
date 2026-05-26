@@ -906,17 +906,17 @@ return Scaffold(
         // ═══════════════════════════════════════
         Positioned(
           right: 14,
-          bottom: botPad + 90 + 66,
+          bottom: botPad + 100,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               // ── لوجو دندن الأحمر ──
               _buildDandanButton(),
-              const SizedBox(height: 16),
+              const SizedBox(height: 10),
 
               // ── زر الإعجاب ──
               _buildLikeButton(isLiked: _isCurrentLiked()),
-              const SizedBox(height: 16),
+              const SizedBox(height: 10),
 
               // ── زر ملء الشاشة ──
               _buildSideButton(
@@ -931,16 +931,8 @@ return Scaffold(
                 onTap: () => setState(() => _fillScreen = !_fillScreen),
                 isActive: _fillScreen,
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 10),
 
-              // ── زر المشاركة ──
-              _buildSideButton(
-                child: const Icon(CupertinoIcons.share,
-                    color: Colors.white, size: 20),
-                label: 'مشاركة',
-                onTap: () {},
-              ),
-              const SizedBox(height: 16),
 
               // ── المزيد ──
               _buildSideButton(
@@ -1036,15 +1028,15 @@ return Scaffold(
         ),
 
         // ═══════════════════════════════════════
-        //  شريط التنقل السفلي فوق الريلز
+        //  شريط معلومات الأغنية — اسم + وصف + موجات
         // ═══════════════════════════════════════
         Positioned(
           bottom: 0,
           left: 0,
           right: 0,
-          child: Transform.translate(
-            offset: const Offset(0, 8),
-            child: const GlassNavBar(),
+          child: _buildSongInfoBar(
+            item: widget.items[_currentIndex],
+            isPlaying: _controllers[_currentIndex]?.value.isPlaying ?? false,
           ),
         ),
       ],
@@ -1397,36 +1389,37 @@ return Scaffold(
       ),
     );
   }
-// زر دندن الأحمر المميز
-  Widget _buildDandanButton() {
+Widget _buildDandanButton() {
     return GestureDetector(
       onTap: () {},
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 48,
-            height: 48,
+            width: 56,
+            height: 56,
             decoration: BoxDecoration(
-              color: AppColors.primary,
+              color: Colors.white,
               shape: BoxShape.circle,
               boxShadow: [
                 BoxShadow(
-                  color: AppColors.primary.withOpacity(0.5),
-                  blurRadius: 16,
-                  spreadRadius: 2,
+                  color: Colors.white.withOpacity(0.35),
+                  blurRadius: 20,
+                  spreadRadius: 3,
                 ),
               ],
             ),
             child: Center(
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: BorderRadius.circular(12),
                 child: Image.asset(
                   'assets/images/logo.png',
-                  width: 24, height: 24, fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => const Icon(
+                  width: 32, height: 32, fit: BoxFit.cover,
+                  color: AppColors.primary,
+                  colorBlendMode: BlendMode.srcIn,
+                  errorBuilder: (_, __, ___) => Icon(
                     CupertinoIcons.music_note_2,
-                    color: Colors.white, size: 20,
+                    color: AppColors.primary, size: 26,
                   ),
                 ),
               ),
@@ -1435,12 +1428,12 @@ return Scaffold(
           const SizedBox(height: 4),
           Text(
             'دندن',
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.9),
+            style: const TextStyle(
+              color: Colors.white,
               fontFamily: 'Tajawal',
               fontSize: 9.5,
-              fontWeight: FontWeight.w600,
-              shadows: const [Shadow(color: Colors.black87, blurRadius: 6)],
+              fontWeight: FontWeight.w700,
+              shadows: [Shadow(color: Colors.black87, blurRadius: 6)],
             ),
           ),
         ],
@@ -1523,6 +1516,129 @@ return Scaffold(
       ),
     );
   }
+
+// ═══════════════════════════════════════════════════════
+  //  شريط معلومات الأغنية السفلي — بديل NavBar
+  // ═══════════════════════════════════════════════════════
+  Widget _buildSongInfoBar({
+    required LocalMediaItem item,
+    required bool isPlaying,
+  }) {
+    final title = item.title.replaceAll(RegExp(r'\.\w+$'), '');
+    final botPad = MediaQuery.of(context).padding.bottom;
+
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+        child: Container(
+          padding: EdgeInsets.fromLTRB(20, 14, 20, botPad + 14),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Colors.black.withOpacity(0.45),
+                Colors.black.withOpacity(0.75),
+              ],
+            ),
+            border: Border(
+              top: BorderSide(
+                color: Colors.white.withOpacity(0.08),
+                width: 0.8,
+              ),
+            ),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              // أيقونة الموسيقى
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      AppColors.primary.withOpacity(0.85),
+                      Colors.red.shade800.withOpacity(0.7),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppColors.primary.withOpacity(0.4),
+                      blurRadius: 10,
+                      spreadRadius: 0,
+                    ),
+                  ],
+                ),
+                child: const Icon(
+                  CupertinoIcons.music_note,
+                  color: Colors.white,
+                  size: 18,
+                ),
+              ),
+              const SizedBox(width: 14),
+
+              // اسم الأغنية + الوصف
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontFamily: 'Tajawal',
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        shadows: [Shadow(color: Colors.black54, blurRadius: 4)],
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      '4K • Offline Reel',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.5),
+                        fontFamily: 'Tajawal',
+                        fontSize: 10.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 14),
+
+              // موجات صوتية متحركة
+              SizedBox(
+                height: 28,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: List.generate(11, (i) {
+                    return _SoundWaveBar(
+                      index: i,
+                      isPlaying: isPlaying,
+                      color: i % 3 == 0
+                          ? AppColors.primary
+                          : i % 3 == 1
+                              ? Colors.white.withOpacity(0.7)
+                              : Colors.red.withOpacity(0.8),
+                    );
+                  }),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
 }
 
 // ═══════════════════════════════════════════════════════

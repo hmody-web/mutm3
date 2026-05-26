@@ -605,25 +605,14 @@ return Scaffold(
           _isDraggingPage = true;
           _swipeProgress = 0.0;
         },
-        onVerticalDragUpdate: (details) {
-          if (!_isDraggingPage) return;
-          setState(() {
-            _dragOffset += details.delta.dy;
-            // حساب تقدم السحب (0.0 = لم يتحرك، 1.0 = ريل جديد كامل)
-            _swipeProgress = (_dragOffset.abs() / MediaQuery.of(context).size.height).clamp(0.0, 1.0);
-          });
-          // تحريك الـ PageView يدوياً بناءً على الإزاحة
-          final currentPagePixels = _currentIndex * MediaQuery.of(context).size.height;
-          double effectiveOffset = _dragOffset;
-          final isAtFirst = _currentIndex == 0 && _dragOffset > 0;
-          final isAtLast = _currentIndex == widget.items.length - 1 && _dragOffset < 0;
-          if (isAtFirst || isAtLast) {
-            effectiveOffset = _dragOffset * 0.25; // مقاومة 75%
-          }
-          final newOffset = currentPagePixels - effectiveOffset;
-          _pageController.jumpTo(newOffset.clamp(0.0, (widget.items.length - 1) * MediaQuery.of(context).size.height));
-        },
-        onVerticalDragEnd: (details) {
+onVerticalDragUpdate: (details) {
+  if (!_isDraggingPage) return;
+
+  setState(() {
+    _dragOffset += details.delta.dy;
+  });
+},
+        onVerticalDragEnd: (details) async {
           if (!_isDraggingPage) return;
           _isDraggingPage = false;
 
@@ -646,23 +635,25 @@ return Scaffold(
 
           _dragOffset = 0.0;
           _swipeProgress = 0.0;
-          _pageController.animateToPage(
-            targetPage,
-            duration: const Duration(milliseconds: 380),
-            curve: Curves.easeOutCubic,
-          );
+if (targetPage != _currentIndex) {
+  await _pageController.animateToPage(
+  targetPage,
+  duration: const Duration(milliseconds: 220),
+  curve: Curves.easeOutCubic,
+);
+}
+
         },
-        onVerticalDragCancel: () {
-          if (!_isDraggingPage) return;
-          _isDraggingPage = false;
-          _dragOffset = 0.0;
-          _swipeProgress = 0.0;
-          _pageController.animateToPage(
-            _currentIndex,
-            duration: const Duration(milliseconds: 380),
-            curve: Curves.easeOutCubic,
-          );
-        },
+onVerticalDragCancel: () {
+  if (!_isDraggingPage) return;
+
+  _isDraggingPage = false;
+
+  setState(() {
+    _dragOffset = 0.0;
+    _swipeProgress = 0.0;
+  });
+},
         // ── النقر والدبل تاب ──
         onTap: _onSingleTap,
         onDoubleTap: _onDoubleTap,
@@ -674,10 +665,23 @@ return Scaffold(
   Widget _buildMainContent(Size size) {
     // ── جيسجر الخروج الأفقي ──
 return GestureDetector(
-  onHorizontalDragStart: (details) {
+onHorizontalDragStart: (details) {
+  final screenWidth = MediaQuery.of(context).size.width;
+  final dx = details.globalPosition.dx;
+
+  // السماح بالسحب فقط من 15% من الحواف
+  final edgeSize = screenWidth * 0.15;
+
+  final fromLeftEdge = dx <= edgeSize;
+  final fromRightEdge = dx >= screenWidth - edgeSize;
+
+  if (fromLeftEdge || fromRightEdge) {
     _isDraggingExit = true;
     _exitDragOffset = 0.0;
-  },
+  } else {
+    _isDraggingExit = false;
+  }
+},
   onHorizontalDragUpdate: (details) {
     if (!_isDraggingExit) return;
     setState(() {
@@ -705,16 +709,47 @@ return GestureDetector(
         child: Stack(
           children: [
             // ── صفحات الفيديو ──
-            PageView.builder(
-              controller: _pageController,
-              scrollDirection: Axis.vertical,
-              physics: const NeverScrollableScrollPhysics(),
-              onPageChanged: _onPageChanged,
-              itemCount: widget.items.length,
-              itemBuilder: (_, index) {
-                return _buildVideoPage(index, size);
-              },
-            ),
+PageView.builder(
+  controller: _pageController,
+  scrollDirection: Axis.vertical,
+  physics: const NeverScrollableScrollPhysics(),
+  onPageChanged: _onPageChanged,
+  itemCount: widget.items.length,
+  itemBuilder: (_, index) {
+
+    double offset = 0;
+
+    // الريلز الحالي
+    if (index == _currentIndex) {
+      offset = _dragOffset;
+    }
+
+    // الريلز الجاي (السحب لفوك)
+    else if (
+      index == _currentIndex + 1 &&
+      _dragOffset < 0
+    ) {
+      offset =
+          MediaQuery.of(context).size.height +
+          _dragOffset;
+    }
+
+    // الريلز السابق (السحب لجوه)
+    else if (
+      index == _currentIndex - 1 &&
+      _dragOffset > 0
+    ) {
+      offset =
+          -MediaQuery.of(context).size.height +
+          _dragOffset;
+    }
+
+    return Transform.translate(
+      offset: Offset(0, offset),
+      child: _buildVideoPage(index, size),
+    );
+  },
+),
 
             // ── طبقة القلب عند الدبل تاب ──
             if (_showHeart)
@@ -758,9 +793,15 @@ Positioned(
   bottom: 0,
   left: 0,
   right: 0,
-  child: _buildSongInfoBar(
-    item: widget.items[_currentIndex],
-    isPlaying: _controllers[_currentIndex]?.value.isPlaying ?? false,
+  child: GestureDetector(
+    behavior: HitTestBehavior.opaque,
+    onTap: () {},
+    onVerticalDragStart: (_) {},
+    onHorizontalDragStart: (_) {},
+    child: _buildSongInfoBar(
+      item: widget.items[_currentIndex],
+      isPlaying: _controllers[_currentIndex]?.value.isPlaying ?? false,
+    ),
   ),
 ),
           ],
@@ -936,18 +977,18 @@ if (ctrl != null && isInit)
         //  الجانب الأيمن — عمود الأزرار المحسّن
         // ═══════════════════════════════════════
         Positioned(
-          right: 14,
-          bottom: botPad + 110,
+          right: 12,
+          bottom: botPad + 85,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               // ── لوجو دندن الأحمر ──
               _buildDandanButton(),
-              const SizedBox(height: 10),
+              const SizedBox(height: 8),
 
               // ── زر الإعجاب ──
               _buildLikeButton(isLiked: _isCurrentLiked()),
-              const SizedBox(height: 10),
+              const SizedBox(height: 8),
 
               // ── زر ملء الشاشة ──
               _buildSideButton(
@@ -962,7 +1003,7 @@ if (ctrl != null && isInit)
                 onTap: () => setState(() => _fillScreen = !_fillScreen),
                 isActive: _fillScreen,
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 8),
 
 
               // ── المزيد ──
@@ -1174,7 +1215,7 @@ child: SizedBox(
             },
           ),
 
-          SizedBox(height: botPad + 72),
+          SizedBox(height: botPad + 62),
         ],
       ),
     );
@@ -1395,56 +1436,67 @@ child: SizedBox(
     );
   }
 Widget _buildDandanButton() {
-    return GestureDetector(
-      onTap: () {},
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: AppColors.primary,
-              shape: BoxShape.circle,
-              boxShadow: [
-                BoxShadow(
-                  color: AppColors.primary.withOpacity(0.5),
-                  blurRadius: 16,
-                  spreadRadius: 2,
+  return GestureDetector(
+    onTap: () {},
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(26),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+            child: Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.13),
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: Colors.white.withOpacity(0.22),
+                  width: 1,
                 ),
-              ],
-            ),
-            child: Center(
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(10),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.22),
+                    blurRadius: 8,
+                  ),
+                ],
+              ),
+              child: Center(
                 child: Image.asset(
                   'assets/images/logo.png',
-                  width: 32, height: 232, fit: BoxFit.cover,
+                  width: 28,
+                  height: 28,
+                  fit: BoxFit.contain,
                   color: Colors.white,
                   colorBlendMode: BlendMode.srcIn,
                   errorBuilder: (_, __, ___) => const Icon(
                     CupertinoIcons.music_note_2,
-                    color: Colors.white, size: 20,
+                    color: Colors.white,
+                    size: 20,
                   ),
                 ),
               ),
             ),
           ),
-          const SizedBox(height: 4),
-          Text(
-            'دندن',
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.9),
-              fontFamily: 'Tajawal',
-              fontSize: 9.5,
-              fontWeight: FontWeight.w600,
-              shadows: const [Shadow(color: Colors.black87, blurRadius: 6)],
-            ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'دندن',
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.8),
+            fontFamily: 'Tajawal',
+            fontSize: 9.5,
+            fontWeight: FontWeight.w600,
+            shadows: const [
+              Shadow(color: Colors.black87, blurRadius: 6),
+            ],
           ),
-        ],
-      ),
-    );
-  }
+        ),
+      ],
+    ),
+  );
+}
   // زر الإعجاب المتحرك
   Widget _buildLikeButton({required bool isLiked}) {
     return GestureDetector(
@@ -1537,7 +1589,7 @@ Widget _buildSongInfoBar({
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
         child: Container(
-          padding: EdgeInsets.fromLTRB(20, 14, 20, botPad + 14),
+          padding: EdgeInsets.fromLTRB(20, 14, 20, botPad + 4),
           decoration: BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topCenter,
@@ -1626,7 +1678,7 @@ Widget _buildSongInfoBar({
                     ),
                     const SizedBox(height: 3),
                     Text(
-                      '4K • Offline Reel',
+                      'DNDN • Offline Reel',
                       style: TextStyle(
                         color: Colors.white.withOpacity(0.5),
                         fontFamily: 'Tajawal',

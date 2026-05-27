@@ -682,31 +682,39 @@ body: RawGestureDetector(
                 await Future.delayed(const Duration(milliseconds: 16));
               }
               if (mounted) setState(() { _pinchScale = 1.0; _isPinching = false; });
-            } else if (_isDraggingPage) {
-              _isDraggingPage = false;
-              final screenH = MediaQuery.of(context).size.height;
-              final dragAtEnd = _dragOffset;
-              final shouldGoNext = dragAtEnd < -(screenH * 0.5);
-              final shouldGoPrev = dragAtEnd > (screenH * 0.5);
-              if (shouldGoNext && _currentIndex < widget.items.length - 1) {
-                await animateDragOffset(from: dragAtEnd, to: -screenH);
-                if (!mounted) return;
-                final prevIndex = _currentIndex;
-                setState(() => _currentIndex++);
-                _controllers[prevIndex]?.pause();
-                _onPageChanged(_currentIndex);
-              } else if (shouldGoPrev && _currentIndex > 0) {
-                await animateDragOffset(from: dragAtEnd, to: screenH);
-                if (!mounted) return;
-                final prevIndex = _currentIndex;
-                setState(() => _currentIndex--);
-                _controllers[prevIndex]?.pause();
-                _onPageChanged(_currentIndex);
-              } else {
-                await animateDragOffset(from: dragAtEnd, to: 0);
-              }
-              if (mounted) setState(() { _dragOffset = 0; _swipeProgress = 0; });
-            }
+} else if (_isDraggingPage) {
+  _isDraggingPage = false;
+  final screenH = MediaQuery.of(context).size.height;
+  final dragAtEnd = _dragOffset;
+  final velocityY = details.velocity.pixelsPerSecond.dy;
+
+  // سحب سريع (fling): أي مسافة تكفي
+  final isFlingDown = velocityY > 600;
+  final isFlingUp = velocityY < -600;
+
+  // سحب بطيء: يحتاج 50%
+  final shouldGoNext = isFlingUp || dragAtEnd < -(screenH * 0.5);
+  final shouldGoPrev = isFlingDown || dragAtEnd > (screenH * 0.5);
+
+  if (shouldGoNext && _currentIndex < widget.items.length - 1) {
+    await animateDragOffset(from: dragAtEnd, to: -screenH);
+    if (!mounted) return;
+    final prevIndex = _currentIndex;
+    setState(() => _currentIndex++);
+    _controllers[prevIndex]?.pause();
+    _onPageChanged(_currentIndex);
+  } else if (shouldGoPrev && _currentIndex > 0) {
+    await animateDragOffset(from: dragAtEnd, to: screenH);
+    if (!mounted) return;
+    final prevIndex = _currentIndex;
+    setState(() => _currentIndex--);
+    _controllers[prevIndex]?.pause();
+    _onPageChanged(_currentIndex);
+  } else {
+    await animateDragOffset(from: dragAtEnd, to: 0);
+  }
+  if (mounted) setState(() { _dragOffset = 0; _swipeProgress = 0; });
+}
           };
       },
     ),
@@ -932,20 +940,17 @@ if (ctrl != null && isInit)
           );
         }
 
-        if (isPortrait) {
-          return Padding(
-            padding: EdgeInsets.only(bottom: botPad + 80),
-            child: Center(
-              child: Transform.scale(
-                scale: 1.07,
-                child: AspectRatio(
-                  aspectRatio: ctrl.value.aspectRatio,
-                  child: VideoPlayer(ctrl),
-                ),
-              ),
-            ),
-          );
-        } else {
+if (isPortrait) {
+  return Padding(
+    padding: EdgeInsets.only(bottom: botPad + 80),
+    child: Center(
+      child: AspectRatio(
+        aspectRatio: ctrl.value.aspectRatio,
+        child: VideoPlayer(ctrl),
+      ),
+    ),
+  );
+} else {
           return Center(
             child: AspectRatio(
               aspectRatio: ctrl.value.aspectRatio,

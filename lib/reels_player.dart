@@ -881,19 +881,17 @@ Widget _buildVideoPage(int index, Size size) {
         //  خلفية ضبابية سينمائية
 if (ctrl != null && isInit) ...[
   Positioned.fill(
-    child: RepaintBoundary(
+    child: ClipRect(
       child: Stack(
         fit: StackFit.expand,
         children: [
-          ClipRect(
-            child: OverflowBox(
-              maxWidth: size.width * 3.5,
-              maxHeight: size.height * 3.5,
-              child: Center(
-                child: AspectRatio(
-                  aspectRatio: ctrl.value.aspectRatio,
-                  child: VideoPlayer(ctrl),
-                ),
+          OverflowBox(
+            maxWidth: size.width * 3.5,
+            maxHeight: size.height * 3.5,
+            child: Center(
+              child: AspectRatio(
+                aspectRatio: ctrl.value.aspectRatio,
+                child: VideoPlayer(ctrl),
               ),
             ),
           ),

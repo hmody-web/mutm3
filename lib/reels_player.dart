@@ -653,35 +653,36 @@ body: RawGestureDetector(
               _swipeProgress = 0.0;
             }
           }
-          ..onUpdate = (details) {
-            if (_isPinching) {
-              setState(() {
-                _pinchScale = details.scale;
-                _pinchFocalPoint = details.localFocalPoint;
-              });
-            } else if (_isDraggingPage) {
-              setState(() => _dragOffset += details.focalPointDelta.dy);
-            }
-          }
-          ..onEnd = (details) async {
-            if (_isPinching) {
-              final wasZoomIn = _pinchScale > 1.1;
-              final wasZoomOut = _pinchScale < 0.85;
-              if (wasZoomOut) {
-                setState(() => _showControls = false);
-              }
-              // أنيميشن رجوع للحجم الطبيعي
-              final startScale = _pinchScale;
-              final startTime = DateTime.now();
-              const dur = Duration(milliseconds: 350);
-              while (true) {
-                final t = DateTime.now().difference(startTime).inMilliseconds / dur.inMilliseconds;
-                if (t >= 1 || !mounted) break;
-                final curved = Curves.easeOutCubic.transform(t);
-                setState(() => _pinchScale = startScale + (1.0 - startScale) * curved);
-                await Future.delayed(const Duration(milliseconds: 16));
-              }
-              if (mounted) setState(() { _pinchScale = 1.0; _isPinching = false; });
+..onUpdate = (details) {
+  if (_isPinching) {
+    // نحدّ التصغير بـ 0.92 فقط — تصغير بسيط جداً
+    final clampedScale = details.scale.clamp(0.92, 1.08);
+    setState(() {
+      _pinchScale = clampedScale;
+      _pinchFocalPoint = details.localFocalPoint;
+    });
+  } else if (_isDraggingPage) {
+    setState(() => _dragOffset += details.focalPointDelta.dy);
+  }
+}
+..onEnd = (details) async {
+  if (_isPinching) {
+    final wasZoomOut = _pinchScale < 0.97;
+    if (wasZoomOut) {
+      setState(() => _showControls = false);
+    }
+    // أنيميشن رجوع نابض للحجم الأصلي
+    final startScale = _pinchScale;
+    final startTime = DateTime.now();
+    const dur = Duration(milliseconds: 400);
+    while (true) {
+      final t = DateTime.now().difference(startTime).inMilliseconds / dur.inMilliseconds;
+      if (t >= 1 || !mounted) break;
+      final curved = Curves.elasticOut.transform(t);
+      setState(() => _pinchScale = startScale + (1.0 - startScale) * curved);
+      await Future.delayed(const Duration(milliseconds: 16));
+    }
+    if (mounted) setState(() { _pinchScale = 1.0; _isPinching = false; });
 } else if (_isDraggingPage) {
   _isDraggingPage = false;
   final screenH = MediaQuery.of(context).size.height;
@@ -926,7 +927,8 @@ if (ctrl != null && isInit) ...[
         // ══════════════════════════════════════════════
 if (ctrl != null && isInit)
   Positioned.fill(
-    child: Builder(
+    child: RepaintBoundary(
+      child: Builder(
       builder: (context) {
         final botPad = MediaQuery.of(context).padding.bottom;
         final isPortrait = ctrl.value.aspectRatio < 1.0;
@@ -965,9 +967,10 @@ if (isPortrait) {
         }
       },
     ),
+),
   )
-        else
-          Center(
+else
+  Center(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [

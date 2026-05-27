@@ -878,46 +878,48 @@ Widget _buildVideoPage(int index, Size size) {
       children: [
         // ══════════════════════════════════════════════
         //  خلفية ضبابية سينمائية
-        // ══════════════════════════════════════════════
-        if (ctrl != null && isInit) ...[
-          Positioned.fill(
-            child: ClipRect(
-              child: OverflowBox(
-                maxWidth: size.width * 3.5,
-                maxHeight: size.height * 3.5,
-                child: Center(
-                  child: AspectRatio(
-                    aspectRatio: ctrl.value.aspectRatio,
-                    child: VideoPlayer(ctrl),
-                  ),
+if (ctrl != null && isInit) ...[
+  Positioned.fill(
+    child: RepaintBoundary(
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          ClipRect(
+            child: OverflowBox(
+              maxWidth: size.width * 3.5,
+              maxHeight: size.height * 3.5,
+              child: Center(
+                child: AspectRatio(
+                  aspectRatio: ctrl.value.aspectRatio,
+                  child: VideoPlayer(ctrl),
                 ),
               ),
             ),
           ),
-          Positioned.fill(
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
-              child: Container(
-                color: Colors.black.withOpacity(0.20),
-              ),
-            ),
-          ),
-          Positioned.fill(
+          BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
             child: Container(
-              decoration: BoxDecoration(
-                gradient: RadialGradient(
-                  center: Alignment.center,
-                  radius: 1.2,
-                  colors: [
-                    Colors.transparent,
-                    Colors.black.withOpacity(0.6),
-                  ],
-                ),
+              color: Colors.black.withOpacity(0.20),
+            ),
+          ),
+          Container(
+            decoration: BoxDecoration(
+              gradient: RadialGradient(
+                center: Alignment.center,
+                radius: 1.2,
+                colors: [
+                  Colors.transparent,
+                  Colors.black.withOpacity(0.6),
+                ],
               ),
             ),
           ),
-        ] else
-          Container(color: Colors.black),
+        ],
+      ),
+    ),
+  ),
+] else
+  Container(color: Colors.black),
 
         // ══════════════════════════════════════════════
         //  الفيديو الرئيسي — دائماً بأبعاده الأصلية
@@ -944,9 +946,12 @@ if (isPortrait) {
   return Padding(
     padding: EdgeInsets.only(bottom: botPad + 80),
     child: Center(
-      child: AspectRatio(
-        aspectRatio: ctrl.value.aspectRatio,
-        child: VideoPlayer(ctrl),
+      child: Transform.scale(
+        scale: 1.07,
+        child: AspectRatio(
+          aspectRatio: ctrl.value.aspectRatio,
+          child: VideoPlayer(ctrl),
+        ),
       ),
     ),
   );

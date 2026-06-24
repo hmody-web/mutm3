@@ -32,6 +32,42 @@ import 'settings_page.dart';
 import 'reels_player.dart';
 
 
+// يمنع فتح أكثر من نسخة من المشغل الكامل داخل المجلدات.
+// يبقى true إلى أن تُغلق صفحة المشغل فعلياً، وليس فقط أثناء أنيميشن الفتح.
+bool _folderFullPlayerRouteOpen = false;
+
+Future<void> _openFolderFullScreenPlayer(BuildContext context) async {
+  if (_folderFullPlayerRouteOpen) return;
+  if (!context.mounted) return;
+
+  final navigator = Navigator.maybeOf(context, rootNavigator: true) ?? Navigator.of(context);
+  _folderFullPlayerRouteOpen = true;
+
+  try {
+    await navigator.push(
+      PageRouteBuilder(
+        pageBuilder: (_, __, ___) => const FullScreenPlayer(),
+        transitionsBuilder: (_, animation, __, child) {
+          return SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, 1),
+              end: Offset.zero,
+            ).animate(CurvedAnimation(
+              parent: animation,
+              curve: Curves.easeOutCubic,
+            )),
+            child: child,
+          );
+        },
+      ),
+    );
+  } catch (_) {
+    // لا نترك القفل عالق إذا صار خطأ أثناء فتح/إغلاق الصفحة.
+  } finally {
+    _folderFullPlayerRouteOpen = false;
+  }
+}
+
 // ═══════════════════════════════════════════════════════════
 //  MODEL — مجلد موسيقى
 // ═══════════════════════════════════════════════════════════
@@ -2598,7 +2634,7 @@ if (!_selectionMode) ...[
               return _ModernMusicCard(
                 item: item,
                 folders: _folders,
-                onTap: () {
+                onTap: () async {
                   // ✦ وضع الريلز — يفتح مشغل الريلز للفيديوهات فقط
                   if (ReelsModeNotifier.instance.value && item.isVideo) {
 final videoItems =
@@ -2645,11 +2681,15 @@ transitionDuration: const Duration(milliseconds: 400),
                   }
 
                   // المشغل الأصلي (صوت أو وضع الريلز معطّل)
+                  if (ReelsModeNotifier.instance.value) {
+                    await ReelsModeNotifier.instance.set(false);
+                    if (mounted) setState(() => _reelsMode = false);
+                  }
                   final playQueue = _unfolderiedItems;
-audioService.playList(
-  List<LocalMediaItem>.unmodifiable(playQueue),
-  playQueue.indexOf(item),
-);
+                  await audioService.playList(
+                    List<LocalMediaItem>.unmodifiable(playQueue),
+                    playQueue.indexOf(item),
+                  );
                   Navigator.of(context).push(
                     PageRouteBuilder(
                       pageBuilder: (_, __, ___) => const FullScreenPlayer(),
@@ -3576,11 +3616,42 @@ Future<void> _saveViewMode(bool value) async {
                           item: item,
                           folderColor: widget.folder.color,
                           allItems: _items,
-                          onTap: () {
-                            audioService.playList(
+                          onTap: () async {
+                            if (ReelsModeNotifier.instance.value && item.isVideo) {
+                              final videoItems = _items.where((e) => e.isVideo).toList();
+                              final videoIndex = videoItems.indexWhere((e) => e.path == item.path);
+                              Navigator.of(context).push(
+                                PageRouteBuilder(
+                                  pageBuilder: (_, __, ___) => ReelsVideoPlayer(
+                                    items: videoItems,
+                                    initialIndex: videoIndex < 0 ? 0 : videoIndex,
+                                    folders: const [],
+                                    onFoldersChanged: () async {},
+                                  ),
+                                  transitionsBuilder: (_, anim, __, child) {
+                                    final slideIn = Tween<Offset>(
+                                      begin: const Offset(1.0, 0),
+                                      end: Offset.zero,
+                                    ).animate(CurvedAnimation(parent: anim, curve: Curves.easeOutCubic));
+                                    return SlideTransition(position: slideIn, child: child);
+                                  },
+                                  transitionDuration: const Duration(milliseconds: 400),
+                                ),
+                              );
+                              return;
+                            }
+
+                            if (ReelsModeNotifier.instance.value) {
+                              await ReelsModeNotifier.instance.set(false);
+                              if (mounted) setState(() => _reelsMode = false);
+                            }
+
+                            await audioService.playList(
                               List<LocalMediaItem>.unmodifiable(_items),
                               i,
                             );
+                            if (!mounted) return;
+                            await _openFolderFullScreenPlayer(context);
                           },
                           onDelete: () => _deleteItem(item),
                           onSave: () => _saveToGallery(item),
@@ -3651,8 +3722,186 @@ Future<void> _saveViewMode(bool value) async {
               const SliverToBoxAdapter(child: SizedBox(height: 200)),
             ],
           ),
+          Positioned(
+            left: 12,
+            right: 12,
+            bottom: 12,
+            child: _FolderMiniPlayerBar(folderColor: widget.folder.color),
+          ),
         ],
       ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  MINI PLAYER داخل صفحة المجلد
+// ═══════════════════════════════════════════════════════════
+class _FolderMiniPlayerBar extends StatelessWidget {
+  final Color folderColor;
+
+  const _FolderMiniPlayerBar({required this.folderColor});
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: audioService.isVisible,
+      builder: (_, visible, __) {
+        if (!visible) return const SizedBox.shrink();
+
+        return ValueListenableBuilder<int>(
+          valueListenable: audioService.currentIndex,
+          builder: (_, __, ___) {
+            final item = audioService.currentItem;
+            if (item == null) return const SizedBox.shrink();
+
+            final title = item.title.replaceAll(RegExp(r'\.\w+$'), '');
+            final isDark = Theme.of(context).brightness == Brightness.dark;
+
+            return SafeArea(
+              top: false,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => _openFolderFullScreenPlayer(context),
+                child: Container(
+                  height: 66,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: isDark
+                        ? const Color(0xFF1C1C1E).withOpacity(0.96)
+                        : Colors.white.withOpacity(0.96),
+                    borderRadius: BorderRadius.circular(22),
+                    border: Border.all(
+                      color: folderColor.withOpacity(isDark ? 0.28 : 0.20),
+                      width: 1,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(isDark ? 0.35 : 0.14),
+                        blurRadius: 22,
+                        offset: const Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 46,
+                        height: 46,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [folderColor, folderColor.withOpacity(0.72)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(15),
+                        ),
+                        child: Icon(
+                          item.isVideo
+                              ? CupertinoIcons.play_rectangle_fill
+                              : CupertinoIcons.music_note,
+                          color: Colors.white,
+                          size: 22,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontFamily: 'Tajawal',
+                                fontSize: 14,
+                                fontWeight: FontWeight.w800,
+                                color: isDark ? Colors.white : const Color(0xFF111111),
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            StreamBuilder<Duration>(
+                              stream: audioService.player.positionStream,
+                              builder: (_, snap) {
+                                final position = snap.data ?? audioService.player.position;
+                                final duration = audioService.player.duration ?? Duration.zero;
+                                final value = duration.inMilliseconds <= 0
+                                    ? 0.0
+                                    : (position.inMilliseconds / duration.inMilliseconds)
+                                        .clamp(0.0, 1.0);
+                                return ClipRRect(
+                                  borderRadius: BorderRadius.circular(10),
+                                  child: LinearProgressIndicator(
+                                    value: value,
+                                    minHeight: 3,
+                                    backgroundColor: isDark ? Colors.white12 : Colors.black12,
+                                    valueColor: AlwaysStoppedAnimation(folderColor),
+                                  ),
+                                );
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      StreamBuilder<bool>(
+                        stream: audioService.player.playingStream,
+                        builder: (_, snap) {
+                          final playing = snap.data ?? audioService.player.playing;
+                          return GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () {
+                              if (playing) {
+                                audioService.pauseByUser();
+                              } else {
+                                audioService.playByUser();
+                              }
+                            },
+                            child: Container(
+                              width: 42,
+                              height: 42,
+                              decoration: BoxDecoration(
+                                color: folderColor,
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(
+                                playing
+                                    ? CupertinoIcons.pause_fill
+                                    : CupertinoIcons.play_fill,
+                                color: Colors.white,
+                                size: 18,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(width: 4),
+                      GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () async {
+                          await audioService.player.stop();
+                          audioService.isVisible.value = false;
+                          audioService.currentIndex.value = -1;
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.all(8),
+                          child: Icon(
+                            CupertinoIcons.xmark,
+                            color: isDark ? Colors.white70 : Colors.black45,
+                            size: 18,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }
@@ -4052,7 +4301,7 @@ class _FolderItemTileState extends State<_FolderItemTile>
                 behavior: HitTestBehavior.opaque,
                 onHorizontalDragUpdate: _onHorizontalDrag,
                 onHorizontalDragEnd: _onDragEnd,
-                onTap: () {
+                onTap: () async {
                   if (_revealed) {
                     _closeSwipe();
                     return;
@@ -4103,25 +4352,15 @@ transitionDuration: const Duration(milliseconds: 400),
                   }
 
                   // المشغل الأصلي (صوت أو وضع الريلز معطّل)
-                  audioService.playList(
+                  if (ReelsModeNotifier.instance.value) {
+                    await ReelsModeNotifier.instance.set(false);
+                  }
+                  await audioService.playList(
                     List<LocalMediaItem>.unmodifiable(widget.allItems),
                     widget.index,
                   );
-                  Navigator.of(context).push(
-                    PageRouteBuilder(
-                      pageBuilder: (_, __, ___) => const FullScreenPlayer(),
-                      transitionsBuilder: (_, animation, __, child) {
-                        return SlideTransition(
-                          position: Tween<Offset>(
-                                  begin: const Offset(0, 1), end: Offset.zero)
-                              .animate(CurvedAnimation(
-                                  parent: animation,
-                                  curve: Curves.easeOutCubic)),
-                          child: child,
-                        );
-                      },
-                    ),
-                  );
+                  if (!context.mounted) return;
+                  await _openFolderFullScreenPlayer(context);
                 },
                 child: _buildTile(isActive),
               ),
@@ -5148,7 +5387,7 @@ class _SwipeableMediaTileState extends State<_SwipeableMediaTile>
                 behavior: HitTestBehavior.opaque,
                 onHorizontalDragUpdate: _onHorizontalDrag,
                 onHorizontalDragEnd: _onDragEnd,
-                onTap: () {
+                onTap: () async {
                   if (_revealed) {
                     _closeSwipe();
                     return;
@@ -5199,25 +5438,15 @@ transitionDuration: const Duration(milliseconds: 400),
                   }
 
                   // المشغل الأصلي (صوت أو وضع الريلز معطّل)
-                  audioService.playList(
+                  if (ReelsModeNotifier.instance.value) {
+                    await ReelsModeNotifier.instance.set(false);
+                  }
+                  await audioService.playList(
                     List<LocalMediaItem>.unmodifiable(widget.allItems),
                     widget.index,
                   );
-                  Navigator.of(context).push(
-                    PageRouteBuilder(
-                      pageBuilder: (_, __, ___) => const FullScreenPlayer(),
-                      transitionsBuilder: (_, animation, __, child) {
-                        return SlideTransition(
-                          position: Tween<Offset>(
-                                  begin: const Offset(0, 1), end: Offset.zero)
-                              .animate(CurvedAnimation(
-                                  parent: animation,
-                                  curve: Curves.easeOutCubic)),
-                          child: child,
-                        );
-                      },
-                    ),
-                  );
+                  if (!context.mounted) return;
+                  await _openFolderFullScreenPlayer(context);
                 },
                 child: _buildTile(isActive),
               ),

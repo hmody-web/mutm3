@@ -156,9 +156,9 @@ Offset _pinchFocalPoint = Offset.zero;
         .animate(CurvedAnimation(parent: _likeBurstCtrl, curve: Curves.easeOut));
 
     _initController(_currentIndex);
-    if (_currentIndex > 0) _initController(_currentIndex - 1);
-    if (_currentIndex < widget.items.length - 1)
+    if (_currentIndex < widget.items.length - 1) {
       _initController(_currentIndex + 1);
+    }
 
     // تحميل حالة الإعجاب المحفوظة
     _loadLikedItems();
@@ -166,8 +166,8 @@ Offset _pinchFocalPoint = Offset.zero;
     // تسجيل مراقب دورة حياة التطبيق (خلفية / أمام)
     WidgetsBinding.instance.addObserver(this);
 
-    // تشغيل في الخلفية عبر audioService مع إشعار الميديا
-    _setupBackgroundPlayback();
+    // لا نشغل audioService في الواجهة حتى لا يعمل الصوت مرتين مع الفيديو.
+    // يتم تشغيله فقط عند دخول التطبيق للخلفية أو قفل الشاشة.
 
     // الاستماع لتغييرات الأغنية من الإشعار
     _setupNotificationSync();
@@ -175,13 +175,18 @@ Offset _pinchFocalPoint = Offset.zero;
     // لا نخفي شريط النظام (الوقت والبطارية والشبكة)
   }
 
-  /// يُعدّ قائمة الريلز في audioService لإظهار إشعار الميديا وإتاحة التحكم من الخلفية
-  Future<void> _setupBackgroundPlayback() async {
-    // نُعيد تشغيل القائمة كاملة عبر audioService ليتولى إدارة الخلفية والإشعار
-    await audioService.playList(
-      List<LocalMediaItem>.unmodifiable(widget.items),
-      _currentIndex,
-    );
+  /// يشغّل صوت الريل في الخلفية فقط، حتى لا يعمل audioService مع VideoPlayer داخل الواجهة.
+  Future<void> _setupBackgroundPlayback({Duration initialPosition = Duration.zero}) async {
+    try {
+      await audioService.playList(
+        List<LocalMediaItem>.unmodifiable(widget.items),
+        _currentIndex,
+      );
+      if (initialPosition > Duration.zero) {
+        await audioService.player.seek(initialPosition, index: _currentIndex);
+      }
+      await audioService.player.play();
+    } catch (_) {}
   }
 
   /// يستمع لتغييرات currentIndex الصادرة من just_audio_background (الإشعار)
@@ -221,9 +226,9 @@ Offset _pinchFocalPoint = Offset.zero;
         // أوقف الفيديو (الصورة فقط) لتوفير الموارد
         // لكن اجعل audioService يستمر في التشغيل لإبقاء الإشعار حياً
         if (_wasPlayingBeforeBackground) {
+          final position = videoCtrl?.value.position ?? Duration.zero;
           videoCtrl?.pause();
-          // أبلغ audioService بالاستمرار في التشغيل (صوت الخلفية)
-          audioService.playAtIndex(_currentIndex);
+          Future.microtask(() => _setupBackgroundPlayback(initialPosition: position));
         }
         break;
 
@@ -232,10 +237,13 @@ Offset _pinchFocalPoint = Offset.zero;
         _isInBackground = false;
         // استأنف الفيديو إذا كان يعزف قبل الذهاب للخلفية
         if (_wasPlayingBeforeBackground) {
-          // تزامن موضع الفيديو مع موضع الصوت في audioService
-          _syncVideoPositionFromAudio().then((_) {
-            videoCtrl?.play();
+          // تزامن موضع الفيديو مع موضع الصوت في audioService ثم أوقف صوت الخلفية حتى لا يعمل مصدران معاً.
+          _syncVideoPositionFromAudio().then((_) async {
+            try { await audioService.player.stop(); } catch (_) {}
+            if (mounted) videoCtrl?.play();
           });
+        } else {
+          try { audioService.player.stop(); } catch (_) {}
         }
         _wasPlayingBeforeBackground = false;
         break;
@@ -364,9 +372,11 @@ Future<void> _loadThumbnail(int index) async {
 
   void _startProgressTimer() {
     _progressTimer?.cancel();
-    _progressTimer =
-        Timer.periodic(const Duration(milliseconds: 200), (_) {
-      if (mounted) setState(() {});
+    _progressTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
+      if (!mounted || _isInBackground || _isSeeking) return;
+      final ctrl = _controllers[_currentIndex];
+      if (ctrl == null || !(_initialized[_currentIndex] ?? false)) return;
+      if (ctrl.value.isPlaying) setState(() {});
     });
   }
 
@@ -400,41 +410,46 @@ Future<void> _loadThumbnail(int index) async {
   }
 
   void _onPageChanged(int index) {
-    // الإيقاف صار يدوياً قبل استدعاء هذه الدالة
-
-    // أزل مراقب التصفح من الريل السابق
     _detachAutoScrollListener();
 
     _currentIndex = index;
     _isTitleExpanded = false;
 
+    // أوقف أي فيديو غير الحالي حتى لا يبقى يستهلك CPU/GPU بصمت.
+    for (final entry in _controllers.entries) {
+      if (entry.key != index) {
+        try { entry.value.pause(); } catch (_) {}
+      }
+    }
+
     final curr = _controllers[index];
     if (curr != null && (_initialized[index] ?? false)) {
       curr.setLooping(_isLooping);
-      curr.play();
+      if (!_isInBackground) curr.play();
       _startProgressTimer();
-      // أعد تعليق المراقب على الريل الجديد
       if (_autoScroll) _attachAutoScrollListener();
     } else {
       _initController(index);
     }
 
-    // pre-load neighbours
-    if (index + 1 < widget.items.length) _initController(index + 1);
-    if (index - 1 >= 0) _initController(index - 1);
+    // حضّر الفيديو القادم فقط. السابق يُعرض كثابت أثناء السحب لتقليل الحرارة.
+    if (index + 1 < widget.items.length) {
+      _initController(index + 1);
+    }
 
-    // dispose distant controllers
+    // أبقِ الحالي والقادم فقط، واحذف البعيد فوراً.
     final toRemove = _controllers.keys
-        .where((k) => (k - index).abs() > 2)
+        .where((k) => k != index && k != index + 1)
         .toList();
     for (final k in toRemove) {
+      try { _controllers[k]?.pause(); } catch (_) {}
       _controllers[k]?.dispose();
       _controllers.remove(k);
       _initialized.remove(k);
     }
 
-    // مزامنة audioService مع الريل الحالي (يُحدّث الإشعار تلقائياً)
-    if (!_syncingFromNotification) {
+    // إذا كان audioService يعمل بالخلفية فقط، لا تزامنه داخل الواجهة حتى لا يرجع التشغيل المزدوج.
+    if (_isInBackground && !_syncingFromNotification) {
       audioService.playAtIndex(index);
     }
     _syncingFromNotification = false;
@@ -873,125 +888,87 @@ Positioned(
 Widget _buildVideoPage(int index, Size size) {
     final ctrl = _controllers[index];
     final isInit = _initialized[index] ?? false;
+    final isCurrent = index == _currentIndex;
+    final thumbBytes = _thumbnails[index];
 
     return Stack(
       fit: StackFit.expand,
       children: [
-        // ══════════════════════════════════════════════
-        //  خلفية ضبابية سينمائية
-if (ctrl != null && isInit) ...[
-  Positioned.fill(
-    child: ClipRect(
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          OverflowBox(
-            maxWidth: size.width * 3.5,
-            maxHeight: size.height * 3.5,
-            child: Center(
-              child: AspectRatio(
-                aspectRatio: ctrl.value.aspectRatio,
-                child: VideoPlayer(ctrl),
-              ),
-            ),
-          ),
-          BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
-            child: Container(
-              color: Colors.black.withOpacity(0.20),
-            ),
-          ),
-          Container(
-            decoration: BoxDecoration(
-              gradient: RadialGradient(
-                center: Alignment.center,
-                radius: 1.2,
-                colors: [
-                  Colors.transparent,
-                  Colors.black.withOpacity(0.6),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    ),
-  ),
-] else
-  Container(color: Colors.black),
-
-        // ══════════════════════════════════════════════
-        //  الفيديو الرئيسي — دائماً بأبعاده الأصلية
-        // ══════════════════════════════════════════════
-if (ctrl != null && isInit)
-  Positioned.fill(
-    child: RepaintBoundary(
-      child: Builder(
-      builder: (context) {
-        final botPad = MediaQuery.of(context).padding.bottom;
-        final isPortrait = ctrl.value.aspectRatio < 1.0;
-
-        if (_fillScreen) {
-          return FittedBox(
-            fit: BoxFit.cover,
-            child: SizedBox(
-              width: ctrl.value.size.width,
-              height: ctrl.value.size.height,
-              child: VideoPlayer(ctrl),
-            ),
-          );
-        }
-
-if (isPortrait) {
-  return Padding(
-    padding: EdgeInsets.only(bottom: botPad + 80),
-    child: Center(
-      child: Transform.scale(
-        scale: 1.07,
-        child: AspectRatio(
-          aspectRatio: ctrl.value.aspectRatio,
-          child: VideoPlayer(ctrl),
+        // خلفية خفيفة: صورة ثابتة أو لون أسود. بدون VideoPlayer ثاني وبدون Blur ثقيل.
+        Positioned.fill(
+          child: _buildLightweightBackground(thumbBytes),
         ),
-      ),
-    ),
-  );
-} else {
-          return Center(
-            child: AspectRatio(
-              aspectRatio: ctrl.value.aspectRatio,
-              child: VideoPlayer(ctrl),
+
+        // الفيديو الحقيقي يُرسم فقط للريل الحالي، حتى لا تنبني صفحات الجيران كفيديوهات شغالة.
+        if (isCurrent && ctrl != null && isInit)
+          Positioned.fill(
+            child: RepaintBoundary(
+              child: Builder(
+                builder: (context) {
+                  final botPad = MediaQuery.of(context).padding.bottom;
+                  final isPortrait = ctrl.value.aspectRatio < 1.0;
+
+                  if (_fillScreen) {
+                    return FittedBox(
+                      fit: BoxFit.cover,
+                      child: SizedBox(
+                        width: ctrl.value.size.width,
+                        height: ctrl.value.size.height,
+                        child: VideoPlayer(ctrl),
+                      ),
+                    );
+                  }
+
+                  if (isPortrait) {
+                    return Padding(
+                      padding: EdgeInsets.only(bottom: botPad + 80),
+                      child: Center(
+                        child: Transform.scale(
+                          scale: 1.07,
+                          child: AspectRatio(
+                            aspectRatio: ctrl.value.aspectRatio,
+                            child: VideoPlayer(ctrl),
+                          ),
+                        ),
+                      ),
+                    );
+                  }
+
+                  return Center(
+                    child: AspectRatio(
+                      aspectRatio: ctrl.value.aspectRatio,
+                      child: VideoPlayer(ctrl),
+                    ),
+                  );
+                },
+              ),
             ),
-          );
-        }
-      },
-    ),
-),
-  )
-else
-  Center(
+          )
+        else
+          Center(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const CupertinoActivityIndicator(
-                    color: Colors.white, radius: 18),
+                const CupertinoActivityIndicator(color: Colors.white, radius: 18),
                 const SizedBox(height: 14),
                 Text(
                   'جارٍ التحميل...',
                   style: TextStyle(
-                      color: Colors.white.withOpacity(0.7),
-                      fontFamily: 'Tajawal',
-                      fontSize: 14),
+                    color: Colors.white.withOpacity(0.7),
+                    fontFamily: 'Tajawal',
+                    fontSize: 14,
+                  ),
                 ),
               ],
             ),
           ),
 
-        // تدرج سفلي
+        // تدرج سفلي خفيف للقراءة فقط.
         Positioned(
           bottom: 0,
           left: 0,
           right: 0,
-          height: size.height * 0.55,
+          height: size.height * 0.48,
           child: Container(
             decoration: BoxDecoration(
               gradient: LinearGradient(
@@ -999,12 +976,41 @@ else
                 end: Alignment.bottomCenter,
                 colors: [
                   Colors.transparent,
-                  Colors.black.withOpacity(0.15),
-                  Colors.black.withOpacity(0.5),
-                  Colors.black.withOpacity(0.88),
+                  Colors.black.withOpacity(0.12),
+                  Colors.black.withOpacity(0.76),
                 ],
-                stops: const [0.0, 0.4, 0.75, 1.0],
+                stops: const [0.0, 0.55, 1.0],
               ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLightweightBackground(Uint8List? thumbBytes) {
+    if (thumbBytes == null) {
+      return Container(color: Colors.black);
+    }
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Image.memory(
+          thumbBytes,
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+        ),
+        Container(color: Colors.black.withOpacity(0.42)),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: RadialGradient(
+              center: Alignment.center,
+              radius: 1.1,
+              colors: [
+                Colors.transparent,
+                Colors.black.withOpacity(0.72),
+              ],
             ),
           ),
         ),

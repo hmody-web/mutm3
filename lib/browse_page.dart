@@ -22,7 +22,6 @@ import 'package:file_picker/file_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 import 'package:on_audio_query/on_audio_query.dart';
-import 'app_icon_service.dart';
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;

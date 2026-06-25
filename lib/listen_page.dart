@@ -36,38 +36,29 @@ import 'reels_player.dart';
 // يبقى true إلى أن تُغلق صفحة المشغل فعلياً، وليس فقط أثناء أنيميشن الفتح.
 bool _folderFullPlayerRouteOpen = false;
 
-// تذكرة فتح المشغل الكبير.
-// أي دخول إلى الريلز يلغي كل أوامر فتح المشغل الكبير القديمة التي كانت تنتظر playList.
-int _folderFullPlayerOpenGeneration = 0;
+// يمنع أي أمر قديم من فتح المشغل الكبير بعد إغلاق المشغل الصغير أو بعد التحويل للريلز.
+bool _canOpenFullPlayerForRequest(int? requestToken) {
+  if (requestToken != null && audioService.playSessionToken != requestToken) {
+    return false;
+  }
 
-int _createFolderFullPlayerOpenTicket() {
-  _folderFullPlayerOpenGeneration++;
-  return _folderFullPlayerOpenGeneration;
+  final currentItem = audioService.currentItem;
+  if (currentItem == null || !audioService.isVisible.value) {
+    return false;
+  }
+
+  if (ReelsModeNotifier.instance.value && currentItem.isVideo) {
+    return false;
+  }
+
+  return true;
 }
 
-void _invalidatePendingFolderFullPlayerOpens() {
-  _folderFullPlayerOpenGeneration++;
-}
-
-Future<void> _openFolderFullScreenPlayer(
-  BuildContext context, {
-  int? openTicket,
-}) async {
+Future<void> _openFolderFullScreenPlayer(BuildContext context, {int? requestToken}) async {
   if (_folderFullPlayerRouteOpen) return;
   if (!context.mounted) return;
+  if (!_canOpenFullPlayerForRequest(requestToken)) return;
 
-  // إذا دخل المستخدم إلى الريلز أثناء انتظار playList، لا تسمح لطلب الفتح القديم
-  // أن يفتح FullScreenPlayer بعد الخروج من الريلز.
-  if (openTicket != null && openTicket != _folderFullPlayerOpenGeneration) {
-    return;
-  }
-
-  // إذا تم تفعيل وضع الريلز أثناء انتظار تشغيل الفيديو، لا تفتح المشغل الكبير بالخلفية.
-  // هذا يمنع الحالة التي يظهر فيها FullScreenPlayer بعد الخروج من الريلز.
-  final currentItem = audioService.currentItem;
-  if (ReelsModeNotifier.instance.value && currentItem != null && currentItem.isVideo) {
-    return;
-  }
 
   final navigator = Navigator.maybeOf(context, rootNavigator: true) ?? Navigator.of(context);
   _folderFullPlayerRouteOpen = true;
@@ -107,10 +98,6 @@ Future<bool> _openCurrentPlayingVideoAsReels(
 
   final currentItem = audioService.currentItem;
   if (currentItem == null || !currentItem.isVideo) return false;
-
-  // فتح الريلز يجب أن يلغي أي أمر قديم لفتح المشغل الكبير،
-  // خصوصاً في الوضع المكتبي عندما يكون playList ما زال ينتظر.
-  _invalidatePendingFolderFullPlayerOpens();
 
   final currentPosition = audioService.player.position;
   final activeQueue = audioService.playlist.value;
@@ -2775,15 +2762,25 @@ transitionDuration: const Duration(milliseconds: 400),
                     if (mounted) setState(() => _reelsMode = false);
                   }
                   final playQueue = _unfolderiedItems;
-                  final fullPlayerOpenTicket = _createFolderFullPlayerOpenTicket();
-                  await audioService.playList(
+                  final playRequestToken = await audioService.playList(
                     List<LocalMediaItem>.unmodifiable(playQueue),
                     playQueue.indexOf(item),
                   );
-                  if (!mounted) return;
-                  await _openFolderFullScreenPlayer(
-                    context,
-                    openTicket: fullPlayerOpenTicket,
+                  if (!mounted || !_canOpenFullPlayerForRequest(playRequestToken)) return;
+                  Navigator.of(context).push(
+                    PageRouteBuilder(
+                      pageBuilder: (_, __, ___) => const FullScreenPlayer(),
+                      transitionsBuilder: (_, animation, __, child) {
+                        return SlideTransition(
+                          position: Tween<Offset>(
+                                  begin: const Offset(0, 1), end: Offset.zero)
+                              .animate(CurvedAnimation(
+                                  parent: animation,
+                                  curve: Curves.easeOutCubic)),
+                          child: child,
+                        );
+                      },
+                    ),
                   );
                 },
                 onDelete: () => _deleteItem(item),
@@ -3737,16 +3734,12 @@ Future<void> _saveViewMode(bool value) async {
                               if (mounted) setState(() => _reelsMode = false);
                             }
 
-                            final fullPlayerOpenTicket = _createFolderFullPlayerOpenTicket();
-                            await audioService.playList(
+                            final playRequestToken = await audioService.playList(
                               List<LocalMediaItem>.unmodifiable(_items),
                               i,
                             );
-                            if (!mounted) return;
-                            await _openFolderFullScreenPlayer(
-                              context,
-                              openTicket: fullPlayerOpenTicket,
-                            );
+                            if (!mounted || !_canOpenFullPlayerForRequest(playRequestToken)) return;
+                            await _openFolderFullScreenPlayer(context, requestToken: playRequestToken);
                           },
                           onDelete: () => _deleteItem(item),
                           onSave: () => _saveToGallery(item),
@@ -3976,9 +3969,7 @@ class _FolderMiniPlayerBar extends StatelessWidget {
                       GestureDetector(
                         behavior: HitTestBehavior.opaque,
                         onTap: () async {
-                          await audioService.player.stop();
-                          audioService.isVisible.value = false;
-                          audioService.currentIndex.value = -1;
+                          await audioService.stopAndClear();
                         },
                         child: Padding(
                           padding: const EdgeInsets.all(8),
@@ -4450,16 +4441,12 @@ transitionDuration: const Duration(milliseconds: 400),
                   if (ReelsModeNotifier.instance.value) {
                     await ReelsModeNotifier.instance.set(false);
                   }
-                  final fullPlayerOpenTicket = _createFolderFullPlayerOpenTicket();
-                  await audioService.playList(
+                  final playRequestToken = await audioService.playList(
                     List<LocalMediaItem>.unmodifiable(widget.allItems),
                     widget.index,
                   );
-                  if (!context.mounted) return;
-                  await _openFolderFullScreenPlayer(
-                    context,
-                    openTicket: fullPlayerOpenTicket,
-                  );
+                  if (!context.mounted || !_canOpenFullPlayerForRequest(playRequestToken)) return;
+                  await _openFolderFullScreenPlayer(context, requestToken: playRequestToken);
                 },
                 child: _buildTile(isActive),
               ),
@@ -5540,16 +5527,12 @@ transitionDuration: const Duration(milliseconds: 400),
                   if (ReelsModeNotifier.instance.value) {
                     await ReelsModeNotifier.instance.set(false);
                   }
-                  final fullPlayerOpenTicket = _createFolderFullPlayerOpenTicket();
-                  await audioService.playList(
+                  final playRequestToken = await audioService.playList(
                     List<LocalMediaItem>.unmodifiable(widget.allItems),
                     widget.index,
                   );
-                  if (!context.mounted) return;
-                  await _openFolderFullScreenPlayer(
-                    context,
-                    openTicket: fullPlayerOpenTicket,
-                  );
+                  if (!context.mounted || !_canOpenFullPlayerForRequest(playRequestToken)) return;
+                  await _openFolderFullScreenPlayer(context, requestToken: playRequestToken);
                 },
                 child: _buildTile(isActive),
               ),

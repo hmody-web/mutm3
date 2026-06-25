@@ -552,15 +552,19 @@ class AudioPlayerService {
     if (isRepeat.value == v) return;
     isRepeat.value = v;
 
-    // نبقي LoopMode.off عمداً، لأن iOS بالخلفية قد يوقف الـ queue عند LoopMode.one.
-    // عند التكرار نبدّل المصدر إلى أغنية واحدة فقط، حتى لا يبدأ جزء من الأغنية التالية.
+    // تغيير التكرار يجب أن يكون تغيير حالة فقط.
+    // لا نعيد بناء AudioSource ولا نعمل seek، لأن هذا كان يسبب تقطيع لحظي بالصوت/الفيديو.
     Future.microtask(() async {
       try {
-        await player.setLoopMode(LoopMode.off);
-        await _syncSourceWithRepeatState(preservePosition: true);
+        await player.setLoopMode(v ? LoopMode.one : LoopMode.off);
 
+        // إذا كان المستخدم فعّل التكرار بعد انتهاء المقطع فعلاً، نعيده للبداية فقط بهذه الحالة.
+        // أما أثناء التشغيل الطبيعي فلا نلمس موضع الأغنية أبداً.
         if (v && player.processingState == ProcessingState.completed) {
-          await _restartCurrentRepeatedItem();
+          await player.seek(Duration.zero, index: player.currentIndex);
+          await player.play();
+          final item = currentItem;
+          if (item != null && item.isVideo) videoLoopSignal.value++;
         }
       } catch (_) {}
     });
@@ -692,41 +696,31 @@ class AudioPlayerService {
       currentIndex.value = index;
       if (!isReelsMode) isVisible.value = true;
 
-      await player.setLoopMode(LoopMode.off);
+      await player.setLoopMode(isRepeat.value ? LoopMode.one : LoopMode.off);
       if (_isStalePlayRequest(requestToken)) {
         _isSettingSource = false;
         return;
       }
 
-      if (isRepeat.value) {
-        // أهم نقطة: وقت التكرار لا نترك Playlist فعّالة، حتى لا يتسرب صوت الأغنية التالية.
-        _currentSource = await _buildSingleSource(_loadedList[index]);
-        _usingSingleRepeatSource = true;
+      // نبقي القائمة الكاملة فعالة دائماً.
+      // التكرار صار LoopMode.one فقط، بدون تبديل المصدر إلى أغنية مفردة حتى لا يقطع الصوت.
+      final canSeekOnly = sameListBeforeChange &&
+          _currentSource != null &&
+          !forceRebuild;
+
+      _usingSingleRepeatSource = false;
+
+      if (canSeekOnly) {
+        await player.seek(position, index: index);
+      } else {
+        _currentSource = await _buildFullSource(_loadedList);
 
         await player.setAudioSource(
           _currentSource!,
+          initialIndex: index,
           initialPosition: position,
           preload: false,
         );
-      } else {
-        final canSeekOnly = sameListBeforeChange &&
-            _currentSource != null &&
-            !_usingSingleRepeatSource &&
-            !forceRebuild;
-
-        if (canSeekOnly) {
-          await player.seek(position, index: index);
-        } else {
-          _currentSource = await _buildFullSource(_loadedList);
-          _usingSingleRepeatSource = false;
-
-          await player.setAudioSource(
-            _currentSource!,
-            initialIndex: index,
-            initialPosition: position,
-            preload: false,
-          );
-        }
       }
 
       if (_isStalePlayRequest(requestToken)) {
@@ -773,7 +767,6 @@ class AudioPlayerService {
   Future<void> _restartCurrentRepeatedItem() async {
     if (_isRestartingRepeat || !isRepeat.value || isReelsMode) return;
 
-    final requestToken = _playSessionToken;
     final list = _loadedList.isNotEmpty ? _loadedList : playlist.value;
     final idx = currentIndex.value;
     if (list.isEmpty || idx < 0 || idx >= list.length) return;
@@ -782,30 +775,15 @@ class AudioPlayerService {
     _userPaused = false;
 
     try {
-      if (!_usingSingleRepeatSource) {
-        await _setSourceForIndex(
-          list,
-          idx,
-          position: Duration.zero,
-          play: true,
-          forceRebuild: true,
-          requestToken: requestToken,
-        );
-      } else {
+      await player.setLoopMode(LoopMode.one);
+      await player.seek(Duration.zero, index: player.currentIndex);
+      if (list[idx].isVideo) videoLoopSignal.value++;
+      await player.play();
+    } catch (_) {
+      try {
         await player.seek(Duration.zero);
         if (list[idx].isVideo) videoLoopSignal.value++;
         await player.play();
-      }
-    } catch (_) {
-      try {
-        await _setSourceForIndex(
-          list,
-          idx,
-          position: Duration.zero,
-          play: true,
-          forceRebuild: true,
-          requestToken: _playSessionToken,
-        );
       } catch (_) {}
     } finally {
       _isRestartingRepeat = false;
@@ -830,7 +808,7 @@ class AudioPlayerService {
       index,
       position: currentPos,
       play: true,
-      forceRebuild: !sameList || _usingSingleRepeatSource != isRepeat.value,
+      forceRebuild: !sameList,
       requestToken: requestToken,
     );
 
@@ -866,9 +844,6 @@ class AudioPlayerService {
     if (list.isEmpty || index < 0 || index >= list.length) return;
 
     if (index == currentIndex.value && !_isSettingSource) {
-      if (isRepeat.value && !_usingSingleRepeatSource) {
-        await _syncSourceWithRepeatState(preservePosition: false);
-      }
       await player.seek(Duration.zero);
       try { await player.play(); } catch (_) {}
       return;
@@ -885,9 +860,6 @@ class AudioPlayerService {
   Future<void> playByUser() async {
     if (currentItem == null) return;
     _userPaused = false;
-    if (isRepeat.value && !_usingSingleRepeatSource && currentIndex.value >= 0) {
-      await _syncSourceWithRepeatState(preservePosition: true);
-    }
     await player.play();
   }
 
@@ -909,7 +881,7 @@ class AudioPlayerService {
         nextIdx,
         position: Duration.zero,
         play: true,
-        forceRebuild: isRepeat.value || _usingSingleRepeatSource,
+        forceRebuild: _usingSingleRepeatSource,
         requestToken: requestToken,
       );
     } catch (_) {
@@ -941,7 +913,7 @@ class AudioPlayerService {
           prevIdx,
           position: Duration.zero,
           play: true,
-          forceRebuild: isRepeat.value || _usingSingleRepeatSource,
+          forceRebuild: _usingSingleRepeatSource,
           requestToken: requestToken,
         );
       } else {
@@ -1026,7 +998,9 @@ class _MustAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     });
 
     _svc.player.positionStream.listen((pos) {
-      if (pos == Duration.zero && _svc.player.playing) {
+      // عند تكرار iOS قد لا يرسل position == zero حرفياً،
+      // لذلك نبث الحالة بأول جزء من الثانية حتى يرجع شريط شاشة القفل للبداية.
+      if (pos.inMilliseconds < 800 && _svc.player.playing) {
         _emitCurrentMediaItem();
         _broadcastState(_svc.player.playbackEvent);
       }
@@ -2093,6 +2067,7 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
   bool _showSpeedOptions = false;
   String? _doubleTapHint;
   Timer? _doubleTapHintTimer;
+  bool _overlayDoubleTapForward = true;
 
   @override
   void initState() {
@@ -2133,6 +2108,46 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
   void _resetTimer() {
     _hideTimer?.cancel();
     _startHideTimer();
+  }
+
+  void _hideControlsImmediately() {
+    if (!_showControls && !_showVolumeBar && !_showSpeedOptions) return;
+    _hideTimer?.cancel();
+    if (!mounted) return;
+    setState(() {
+      _showControls = false;
+      _showVolumeBar = false;
+      _showSpeedOptions = false;
+    });
+  }
+
+  void _handleVideoAreaTap() {
+    if (_showControls) {
+      _hideControlsImmediately();
+    } else {
+      setState(() => _showControls = true);
+      _startHideTimer();
+    }
+  }
+
+  void _handleVideoAreaDoubleTap({required bool forward}) {
+    _hideControlsImmediately();
+
+    final pos = widget.audioPlayer.position;
+    if (forward) {
+      widget.onSeek(pos + const Duration(seconds: 10));
+    } else {
+      final back = pos - const Duration(seconds: 10);
+      widget.onSeek(back < Duration.zero ? Duration.zero : back);
+    }
+
+    if (!mounted) return;
+    setState(() => _doubleTapHint = forward ? 'forward' : 'backward');
+    _doubleTapHintTimer?.cancel();
+    _doubleTapHintTimer = Timer(const Duration(milliseconds: 800), () {
+      if (mounted) setState(() => _doubleTapHint = null);
+    });
+    _hideTimer?.cancel();
   }
 
   void _toggleFullScreen() {
@@ -2390,46 +2405,40 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
               ),
             ),
 
-            // ── طبقة double-tap — تعمل دائماً بغض النظر عن حالة controls ──
+            // ── طبقة double-tap بمواقع فعلية ثابتة، لا تتأثر باتجاه RTL ──
             Positioned.fill(
-              child: Row(
-                children: [
-                  Expanded(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: _toggleControls,
-                      onDoubleTap: () {
-                        if (_showControls) setState(() => _showControls = false);
-                        final pos = widget.audioPlayer.position;
-                        final back = pos - const Duration(seconds: 10);
-                        widget.onSeek(back < Duration.zero ? Duration.zero : back);
-                        setState(() => _doubleTapHint = 'backward');
-                        _doubleTapHintTimer?.cancel();
-                        _doubleTapHintTimer = Timer(const Duration(milliseconds: 800), () {
-                          if (mounted) setState(() => _doubleTapHint = null);
-                        });
-                        _hideTimer?.cancel();
-                      },
-                    ),
-                  ),
-                  Expanded(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: _toggleControls,
-                      onDoubleTap: () {
-                        if (_showControls) setState(() => _showControls = false);
-                        final pos = widget.audioPlayer.position;
-                        widget.onSeek(pos + const Duration(seconds: 10));
-                        setState(() => _doubleTapHint = 'forward');
-                        _doubleTapHintTimer?.cancel();
-                        _doubleTapHintTimer = Timer(const Duration(milliseconds: 800), () {
-                          if (mounted) setState(() => _doubleTapHint = null);
-                        });
-                        _hideTimer?.cancel();
-                      },
-                    ),
-                  ),
-                ],
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final halfWidth = constraints.maxWidth / 2;
+                  return Stack(
+                    children: [
+                      // نصف الشاشة الفعلي الأيسر → تقديم +10 ثواني
+                      Positioned(
+                        left: 0,
+                        top: 0,
+                        bottom: 0,
+                        width: halfWidth,
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: _handleVideoAreaTap,
+                          onDoubleTap: () => _handleVideoAreaDoubleTap(forward: true),
+                        ),
+                      ),
+                      // نصف الشاشة الفعلي الأيمن → إرجاع -10 ثواني
+                      Positioned(
+                        right: 0,
+                        top: 0,
+                        bottom: 0,
+                        width: halfWidth,
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: _handleVideoAreaTap,
+                          onDoubleTap: () => _handleVideoAreaDoubleTap(forward: false),
+                        ),
+                      ),
+                    ],
+                  );
+                },
               ),
             ),
 
@@ -2443,21 +2452,32 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
               duration: const Duration(milliseconds: 200),
               child: IgnorePointer(
                 ignoring: !_showControls,
-                child: Container(
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        Color(0x99000000),
-                        Color(0x00000000),
-                        Color(0x00000000),
-                        Color(0x99000000),
-                      ],
-                      stops: [0.0, 0.3, 0.6, 1.0],
-                    ),
+                child: GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onTap: _handleVideoAreaTap,
+                  onDoubleTapDown: (details) {
+                    final box = context.findRenderObject() as RenderBox?;
+                    final width = box?.size.width ?? MediaQuery.of(context).size.width;
+                    _overlayDoubleTapForward = details.localPosition.dx < (width / 2);
+                  },
+                  onDoubleTap: () => _handleVideoAreaDoubleTap(
+                    forward: _overlayDoubleTapForward,
                   ),
-                  child: Column(
+                  child: Container(
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Color(0x99000000),
+                          Color(0x00000000),
+                          Color(0x00000000),
+                          Color(0x99000000),
+                        ],
+                        stops: [0.0, 0.3, 0.6, 1.0],
+                      ),
+                    ),
+                    child: Column(
                     children: [
                       // ── الشريط العلوي: إعدادات فقط ──
                       _buildTopBar(),
@@ -2640,6 +2660,7 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
                       ),
                     ],
                   ),
+                ),
                 ),
               ),
             ),
@@ -3031,56 +3052,62 @@ class _ImmersiveFullScreenPageState extends State<_ImmersiveFullScreenPage> {
               ),
             ),
 
-            // ── double tap: يسار=رجوع 10ث، يمين=تقديم 10ث — يعمل دائماً حتى لو الأزرار ظاهرة ──
+            // ── double tap بمواقع فعلية ثابتة، لا تتأثر باتجاه RTL ──
             // ── ضغطة واحدة → إخفاء الأزرار إذا كانت ظاهرة ──
             Positioned.fill(
-              child: Row(
-                children: [
-                  // نصف الشاشة اليسار → رجوع 10 ثواني
-                  Expanded(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () {
-                        // ضغطة واحدة: إذا الأزرار ظاهرة أخفها، وإلا أظهرها
-                        _toggleControls();
-                      },
-                      onDoubleTap: () {
-                        // إخفاء الأزرار فوراً عند الـ double tap
-                        if (_showControls) setState(() => _showControls = false);
-                        final pos = widget.audioPlayer.position;
-                        final back = pos - const Duration(seconds: 10);
-                        widget.onSeek(back < Duration.zero ? Duration.zero : back);
-                        setState(() => _doubleTapHint = 'backward');
-                        _doubleTapHintTimer?.cancel();
-                        _doubleTapHintTimer = Timer(const Duration(milliseconds: 900), () {
-                          if (mounted) setState(() => _doubleTapHint = null);
-                        });
-                        _hideTimer?.cancel();
-                      },
-                    ),
-                  ),
-                  // نصف الشاشة اليمين → تقديم 10 ثواني
-                  Expanded(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () {
-                        _toggleControls();
-                      },
-                      onDoubleTap: () {
-                        // إخفاء الأزرار فوراً عند الـ double tap
-                        if (_showControls) setState(() => _showControls = false);
-                        final pos = widget.audioPlayer.position;
-                        widget.onSeek(pos + const Duration(seconds: 10));
-                        setState(() => _doubleTapHint = 'forward');
-                        _doubleTapHintTimer?.cancel();
-                        _doubleTapHintTimer = Timer(const Duration(milliseconds: 900), () {
-                          if (mounted) setState(() => _doubleTapHint = null);
-                        });
-                        _hideTimer?.cancel();
-                      },
-                    ),
-                  ),
-                ],
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final halfWidth = constraints.maxWidth / 2;
+                  return Stack(
+                    children: [
+                      // نصف الشاشة الفعلي الأيسر → تقديم +10 ثواني
+                      Positioned(
+                        left: 0,
+                        top: 0,
+                        bottom: 0,
+                        width: halfWidth,
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: _toggleControls,
+                          onDoubleTap: () {
+                            if (_showControls) setState(() => _showControls = false);
+                            final pos = widget.audioPlayer.position;
+                            widget.onSeek(pos + const Duration(seconds: 10));
+                            setState(() => _doubleTapHint = 'forward');
+                            _doubleTapHintTimer?.cancel();
+                            _doubleTapHintTimer = Timer(const Duration(milliseconds: 900), () {
+                              if (mounted) setState(() => _doubleTapHint = null);
+                            });
+                            _hideTimer?.cancel();
+                          },
+                        ),
+                      ),
+                      // نصف الشاشة الفعلي الأيمن → إرجاع -10 ثواني
+                      Positioned(
+                        right: 0,
+                        top: 0,
+                        bottom: 0,
+                        width: halfWidth,
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: _toggleControls,
+                          onDoubleTap: () {
+                            if (_showControls) setState(() => _showControls = false);
+                            final pos = widget.audioPlayer.position;
+                            final back = pos - const Duration(seconds: 10);
+                            widget.onSeek(back < Duration.zero ? Duration.zero : back);
+                            setState(() => _doubleTapHint = 'backward');
+                            _doubleTapHintTimer?.cancel();
+                            _doubleTapHintTimer = Timer(const Duration(milliseconds: 900), () {
+                              if (mounted) setState(() => _doubleTapHint = null);
+                            });
+                            _hideTimer?.cancel();
+                          },
+                        ),
+                      ),
+                    ],
+                  );
+                },
               ),
             ),
 
@@ -5412,11 +5439,23 @@ class _SeekRippleAnimationState extends State<_SeekRippleAnimation>
     final isForward = widget.isForward;
     return Positioned.fill(
       child: IgnorePointer(
-        child: Row(
-          children: [
-            if (!isForward) Expanded(child: _buildSide(isForward)) else const Expanded(child: SizedBox()),
-            if (isForward) Expanded(child: _buildSide(isForward)) else const Expanded(child: SizedBox()),
-          ],
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final halfWidth = constraints.maxWidth / 2;
+            return Stack(
+              children: [
+                // التأثير فقط: +10 يظهر يسار الشاشة فعلياً، و -10 يظهر يمين الشاشة فعلياً.
+                Positioned(
+                  left: isForward ? 0 : null,
+                  right: isForward ? null : 0,
+                  top: 0,
+                  bottom: 0,
+                  width: halfWidth,
+                  child: _buildSide(isForward),
+                ),
+              ],
+            );
+          },
         ),
       ),
     );
@@ -5431,7 +5470,7 @@ class _SeekRippleAnimationState extends State<_SeekRippleAnimation>
           child: Container(
             decoration: BoxDecoration(
               gradient: RadialGradient(
-                center: isForward ? Alignment.centerRight : Alignment.centerLeft,
+                center: isForward ? Alignment.centerLeft : Alignment.centerRight,
                 radius: 1.2,
                 colors: [
                   Colors.white.withOpacity(0.18 * _rippleAnim.value),

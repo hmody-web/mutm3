@@ -55,38 +55,55 @@ bool _canOpenFullPlayerForRequest(int? requestToken) {
 }
 
 Future<void> _openFolderFullScreenPlayer(BuildContext context, {int? requestToken}) async {
-  if (_folderFullPlayerRouteOpen) return;
   if (!context.mounted) return;
   if (!_canOpenFullPlayerForRequest(requestToken)) return;
 
+  // كل فتح للمشغل الكبير يجب أن يمر من القفل العام الموجود في main.dart.
+  // لا نفتح Route محلي هنا حتى لا تتكون نافذتان: واحدة من المشغل الصغير وواحدة من كروت المجلدات.
+  await openFullScreenPlayer(context);
+}
 
-  final navigator = Navigator.maybeOf(context, rootNavigator: true) ?? Navigator.of(context);
-  _folderFullPlayerRouteOpen = true;
+// يشغل العنصر ويفتح المشغل الكبير فوراً من نفس ضغطة الكرت.
+// لا ننتظر انتهاء setAudioSource بالكامل، لأن الانتظار كان يجعل أول ضغطة تظهر المشغل الصغير
+// ثم الضغطة التالية تفتح الكبير، فتتحول الواجهة إلى لعبة حظ مزعجة.
+Future<void> _playQueueAndOpenFullPlayer(
+  BuildContext context,
+  List<LocalMediaItem> queue,
+  int startIndex,
+) async {
+  if (!context.mounted || queue.isEmpty) return;
+
+  if (ReelsModeNotifier.instance.value) {
+    await ReelsModeNotifier.instance.set(false);
+  }
+
+  final safeIndex = startIndex.clamp(0, queue.length - 1);
+  final playFuture = audioService.playList(
+    List<LocalMediaItem>.unmodifiable(queue),
+    safeIndex,
+  );
+
+  // playList يرفع playSessionToken ويحدّث currentItem بشكل متزامن قبل أول await.
+  // نلتقط التذكرة فوراً حتى لا يفتح أمر قديم مشغلاً بعد ضغطة أحدث أو بعد زر X.
+  final requestToken = audioService.playSessionToken;
+
+  // نعطي Flutter لحظة قصيرة لتحديث currentItem/isVisible ثم نفتح المشغل الكبير مباشرة.
+  await Future<void>.delayed(const Duration(milliseconds: 20));
+
+  if (!context.mounted || !_canOpenFullPlayerForRequest(requestToken)) return;
+
+  // افتح الكبير الآن. اكتمال تحميل المصدر الصوتي يكمل بالخلفية والمشغل الكبير يتابع الحالة.
+  final openFuture = openFullScreenPlayer(context);
 
   try {
-    await navigator.push(
-      PageRouteBuilder(
-        pageBuilder: (_, __, ___) => const FullScreenPlayer(),
-        transitionsBuilder: (_, animation, __, child) {
-          return SlideTransition(
-            position: Tween<Offset>(
-              begin: const Offset(0, 1),
-              end: Offset.zero,
-            ).animate(CurvedAnimation(
-              parent: animation,
-              curve: Curves.easeOutCubic,
-            )),
-            child: child,
-          );
-        },
-      ),
-    );
+    await playFuture;
   } catch (_) {
-    // لا نترك القفل عالق إذا صار خطأ أثناء فتح/إغلاق الصفحة.
-  } finally {
-    _folderFullPlayerRouteOpen = false;
+    // لا نكسر الواجهة إذا فشل تحميل ملف واحد، يكفي أن المشغل الكبير لا يفتح مرتين.
   }
+
+  await openFuture;
 }
+
 
 
 Future<bool> _openCurrentPlayingVideoAsReels(
@@ -1421,9 +1438,9 @@ Future<void> _saveToGalleryIOS(LocalMediaItem item, File sourceFile) async {
     _showGlassToast(cleaned, type: type);
   }
 
-  void _playAll(int startIndex) {
+  Future<void> _playAll(int startIndex) async {
     final unfoldered = _unfolderiedItems;
-audioService.playList(unfoldered, startIndex.clamp(0, unfoldered.length - 1));
+    await _playQueueAndOpenFullPlayer(context, unfoldered, startIndex);
   }
 
   @override
@@ -2757,31 +2774,13 @@ transitionDuration: const Duration(milliseconds: 400),
                   }
 
                   // المشغل الأصلي (صوت أو وضع الريلز معطّل)
-                  if (ReelsModeNotifier.instance.value) {
-                    await ReelsModeNotifier.instance.set(false);
-                    if (mounted) setState(() => _reelsMode = false);
-                  }
                   final playQueue = _unfolderiedItems;
-                  final playRequestToken = await audioService.playList(
-                    List<LocalMediaItem>.unmodifiable(playQueue),
+                  await _playQueueAndOpenFullPlayer(
+                    context,
+                    playQueue,
                     playQueue.indexOf(item),
                   );
-                  if (!mounted || !_canOpenFullPlayerForRequest(playRequestToken)) return;
-                  Navigator.of(context).push(
-                    PageRouteBuilder(
-                      pageBuilder: (_, __, ___) => const FullScreenPlayer(),
-                      transitionsBuilder: (_, animation, __, child) {
-                        return SlideTransition(
-                          position: Tween<Offset>(
-                                  begin: const Offset(0, 1), end: Offset.zero)
-                              .animate(CurvedAnimation(
-                                  parent: animation,
-                                  curve: Curves.easeOutCubic)),
-                          child: child,
-                        );
-                      },
-                    ),
-                  );
+                  if (mounted) setState(() => _reelsMode = false);
                 },
                 onDelete: () => _deleteItem(item),
                 onSave: () => _saveToGallery(item),
@@ -3729,17 +3728,8 @@ Future<void> _saveViewMode(bool value) async {
                               return;
                             }
 
-                            if (ReelsModeNotifier.instance.value) {
-                              await ReelsModeNotifier.instance.set(false);
-                              if (mounted) setState(() => _reelsMode = false);
-                            }
-
-                            final playRequestToken = await audioService.playList(
-                              List<LocalMediaItem>.unmodifiable(_items),
-                              i,
-                            );
-                            if (!mounted || !_canOpenFullPlayerForRequest(playRequestToken)) return;
-                            await _openFolderFullScreenPlayer(context, requestToken: playRequestToken);
+                            await _playQueueAndOpenFullPlayer(context, _items, i);
+                            if (mounted) setState(() => _reelsMode = false);
                           },
                           onDelete: () => _deleteItem(item),
                           onSave: () => _saveToGallery(item),
@@ -3825,6 +3815,85 @@ Future<void> _saveViewMode(bool value) async {
 // ═══════════════════════════════════════════════════════════
 //  MINI PLAYER داخل صفحة المجلد
 // ═══════════════════════════════════════════════════════════
+class _FolderMiniThumbnail extends StatefulWidget {
+  final LocalMediaItem item;
+  final Color folderColor;
+
+  const _FolderMiniThumbnail({
+    super.key,
+    required this.item,
+    required this.folderColor,
+  });
+
+  @override
+  State<_FolderMiniThumbnail> createState() => _FolderMiniThumbnailState();
+}
+
+class _FolderMiniThumbnailState extends State<_FolderMiniThumbnail> {
+  String? _thumbPath;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(_FolderMiniThumbnail oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.item.path != widget.item.path) {
+      _thumbPath = null;
+      _load();
+    }
+  }
+
+  Future<void> _load() async {
+    final expectedPath = widget.item.path;
+    var path = await ThumbnailManager.getLocalThumbnail(expectedPath);
+    path ??= await ThumbnailManager.generateLocalThumbnail(expectedPath);
+
+    if (!mounted || widget.item.path != expectedPath) return;
+    setState(() => _thumbPath = path);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(15),
+      child: _thumbPath != null
+          ? Image.file(
+              File(_thumbPath!),
+              width: 46,
+              height: 46,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => _fallback(),
+            )
+          : _fallback(),
+    );
+  }
+
+  Widget _fallback() {
+    return Container(
+      width: 46,
+      height: 46,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [widget.folderColor, widget.folderColor.withOpacity(0.72)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: Icon(
+        widget.item.isVideo
+            ? CupertinoIcons.play_rectangle_fill
+            : CupertinoIcons.music_note,
+        color: Colors.white,
+        size: 22,
+      ),
+    );
+  }
+}
+
 class _FolderMiniPlayerBar extends StatelessWidget {
   final Color folderColor;
 
@@ -3873,24 +3942,10 @@ class _FolderMiniPlayerBar extends StatelessWidget {
                   ),
                   child: Row(
                     children: [
-                      Container(
-                        width: 46,
-                        height: 46,
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [folderColor, folderColor.withOpacity(0.72)],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                          borderRadius: BorderRadius.circular(15),
-                        ),
-                        child: Icon(
-                          item.isVideo
-                              ? CupertinoIcons.play_rectangle_fill
-                              : CupertinoIcons.music_note,
-                          color: Colors.white,
-                          size: 22,
-                        ),
+                      _FolderMiniThumbnail(
+                        key: ValueKey(item.path),
+                        item: item,
+                        folderColor: folderColor,
                       ),
                       const SizedBox(width: 12),
                       Expanded(
@@ -4438,15 +4493,11 @@ transitionDuration: const Duration(milliseconds: 400),
                   }
 
                   // المشغل الأصلي (صوت أو وضع الريلز معطّل)
-                  if (ReelsModeNotifier.instance.value) {
-                    await ReelsModeNotifier.instance.set(false);
-                  }
-                  final playRequestToken = await audioService.playList(
-                    List<LocalMediaItem>.unmodifiable(widget.allItems),
+                  await _playQueueAndOpenFullPlayer(
+                    context,
+                    widget.allItems,
                     widget.index,
                   );
-                  if (!context.mounted || !_canOpenFullPlayerForRequest(playRequestToken)) return;
-                  await _openFolderFullScreenPlayer(context, requestToken: playRequestToken);
                 },
                 child: _buildTile(isActive),
               ),
@@ -5524,15 +5575,11 @@ transitionDuration: const Duration(milliseconds: 400),
                   }
 
                   // المشغل الأصلي (صوت أو وضع الريلز معطّل)
-                  if (ReelsModeNotifier.instance.value) {
-                    await ReelsModeNotifier.instance.set(false);
-                  }
-                  final playRequestToken = await audioService.playList(
-                    List<LocalMediaItem>.unmodifiable(widget.allItems),
+                  await _playQueueAndOpenFullPlayer(
+                    context,
+                    widget.allItems,
                     widget.index,
                   );
-                  if (!context.mounted || !_canOpenFullPlayerForRequest(playRequestToken)) return;
-                  await _openFolderFullScreenPlayer(context, requestToken: playRequestToken);
                 },
                 child: _buildTile(isActive),
               ),

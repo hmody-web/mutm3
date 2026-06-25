@@ -36,9 +36,38 @@ import 'reels_player.dart';
 // يبقى true إلى أن تُغلق صفحة المشغل فعلياً، وليس فقط أثناء أنيميشن الفتح.
 bool _folderFullPlayerRouteOpen = false;
 
-Future<void> _openFolderFullScreenPlayer(BuildContext context) async {
+// تذكرة فتح المشغل الكبير.
+// أي دخول إلى الريلز يلغي كل أوامر فتح المشغل الكبير القديمة التي كانت تنتظر playList.
+int _folderFullPlayerOpenGeneration = 0;
+
+int _createFolderFullPlayerOpenTicket() {
+  _folderFullPlayerOpenGeneration++;
+  return _folderFullPlayerOpenGeneration;
+}
+
+void _invalidatePendingFolderFullPlayerOpens() {
+  _folderFullPlayerOpenGeneration++;
+}
+
+Future<void> _openFolderFullScreenPlayer(
+  BuildContext context, {
+  int? openTicket,
+}) async {
   if (_folderFullPlayerRouteOpen) return;
   if (!context.mounted) return;
+
+  // إذا دخل المستخدم إلى الريلز أثناء انتظار playList، لا تسمح لطلب الفتح القديم
+  // أن يفتح FullScreenPlayer بعد الخروج من الريلز.
+  if (openTicket != null && openTicket != _folderFullPlayerOpenGeneration) {
+    return;
+  }
+
+  // إذا تم تفعيل وضع الريلز أثناء انتظار تشغيل الفيديو، لا تفتح المشغل الكبير بالخلفية.
+  // هذا يمنع الحالة التي يظهر فيها FullScreenPlayer بعد الخروج من الريلز.
+  final currentItem = audioService.currentItem;
+  if (ReelsModeNotifier.instance.value && currentItem != null && currentItem.isVideo) {
+    return;
+  }
 
   final navigator = Navigator.maybeOf(context, rootNavigator: true) ?? Navigator.of(context);
   _folderFullPlayerRouteOpen = true;
@@ -66,6 +95,55 @@ Future<void> _openFolderFullScreenPlayer(BuildContext context) async {
   } finally {
     _folderFullPlayerRouteOpen = false;
   }
+}
+
+
+Future<bool> _openCurrentPlayingVideoAsReels(
+  BuildContext context, {
+  required List<MusicFolder> folders,
+  required Future<void> Function() onFoldersChanged,
+}) async {
+  if (!context.mounted) return false;
+
+  final currentItem = audioService.currentItem;
+  if (currentItem == null || !currentItem.isVideo) return false;
+
+  // فتح الريلز يجب أن يلغي أي أمر قديم لفتح المشغل الكبير،
+  // خصوصاً في الوضع المكتبي عندما يكون playList ما زال ينتظر.
+  _invalidatePendingFolderFullPlayerOpens();
+
+  final currentPosition = audioService.player.position;
+  final activeQueue = audioService.playlist.value;
+  final videoItems = activeQueue.where((e) => e.isVideo).toList(growable: false);
+  if (videoItems.isEmpty) return false;
+
+  final videoIndex = videoItems.indexWhere((e) => e.path == currentItem.path);
+  if (videoIndex < 0) return false;
+
+  await ReelsModeNotifier.instance.set(true);
+  if (!context.mounted) return true;
+
+  await Navigator.of(context).push(
+    PageRouteBuilder(
+      pageBuilder: (_, __, ___) => ReelsVideoPlayer(
+        items: videoItems,
+        initialIndex: videoIndex,
+        initialPosition: currentPosition,
+        folders: folders,
+        onFoldersChanged: onFoldersChanged,
+      ),
+      transitionsBuilder: (_, anim, __, child) {
+        final slideIn = Tween<Offset>(
+          begin: const Offset(1.0, 0),
+          end: Offset.zero,
+        ).animate(CurvedAnimation(parent: anim, curve: Curves.easeOutCubic));
+        return SlideTransition(position: slideIn, child: child);
+      },
+      transitionDuration: const Duration(milliseconds: 400),
+    ),
+  );
+
+  return true;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2340,10 +2418,21 @@ final count = folder.songPaths
 if (!_selectionMode) ...[
               // ── زر الريلز ──
               GestureDetector(
-                onTap: () {
+                onTap: () async {
                   final newVal = !_reelsMode;
+                  if (newVal) {
+                    final opened = await _openCurrentPlayingVideoAsReels(
+                      context,
+                      folders: _folders,
+                      onFoldersChanged: _saveFolders,
+                    );
+                    if (opened) {
+                      if (mounted) setState(() => _reelsMode = true);
+                      return;
+                    }
+                  }
                   setState(() => _reelsMode = newVal);
-                  ReelsModeNotifier.instance.set(newVal);
+                  await ReelsModeNotifier.instance.set(newVal);
                 },
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 280),
@@ -2686,24 +2775,15 @@ transitionDuration: const Duration(milliseconds: 400),
                     if (mounted) setState(() => _reelsMode = false);
                   }
                   final playQueue = _unfolderiedItems;
+                  final fullPlayerOpenTicket = _createFolderFullPlayerOpenTicket();
                   await audioService.playList(
                     List<LocalMediaItem>.unmodifiable(playQueue),
                     playQueue.indexOf(item),
                   );
-                  Navigator.of(context).push(
-                    PageRouteBuilder(
-                      pageBuilder: (_, __, ___) => const FullScreenPlayer(),
-                      transitionsBuilder: (_, animation, __, child) {
-                        return SlideTransition(
-                          position: Tween<Offset>(
-                                  begin: const Offset(0, 1), end: Offset.zero)
-                              .animate(CurvedAnimation(
-                                  parent: animation,
-                                  curve: Curves.easeOutCubic)),
-                          child: child,
-                        );
-                      },
-                    ),
+                  if (!mounted) return;
+                  await _openFolderFullScreenPlayer(
+                    context,
+                    openTicket: fullPlayerOpenTicket,
                   );
                 },
                 onDelete: () => _deleteItem(item),
@@ -3261,10 +3341,21 @@ Future<void> _saveViewMode(bool value) async {
                             const Spacer(),
 // ── زر الريلز ──
                             GestureDetector(
-                              onTap: () {
+                              onTap: () async {
                                 final newVal = !_reelsMode;
+                                if (newVal) {
+                                  final opened = await _openCurrentPlayingVideoAsReels(
+                                    context,
+                                    folders: const [],
+                                    onFoldersChanged: () async {},
+                                  );
+                                  if (opened) {
+                                    if (mounted) setState(() => _reelsMode = true);
+                                    return;
+                                  }
+                                }
                                 setState(() => _reelsMode = newVal);
-                                ReelsModeNotifier.instance.set(newVal);
+                                await ReelsModeNotifier.instance.set(newVal);
                               },
                               child: AnimatedContainer(
                                 duration: const Duration(milliseconds: 280),
@@ -3646,12 +3737,16 @@ Future<void> _saveViewMode(bool value) async {
                               if (mounted) setState(() => _reelsMode = false);
                             }
 
+                            final fullPlayerOpenTicket = _createFolderFullPlayerOpenTicket();
                             await audioService.playList(
                               List<LocalMediaItem>.unmodifiable(_items),
                               i,
                             );
                             if (!mounted) return;
-                            await _openFolderFullScreenPlayer(context);
+                            await _openFolderFullScreenPlayer(
+                              context,
+                              openTicket: fullPlayerOpenTicket,
+                            );
                           },
                           onDelete: () => _deleteItem(item),
                           onSave: () => _saveToGallery(item),
@@ -4355,12 +4450,16 @@ transitionDuration: const Duration(milliseconds: 400),
                   if (ReelsModeNotifier.instance.value) {
                     await ReelsModeNotifier.instance.set(false);
                   }
+                  final fullPlayerOpenTicket = _createFolderFullPlayerOpenTicket();
                   await audioService.playList(
                     List<LocalMediaItem>.unmodifiable(widget.allItems),
                     widget.index,
                   );
                   if (!context.mounted) return;
-                  await _openFolderFullScreenPlayer(context);
+                  await _openFolderFullScreenPlayer(
+                    context,
+                    openTicket: fullPlayerOpenTicket,
+                  );
                 },
                 child: _buildTile(isActive),
               ),
@@ -5441,12 +5540,16 @@ transitionDuration: const Duration(milliseconds: 400),
                   if (ReelsModeNotifier.instance.value) {
                     await ReelsModeNotifier.instance.set(false);
                   }
+                  final fullPlayerOpenTicket = _createFolderFullPlayerOpenTicket();
                   await audioService.playList(
                     List<LocalMediaItem>.unmodifiable(widget.allItems),
                     widget.index,
                   );
                   if (!context.mounted) return;
-                  await _openFolderFullScreenPlayer(context);
+                  await _openFolderFullScreenPlayer(
+                    context,
+                    openTicket: fullPlayerOpenTicket,
+                  );
                 },
                 child: _buildTile(isActive),
               ),

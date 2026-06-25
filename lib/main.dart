@@ -493,15 +493,39 @@ class AudioPlayerService {
   bool _isUserSkipping = false;
   bool _isRestartingRepeat = false;
 
+  // رقم أمان يمنع أي طلب تشغيل قديم من إحياء المشغل بعد إغلاقه.
+  int _playSessionToken = 0;
+  int get playSessionToken => _playSessionToken;
+  bool _isStalePlayRequest(int token) => token != _playSessionToken;
+
   // ═══════════════════════════════════════════════════════════
   //  وضع الريلز
   // ═══════════════════════════════════════════════════════════
 
   Future<void> enableReelsMode() async {
+    // إلغاء أي تشغيل قديم وتنظيف حالة المشغل المصغر/الكبير عند الدخول للريلز.
+    // بدون هذا التنظيف تبقى الكروت مفعّلة كأن الملف ما زال يعمل،
+    // لأن currentItem كان يبقى محفوظاً بعد إيقاف الصوت.
+    _playSessionToken++;
     isReelsMode = true;
     _userPaused = true;
-    isVisible.value = false;
+    _isSettingSource = true;
+    _isRestartingRepeat = false;
+    _isUserSkipping = false;
+
     try { await player.stop(); } catch (_) {}
+    try { await player.setLoopMode(LoopMode.off); } catch (_) {}
+
+    _currentSource = null;
+    _loadedList = [];
+    _usingSingleRepeatSource = false;
+    playlist.value = const [];
+    currentIndex.value = -1;
+    isVisible.value = false;
+
+    Future.delayed(const Duration(milliseconds: 80), () {
+      _isSettingSource = false;
+    });
   }
 
   Future<void> disableReelsMode() async {
@@ -652,9 +676,10 @@ class AudioPlayerService {
     Duration position = Duration.zero,
     bool play = true,
     bool forceRebuild = false,
+    required int requestToken,
   }) async {
     if (list.isEmpty || index < 0 || index >= list.length) return;
-    if (isReelsMode) return;
+    if (isReelsMode || _isStalePlayRequest(requestToken)) return;
 
     _isSettingSource = true;
     _userPaused = !play;
@@ -668,6 +693,10 @@ class AudioPlayerService {
       if (!isReelsMode) isVisible.value = true;
 
       await player.setLoopMode(LoopMode.off);
+      if (_isStalePlayRequest(requestToken)) {
+        _isSettingSource = false;
+        return;
+      }
 
       if (isRepeat.value) {
         // أهم نقطة: وقت التكرار لا نترك Playlist فعّالة، حتى لا يتسرب صوت الأغنية التالية.
@@ -700,9 +729,14 @@ class AudioPlayerService {
         }
       }
 
+      if (_isStalePlayRequest(requestToken)) {
+        _isSettingSource = false;
+        return;
+      }
+
       _isSettingSource = false;
 
-      if (play) {
+      if (play && !_isStalePlayRequest(requestToken)) {
         _userPaused = false;
         try { await player.play(); } catch (_) {}
       }
@@ -732,12 +766,14 @@ class AudioPlayerService {
       position: pos,
       play: shouldPlay,
       forceRebuild: true,
+      requestToken: _playSessionToken,
     );
   }
 
   Future<void> _restartCurrentRepeatedItem() async {
     if (_isRestartingRepeat || !isRepeat.value || isReelsMode) return;
 
+    final requestToken = _playSessionToken;
     final list = _loadedList.isNotEmpty ? _loadedList : playlist.value;
     final idx = currentIndex.value;
     if (list.isEmpty || idx < 0 || idx >= list.length) return;
@@ -753,6 +789,7 @@ class AudioPlayerService {
           position: Duration.zero,
           play: true,
           forceRebuild: true,
+          requestToken: requestToken,
         );
       } else {
         await player.seek(Duration.zero);
@@ -767,6 +804,7 @@ class AudioPlayerService {
           position: Duration.zero,
           play: true,
           forceRebuild: true,
+          requestToken: _playSessionToken,
         );
       } catch (_) {}
     } finally {
@@ -777,9 +815,9 @@ class AudioPlayerService {
   // ═══════════════════════════════════════════════════════════
   //  الدالة الأساسية — تُحمّل القائمة وتُشغّل
   // ═══════════════════════════════════════════════════════════
-  Future<void> _loadAndPlay(List<LocalMediaItem> list, int index) async {
+  Future<void> _loadAndPlay(List<LocalMediaItem> list, int index, int requestToken) async {
     if (list.isEmpty || index < 0 || index >= list.length) return;
-    if (isReelsMode) return;
+    if (isReelsMode || _isStalePlayRequest(requestToken)) return;
 
     final sameList = _listsEqual(list, _loadedList);
     final sameIndex = index == currentIndex.value;
@@ -793,6 +831,7 @@ class AudioPlayerService {
       position: currentPos,
       play: true,
       forceRebuild: !sameList || _usingSingleRepeatSource != isRepeat.value,
+      requestToken: requestToken,
     );
 
     // تحميل thumbnails في الخلفية لا يحجب التشغيل
@@ -811,14 +850,17 @@ class AudioPlayerService {
     return true;
   }
 
-  Future<void> playList(List<LocalMediaItem> items, int startIndex) async {
+  Future<int> playList(List<LocalMediaItem> items, int startIndex) async {
+    final requestToken = ++_playSessionToken;
     _userPaused = false;
-    if (items.isEmpty) return;
+    if (items.isEmpty) return requestToken;
     final idx = startIndex.clamp(0, items.length - 1);
-    await _loadAndPlay(List.unmodifiable(items), idx);
+    await _loadAndPlay(List.unmodifiable(items), idx, requestToken);
+    return requestToken;
   }
 
   Future<void> playAtIndex(int index) async {
+    final requestToken = ++_playSessionToken;
     _userPaused = false;
     final list = playlist.value.isNotEmpty ? playlist.value : _loadedList;
     if (list.isEmpty || index < 0 || index >= list.length) return;
@@ -832,7 +874,7 @@ class AudioPlayerService {
       return;
     }
 
-    await _loadAndPlay(list, index);
+    await _loadAndPlay(list, index, requestToken);
   }
 
   Future<void> pauseByUser() async {
@@ -841,6 +883,7 @@ class AudioPlayerService {
   }
 
   Future<void> playByUser() async {
+    if (currentItem == null) return;
     _userPaused = false;
     if (isRepeat.value && !_usingSingleRepeatSource && currentIndex.value >= 0) {
       await _syncSourceWithRepeatState(preservePosition: true);
@@ -849,6 +892,7 @@ class AudioPlayerService {
   }
 
   Future<void> playNext() async {
+    final requestToken = ++_playSessionToken;
     _userPaused = false;
     final list = _loadedList.isEmpty ? playlist.value : _loadedList;
     if (list.isEmpty) return;
@@ -866,6 +910,7 @@ class AudioPlayerService {
         position: Duration.zero,
         play: true,
         forceRebuild: isRepeat.value || _usingSingleRepeatSource,
+        requestToken: requestToken,
       );
     } catch (_) {
     } finally {
@@ -876,6 +921,7 @@ class AudioPlayerService {
   }
 
   Future<void> playPrevious() async {
+    final requestToken = ++_playSessionToken;
     _userPaused = false;
     final list = _loadedList.isEmpty ? playlist.value : _loadedList;
     if (list.isEmpty) return;
@@ -896,6 +942,7 @@ class AudioPlayerService {
           position: Duration.zero,
           play: true,
           forceRebuild: isRepeat.value || _usingSingleRepeatSource,
+          requestToken: requestToken,
         );
       } else {
         await player.seek(Duration.zero);
@@ -907,6 +954,28 @@ class AudioPlayerService {
         _isUserSkipping = false;
       });
     }
+  }
+
+  Future<void> stopAndClear() async {
+    _playSessionToken++;
+    _userPaused = true;
+    _isSettingSource = true;
+    _isRestartingRepeat = false;
+    _isUserSkipping = false;
+
+    try { await player.stop(); } catch (_) {}
+    try { await player.setLoopMode(LoopMode.off); } catch (_) {}
+
+    _currentSource = null;
+    _loadedList = [];
+    _usingSingleRepeatSource = false;
+    playlist.value = const [];
+    currentIndex.value = -1;
+    isVisible.value = false;
+
+    Future.delayed(const Duration(milliseconds: 80), () {
+      _isSettingSource = false;
+    });
   }
 
   void setVolumeBoost(double normalizedValue) {
@@ -981,7 +1050,10 @@ class _MustAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
 
   void _emitCurrentMediaItem({Duration? duration}) {
     final item = _svc.currentItem;
-    if (item == null) return;
+    if (item == null) {
+      mediaItem.add(null);
+      return;
+    }
 
     mediaItem.add(MediaItem(
       id: item.path,
@@ -1043,7 +1115,8 @@ class _MustAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
 
   @override
   Future<void> stop() async {
-    await _svc.player.stop();
+    await _svc.stopAndClear();
+    mediaItem.add(null);
     await super.stop();
   }
 }
@@ -1627,6 +1700,44 @@ class _NavTabData {
   final String label;
   const _NavTabData({required this.icon, required this.label});
 }
+
+// ─────────────────────────────────────────────
+//  FULL PLAYER ROUTE GUARD — يمنع فتح أكثر من مشغل كامل بنفس الوقت
+// ─────────────────────────────────────────────
+bool _fullScreenPlayerRouteOpen = false;
+
+Future<void> openFullScreenPlayer(BuildContext context) async {
+  if (_fullScreenPlayerRouteOpen) return;
+  if (!context.mounted) return;
+  if (audioService.currentItem == null) return;
+
+  final navigator = Navigator.maybeOf(context, rootNavigator: true) ?? Navigator.of(context);
+  _fullScreenPlayerRouteOpen = true;
+
+  try {
+    await navigator.push(
+      PageRouteBuilder(
+        opaque: true,
+        pageBuilder: (_, __, ___) => const FullScreenPlayer(),
+        transitionDuration: const Duration(milliseconds: 320),
+        reverseTransitionDuration: const Duration(milliseconds: 260),
+        transitionsBuilder: (_, animation, __, child) {
+          final slide = Tween<Offset>(
+            begin: const Offset(0, 1),
+            end: Offset.zero,
+          ).animate(CurvedAnimation(
+            parent: animation,
+            curve: Curves.easeOutCubic,
+          ));
+          return SlideTransition(position: slide, child: child);
+        },
+      ),
+    );
+  } finally {
+    _fullScreenPlayerRouteOpen = false;
+  }
+}
+
 // ─────────────────────────────────────────────
 //  MINI PLAYER WIDGET — Glass style matching bottom nav bar
 // ─────────────────────────────────────────────
@@ -1657,24 +1768,7 @@ _slideAnim =
   }
 
 void _openFullPlayer() {
-  Navigator.of(context).push(
-    PageRouteBuilder(
-      opaque: true,
-      pageBuilder: (_, __, ___) => const FullScreenPlayer(),
-      transitionDuration: const Duration(milliseconds: 320),
-      reverseTransitionDuration: const Duration(milliseconds: 260),
-      transitionsBuilder: (_, animation, __, child) {
-        final slide = Tween<Offset>(
-          begin: const Offset(0, 1),
-          end: Offset.zero,
-        ).animate(CurvedAnimation(
-          parent: animation,
-          curve: Curves.easeOutCubic,
-        ));
-        return SlideTransition(position: slide, child: child);
-      },
-    ),
-  );
+  openFullScreenPlayer(context);
 }
 
   @override
@@ -1841,9 +1935,7 @@ void _openFullPlayer() {
                             btnSize: 40,
                             isDark: isDark,
                             onTap: () async {
-                              await audioService.player.stop();
-                              audioService.isVisible.value = false;
-                              audioService.currentIndex.value = -1;
+                              await audioService.stopAndClear();
                             },
                           ),
                         ],

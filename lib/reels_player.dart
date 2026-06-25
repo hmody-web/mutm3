@@ -21,6 +21,7 @@ import 'package:video_thumbnail/video_thumbnail.dart';
 class ReelsVideoPlayer extends StatefulWidget {
   final List<LocalMediaItem> items;
   final int initialIndex;
+  final Duration initialPosition;
   final List<MusicFolder> folders;
   final Future<void> Function() onFoldersChanged;
 
@@ -28,6 +29,7 @@ class ReelsVideoPlayer extends StatefulWidget {
     super.key,
     required this.items,
     required this.initialIndex,
+    this.initialPosition = Duration.zero,
     required this.folders,
     required this.onFoldersChanged,
   });
@@ -199,12 +201,40 @@ Offset _pinchFocalPoint = Offset.zero;
     final newIdx = audioService.currentIndex.value;
     if (newIdx < 0 || newIdx >= widget.items.length) return;
     if (newIdx == _currentIndex) return;
-    // التنقل إلى الريل المطلوب من الإشعار
+
+    // لا تحاول تحريك PageController قبل أن يرتبط فعلياً بـ PageView.
+    // هذا هو سبب الخطأ: PageController is not attached to a PageView.
     _syncingFromNotification = true;
-    _pageController.animateToPage(
+    _safeAnimateToPage(
       newIdx,
       duration: const Duration(milliseconds: 250),
       curve: Curves.easeInOut,
+    );
+  }
+
+  void _safeAnimateToPage(
+    int page, {
+    required Duration duration,
+    required Curve curve,
+  }) {
+    if (!mounted) return;
+
+    if (!_pageController.hasClients) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_pageController.hasClients) return;
+        _pageController.animateToPage(
+          page,
+          duration: duration,
+          curve: curve,
+        );
+      });
+      return;
+    }
+
+    _pageController.animateToPage(
+      page,
+      duration: duration,
+      curve: curve,
     );
   }
 
@@ -360,6 +390,11 @@ Future<void> _loadThumbnail(int index) async {
       if (mounted) setState(() => _initialized[index] = true);
       _loadThumbnail(index);
       if (index == _currentIndex) {
+        final startPosition = widget.initialPosition;
+        if (startPosition > Duration.zero &&
+            startPosition < ctrl.value.duration) {
+          await ctrl.seekTo(startPosition);
+        }
         ctrl.play();
         _startProgressTimer();
         // إذا كان التصفح التلقائي مفعّلاً، أضف المراقب
@@ -500,7 +535,7 @@ Future<void> _loadThumbnail(int index) async {
     if (!mounted) return;
     if (next < widget.items.length) {
       // أنيميشن سحب طبيعي للأعلى مثل الريلز
-      _pageController.animateToPage(
+      _safeAnimateToPage(
         next,
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeInOutCubic,
@@ -749,7 +784,17 @@ body: RawGestureDetector(
   );
   }
 
+  double _reelsBottomReservedHeight(BuildContext context) {
+    // ارتفاع الشريط السفلي الحقيقي يبدأ من شريط التقدم الأحمر إلى أسفل الشاشة.
+    // الفيديوهات يجب أن تتمركز داخل المساحة فوق هذا الشريط فقط، وليس داخل طول الشاشة الكامل.
+    return MediaQuery.of(context).padding.bottom + 62;
+  }
+
   Widget _buildMainContent(Size size) {
+    final bottomReservedHeight = _reelsBottomReservedHeight(context);
+    final videoViewportHeight = (size.height - bottomReservedHeight).clamp(0.0, size.height);
+    final videoViewportSize = Size(size.width, videoViewportHeight);
+
     // ── جيسجر الخروج الأفقي ──
 return GestureDetector(
 onHorizontalDragStart: (details) {
@@ -797,15 +842,24 @@ child: Stack(
   fit: StackFit.expand,
   children: [
             // ── صفحات الفيديو ──
+            // مساحة الفيديو تنتهي عند بداية الشريط السفلي، حتى لا يتمركز الفيديو على طول الشاشة الكامل.
 if (_currentIndex > 0)
-  Positioned.fill(
+  Positioned(
+    top: 0,
+    left: 0,
+    right: 0,
+    height: videoViewportHeight,
     child: Transform.translate(
-      offset: Offset(0, -size.height + _dragOffset),
-      child: _buildVideoPage(_currentIndex - 1, size),
+      offset: Offset(0, -videoViewportHeight + _dragOffset),
+      child: _buildVideoPage(_currentIndex - 1, videoViewportSize),
     ),
   ),
 
-Positioned.fill(
+Positioned(
+  top: 0,
+  left: 0,
+  right: 0,
+  height: videoViewportHeight,
   child: Transform.translate(
     offset: Offset(0, _dragOffset),
     child: Transform(
@@ -813,16 +867,20 @@ Positioned.fill(
         ..translate(_pinchFocalPoint.dx, _pinchFocalPoint.dy)
         ..scale(_pinchScale)
         ..translate(-_pinchFocalPoint.dx, -_pinchFocalPoint.dy),
-      child: _buildVideoPage(_currentIndex, size),
+      child: _buildVideoPage(_currentIndex, videoViewportSize),
     ),
   ),
 ),
 
 if (_currentIndex < widget.items.length - 1)
-  Positioned.fill(
+  Positioned(
+    top: 0,
+    left: 0,
+    right: 0,
+    height: videoViewportHeight,
     child: Transform.translate(
-      offset: Offset(0, size.height + _dragOffset),
-      child: _buildVideoPage(_currentIndex + 1, size),
+      offset: Offset(0, videoViewportHeight + _dragOffset),
+      child: _buildVideoPage(_currentIndex + 1, videoViewportSize),
     ),
   ),
 
@@ -890,22 +948,27 @@ Widget _buildVideoPage(int index, Size size) {
     final isInit = _initialized[index] ?? false;
     final isCurrent = index == _currentIndex;
     final thumbBytes = _thumbnails[index];
+    final showRealVideo = isCurrent && ctrl != null && isInit;
+    final isPortraitVideo = showRealVideo && ctrl.value.aspectRatio < 1.0;
+    final shouldUseImageBackground = !showRealVideo || (!isPortraitVideo && !_fillScreen);
 
     return Stack(
       fit: StackFit.expand,
       children: [
-        // خلفية خفيفة: صورة ثابتة أو لون أسود. بدون VideoPlayer ثاني وبدون Blur ثقيل.
+        // الخلفية الصورية تُستخدم فقط عند الحاجة، مثل التحميل أو الفيديوهات العرضية.
+        // الفيديوهات الطولية أو وضع الامتلاء لا تحتاج خلفية لأنها تغطي مساحة العرض نفسها.
         Positioned.fill(
-          child: _buildLightweightBackground(thumbBytes),
+          child: shouldUseImageBackground
+              ? _buildLightweightBackground(thumbBytes)
+              : const ColoredBox(color: Colors.black),
         ),
 
         // الفيديو الحقيقي يُرسم فقط للريل الحالي، حتى لا تنبني صفحات الجيران كفيديوهات شغالة.
-        if (isCurrent && ctrl != null && isInit)
+        if (showRealVideo)
           Positioned.fill(
             child: RepaintBoundary(
               child: Builder(
                 builder: (context) {
-                  final botPad = MediaQuery.of(context).padding.bottom;
                   final isPortrait = ctrl.value.aspectRatio < 1.0;
 
                   if (_fillScreen) {
@@ -920,15 +983,14 @@ Widget _buildVideoPage(int index, Size size) {
                   }
 
                   if (isPortrait) {
-                    return Padding(
-                      padding: EdgeInsets.only(bottom: botPad + 80),
-                      child: Center(
-                        child: Transform.scale(
-                          scale: 1.07,
-                          child: AspectRatio(
-                            aspectRatio: ctrl.value.aspectRatio,
-                            child: VideoPlayer(ctrl),
-                          ),
+                    // لا نضيف Padding سفلي هنا.
+                    // الـ Stack نفسه صار مقصوصاً فوق الشريط السفلي، لذلك التمركز الآن صحيح داخل مساحة الفيديو فقط.
+                    return Center(
+                      child: Transform.scale(
+                        scale: 1.07,
+                        child: AspectRatio(
+                          aspectRatio: ctrl.value.aspectRatio,
+                          child: VideoPlayer(ctrl),
                         ),
                       ),
                     );
@@ -963,27 +1025,7 @@ Widget _buildVideoPage(int index, Size size) {
             ),
           ),
 
-        // تدرج سفلي خفيف للقراءة فقط.
-        Positioned(
-          bottom: 0,
-          left: 0,
-          right: 0,
-          height: size.height * 0.48,
-          child: Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Colors.transparent,
-                  Colors.black.withOpacity(0.12),
-                  Colors.black.withOpacity(0.76),
-                ],
-                stops: const [0.0, 0.55, 1.0],
-              ),
-            ),
-          ),
-        ),
+
       ],
     );
   }

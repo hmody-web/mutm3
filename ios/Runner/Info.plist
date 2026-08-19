@@ -120,5 +120,13 @@
 		<false/>
 		<key>UIViewControllerBasedStatusBarAppearance</key>
 		<false/>
+
+
+<key>NSCameraUsageDescription</key>
+<string>يحتاج التطبيق إلى الوصول إلى الكاميرا لاستخدام الميزات التي تتطلب التقاط الصور أو الفيديو.</string>
+
+<key>NSLocationWhenInUseUsageDescription</key>
+<string>يحتاج التطبيق إلى الوصول إلى موقعك أثناء الاستخدام لتوفير الميزات التي تعتمد على الموقع.</string>
+
 	</dict>
 </plist>
